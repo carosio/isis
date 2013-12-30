@@ -1,0 +1,11 @@
+{application, isis,
+ [{description, "IS-IS implementation in erlang"},
+  {vsn, "1"},
+  {registered, []},
+  {applications, [
+		  kernel,
+		  stdlin
+		  ]},
+  {mod, { isis_app, []}},
+  {env, []}
+]}.
