@@ -30,11 +30,32 @@
     16#00,16#02,16#01,16#00,16#00,16#0A,16#10,16#06,
     16#04,16#AC,16#10,16#44,16#02,16#04,16#08,16#00,
     16#00,16#00,16#43,16#00,16#00,16#00,16#00>>).
+-define(TEST_VALID_CSNP,
+<<131,33,1,0,25,1,0,0,0,83,255,255,0,0,0,2,0,0,0,0,0,0,0,0,0,255,255,255,255,
+  255,255,255,255,9,48,4,90,255,255,0,0,0,2,0,0,0,0,0,28,240,47,4,170,255,255,
+  0,0,0,2,1,0,0,0,0,22,113,65,2,11,255,255,0,0,0,3,0,0,0,0,0,16,154,220>>).
 
+%%%===================================================================
+%%% TLV records
+%%%===================================================================
 -record (isis_tlv_unknown, {
 	   type :: integer(),
 	   bytes :: binary()}).
 -type isis_tlv_unknown() :: #isis_tlv_unknown{}.
+
+-record (isis_tlv_area_address, {
+	   areas :: [binary()]}).
+-type isis_tlv_area_address() :: #isis_tlv_area_address{}.
+
+-record (isis_tlv_lsp_entry_detail, {
+	   lifetime :: integer(),
+	   lsp_id :: binary(),
+	   sequence :: integer(),
+	   checksum :: integer()}).
+-type isis_tlv_lsp_entry_detail() :: #isis_tlv_lsp_entry_detail{}.
+-record (isis_tlv_lsp_entry, {
+	   lsps :: [isis_tlv_lsp_entry_detail()]}).
+-type isis_tlv_lsp_entry() :: #isis_tlv_lsp_entry{}.
 
 -record (isis_tlv_dynamic_hostname, {
 	   hostname :: nonempty_string()}).
@@ -44,9 +65,15 @@
 	   addresses :: [integer()]}).
 -type isis_tlv_ip_interface_address() :: #isis_tlv_ip_interface_address{}.
 
+-record (isis_tlv_protocols_supported, {
+	   protocols :: [atom()]}).
+-type isis_tlv_protocols_supported() :: #isis_tlv_protocols_supported{}.
+
 -type isis_tlv() ::
+	isis_tlv_area_address() |
 	isis_tlv_dynamic_hostname() |
 	isis_tlv_ip_interface_address() |
+	isis_tlv_protocols_supported() |
 	isis_tlv_unknown().
 
 %%%-------------------------------------------------------------------
@@ -96,5 +123,16 @@
 	 }).
 -type isis_lsp() :: #isis_lsp{}.
 
--type isis_message() ::
-	isis_lsp().
+-record(isis_csnp, {
+	  pdu_type :: atom(),
+	  source_id :: binary(),
+	  start_lsp_id :: binary(),
+	  end_lsp_id :: binary(),
+	  tlv :: [isis_tlv()]
+	 }).
+-type isis_csnp() :: #isis_csnp{}.
+
+
+-type isis_pdu() ::
+	isis_lsp() |
+	isis_csnp().
