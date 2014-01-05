@@ -157,7 +157,6 @@ encode_tlv_area_address([A | As], B) ->
 encode_tlv_area_address([], B) ->
     B.
 
--spec encode_tlv(atom(), binary()) -> binary().
 -spec encode_tlv(isis_tlv()) -> binary().
 encode_tlv(#isis_tlv_area_address{areas = Areas}) ->
     encode_tlv(area_address, encode_tlv_area_address(Areas, <<>>));
@@ -176,6 +175,8 @@ encode_tlv(#isis_tlv_unknown{type = Type, bytes = Bytes}) ->
     <<Type:8, Bytes/binary>>;
 encode_tlv(_) ->
     <<>>.
+
+-spec encode_tlv(atom(), binary()) -> binary().
 encode_tlv(Type, Value) ->
     T = isis_enum:to_int(tlv, Type),
     S = byte_size(Value),
@@ -211,7 +212,6 @@ decode_common_lsp(Header, PDU_Len, Rest) ->
 decode_common_csnp(_Header, PDU_Len, Rest) ->
     <<Packet_Len:16, Source:7/binary, Start:8/binary, End:8/binary, TLV_Binary/binary>>
 	= Rest,
-    io:format("Len ~p ~p ~n", [Packet_Len, PDU_Len]),
     case Packet_Len =:= PDU_Len of
 	false -> error;
 	_ ->
@@ -264,5 +264,6 @@ isis_protocol_test() ->
     DecodedCSNPResult = isis_protocol:decode(?TEST_VALID_CSNP),
     ?assertMatch({ok, _CSNP}, DecodedCSNPResult),
     {ok, LSP} = DecodeDLSPResult,
+    %% Expected to fail from here for now...
     {ok, EncodedLSP} = isis_protocol:encode(level2_lsp, LSP),
     ?assertMatch(EncodedLSP, ?TEST_VALID_LSP).
