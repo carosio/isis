@@ -71,10 +71,9 @@
 	{interface_switching_capability, 21}
 	]}).
 
--enum({subtlv_ip_reachability,
+-enum({subtlv_eir,
        [{admin_tag_32bit, 1},
-	{admin_tag_64bit, 2},
-	{management_prefix_colour, 117}
+	{admin_tag_64bit, 2}
 	]}).
 
 -enum({protocols,
@@ -83,3 +82,7 @@
 	{ipv4, 16#cc}
        ]}).
 
+-enum({metric_type,
+       [{internal, 0},
+	{external, 1}
+       ]}).
