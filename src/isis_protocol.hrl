@@ -82,6 +82,7 @@
 -type isis_tlv() ::
 	isis_tlv_area_address() |
 	isis_tlv_padding() |
+	isis_tlv_lsp_entry() |
 	isis_tlv_dynamic_hostname() |
 	isis_tlv_ip_interface_address() |
 	isis_tlv_protocols_supported() |

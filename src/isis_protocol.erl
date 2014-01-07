@@ -86,7 +86,7 @@ encode(_, _) ->
 %%% TLV and subTLV decoders
 %%%===================================================================
 -spec decode_subtlv_eir_value(binary(), atom()) -> {ok, isis_subtlv_eir()} | error.
-decode_subtlv_eir_value(<<Value:32>>,admin_tag_32bit) ->
+decode_subtlv_eir_value(<<Value:32>>, admin_tag_32bit) ->
     {ok, #isis_subtlv_eir_admintag32{tag = Value}};
 decode_subtlv_eir_value(<<Value:64>>, admin_tag_64bit) ->
     {ok, #isis_subtlv_eir_admintag64{tag = Value}};
@@ -94,12 +94,13 @@ decode_subtlv_eir_value(_, _) -> error.
 
 -spec decode_subtlv_eir(binary(), [isis_subtlv_eir()]) -> [isis_subtlv_eir()] | error.
 decode_subtlv_eir(<<Type:8, Length:8, Value:Length/binary, Rest/binary>>, SubTLVs) ->
-    try isis_enum:to_atom(subtlv_eir, Type) of
-	Atom -> Atom
-    catch
-	bad_enum -> error
-    end,
-    case decode_subtlv_eir_value(Value, Type) of
+    TypeA =
+	try isis_enum:to_atom(subtlv_eir, Type) of
+	    Atom -> Atom
+	catch
+	    bad_enum -> error
+	end,
+    case decode_subtlv_eir_value(Value, TypeA) of
 	{ok, SubTLV} ->
 	    decode_subtlv_eir(Rest, [SubTLV | SubTLVs]);
 	_ -> error
@@ -174,24 +175,25 @@ decode_tlv_ip_internal_reachability(<<>>, Values) ->
 decode_tlv_ip_internal_reachability(_, _) -> error.
 
 decode_tlv_extended_ip_reachability(
-  <<Metric:32, Up:1, SubTLV_Present:1, Prefix_Len:6, Rest/binary>>, Values) ->
-    PLenB = erlang:trunc((Prefix_Len + 7) / 8),
-    PLen = PLenB * 8,
-    io:format("PLen: ~p~n", [PLen]),
-    <<P1:PLen, Rest2/binary>> = Rest,
-    Prefix = P1 bsl ((4 - PLenB) * 8),
+  <<Metric:32, Up:1, SubTLV_Present:1, Mask_Len:6, Rest/binary>>, Values) ->
+    %%% Mask_Len -> whole bytes then we shift the extracted value
+    PLenBytes = erlang:trunc((Mask_Len + 7) / 8),
+    PLenBits = PLenBytes * 8,
+    <<P1:PLenBits, Rest2/binary>> = Rest,
+    Prefix = P1 bsl (32 - PLenBits),
     {SubTLV, Rest4} =
 	case SubTLV_Present of
 	    0 -> {[], Rest2} ;
 	    1 ->
-		<<SubTLV_Len:1, SubTLVb:SubTLV_Len/binary, Rest3/binary>> = Rest,
+		<<SubTLV_Len:8, SubTLVb:SubTLV_Len/binary, Rest3/binary>> = Rest,
 		{decode_subtlv_eir(SubTLVb, []), Rest3}
 	end,
+    UpA = isis_enum:to_atom(boolean, Up),
     EIR = #isis_tlv_extended_ip_reachability_detail{
 	     prefix = Prefix,
-	     mask_len = Prefix_Len,
+	     mask_len = Mask_Len,
 	     metric = Metric,
-	     up = Up,
+	     up = UpA,
 	     sub_tlv = SubTLV},
     decode_tlv_extended_ip_reachability(Rest4, [EIR | Values]);
 decode_tlv_extended_ip_reachability(<<>>, Values) ->
@@ -254,10 +256,10 @@ decode_tlvs(_, _) -> error.
 %%%===================================================================
 -spec encode_subtlv_eir_detail(isis_subtlv_eir()) -> binary().
 encode_subtlv_eir_detail(#isis_subtlv_eir_admintag32{tag = Tag}) ->
-    Type = isis_atom:to_int(subtlv_eir, admin_tag_32bit),
+    Type = isis_enum:to_int(subtlv_eir, admin_tag_32bit),
     <<Type:8, 4:8, Tag:32>>;
 encode_subtlv_eir_detail(#isis_subtlv_eir_admintag64{tag = Tag}) ->
-    Type = isis_atom:to_int(subtlv_eir, admin_tag_64bit),
+    Type = isis_enum:to_int(subtlv_eir, admin_tag_64bit),
     <<Type:8, 8:8, Tag:64>>.
 
 -spec encode_subtlv_eir([isis_subtlv_eir()]) -> binary().
@@ -285,31 +287,30 @@ encode_tlv_metric_info(false,
 		       #isis_metric_information{metric_supported = Support,
 						metric = Metric,
 						metric_type = Metric_Type}) ->
-    ST = case Support of
-	     true -> 1;
-	     false ->0
-	 end,
+    ST = isis_enum:to_int(boolean, Support),
     MT = isis_enum:to_int(metric_type, Metric_Type),
     <<ST:1, MT:1, Metric:6>>.
 
--spec encode_tlv_extended_ip_reachability(isis_tlv_extended_ip_reachability()) -> binary().
+-spec encode_tlv_extended_ip_reachability(isis_tlv_extended_ip_reachability_detail()) -> binary().
 encode_tlv_extended_ip_reachability(
   #isis_tlv_extended_ip_reachability_detail{
      prefix = Prefix, mask_len = Mask_Len,
-     metric = Metric, up = Up,
+     metric = Metric, up = UpA,
      sub_tlv = SubTLVs}) ->
+
     SubTLVb = encode_subtlv_eir(SubTLVs),
     Present = 
 	case byte_size(SubTLVb) of
 	    0 -> 0;
 	    _ -> 1
 	end,
-    PLenB = erlang:trunc((Mask_Len + 7) / 8),
-    PLen = PLenB * 8,
-    Calc_Prefix = Prefix bsr ((4 - PLenB) * 8),
-    io:format("~p ~p ~p~n", [Prefix, PLenB, Calc_Prefix]),
+    %%% Mask_Len -> whole bytes, then we shift to lineup
+    PLenBytes = erlang:trunc((Mask_Len + 7) / 8),
+    PLenBits = PLenBytes * 8,
+    Calc_Prefix = Prefix bsr (32 - PLenBits),
+    Up = isis_enum:to_int(boolean, UpA),
     <<Metric:32, Up:1, Present:1, Mask_Len:6,
-      Calc_Prefix:PLen, SubTLVb/binary>>.
+      Calc_Prefix:PLenBits, SubTLVb/binary>>.
 
 -spec encode_tlv(isis_tlv()) -> binary().
 encode_tlv(#isis_tlv_area_address{areas = Areas}) ->

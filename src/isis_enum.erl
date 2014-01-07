@@ -17,6 +17,9 @@
 -spec to_atom(atom(), integer()) -> atom().
 -spec to_int(atom(), atom()) -> integer().
 
+%%%
+%%% PDU types, the ones that we actually use and understand
+%%%
 -enum({pdu, [{pdu_type_unset, 0},   %% Make typer happy
 	     {level1_iih, 15},
 	     {level2_iih, 16},
@@ -28,6 +31,10 @@
 	     {level1_psnp, 26},
 	     {level2_psnp, 27}]}).
 
+%%%
+%%% TLV types used in PDUs - its an 8bit field, but there are some
+%%% Sub-TLVs that are per-TLV
+%%%
 -enum({tlv, [{unknown, 0},
 	     {area_address, 1},
 	     {is_reachability, 2},
@@ -57,6 +64,9 @@
 	     {vendor_proprietary, 250}
 	    ]}).
 
+%%%
+%%% Sub TLVs
+%%%
 -enum({subtlv_is_reachability,
        [{admin_group, 3},
 	{link_local_ri, 4},
@@ -76,6 +86,9 @@
 	{admin_tag_64bit, 2}
 	]}).
 
+%%%
+%%% Other defines that are used in IS-IS
+%%%
 -enum({protocols,
        [{null, 0},
 	{ipv6, 16#8e},
@@ -85,4 +98,9 @@
 -enum({metric_type,
        [{internal, 0},
 	{external, 1}
+       ]}).
+
+-enum({boolean,
+       [{false, 0},
+	{true, 1}
        ]}).
