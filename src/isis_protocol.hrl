@@ -21,6 +21,19 @@
 	   areas :: [binary()]}).
 -type isis_tlv_area_address() :: #isis_tlv_area_address{}.
 
+-record (isis_tlv_is_reachability_detail, {
+	   neighbor :: binary(),
+	   default :: isis_metric_information(),
+	   delay :: isis_metric_information(),
+	   expense :: isis_metric_information(),
+	   error :: isis_metric_information()
+	  }).
+-type isis_tlv_is_reachability_detail() :: #isis_tlv_is_reachability_detail{}.
+-record (isis_tlv_is_reachability, {
+	   virtual :: atom(),
+	   is_reachability :: [isis_tlv_is_reachability_detail()]}).
+-type isis_tlv_is_reachability() :: #isis_tlv_is_reachability{}.
+
 -record (isis_tlv_padding, {
 	   size :: integer()}).
 -type isis_tlv_padding() :: #isis_tlv_padding{}.
@@ -71,6 +84,16 @@
 	   reachability :: [isis_tlv_extended_ip_reachability_detail()]}).
 -type isis_tlv_extended_ip_reachability() :: #isis_tlv_extended_ip_reachability{}.
 
+-record (isis_tlv_extended_reachability_detail, {
+	   neighbour :: binary(),
+	   metric :: integer(),
+	   sub_tlv :: [isis_subtlv_eis()]}).
+-type isis_tlv_extended_reachability_detail() :: #isis_tlv_extended_reachability_detail{}.
+	   
+-record (isis_tlv_extended_reachability, {
+	   reachability :: [isis_tlv_extended_reachability_detail()]}).
+-type isis_tlv_extended_reachability() :: #isis_tlv_extended_reachability{}.
+
 -record (isis_tlv_ip_interface_address, {
 	   addresses :: [integer()]}).
 -type isis_tlv_ip_interface_address() :: #isis_tlv_ip_interface_address{}.
@@ -79,18 +102,28 @@
 	   protocols :: [atom()]}).
 -type isis_tlv_protocols_supported() :: #isis_tlv_protocols_supported{}.
 
+-record (isis_tlv_te_router_id, {
+	   router_id :: integer()}).
+-type isis_tlv_te_router_id() :: #isis_tlv_te_router_id{}.
+
 -type isis_tlv() ::
 	isis_tlv_area_address() |
+	isis_tlv_is_reachability() |
 	isis_tlv_padding() |
 	isis_tlv_lsp_entry() |
 	isis_tlv_dynamic_hostname() |
 	isis_tlv_ip_interface_address() |
+	isis_tlv_ip_internal_reachability() |
+	isis_tlv_extended_ip_reachability() |
+	isis_tlv_extended_reachability() |
 	isis_tlv_protocols_supported() |
+	isis_tlv_te_router_id() |
 	isis_tlv_unknown().
 
 %%%===================================================================
 %%% Sub TLV records
 %%%===================================================================
+%%% Extended IP Reachability SubTLVs
 -record (isis_subtlv_eir_admintag32, {
 	   tag :: integer()}).
 -type isis_subtlv_eir_admintag32() :: #isis_subtlv_eir_admintag32{}.
@@ -101,6 +134,26 @@
 -type isis_subtlv_eir() ::
 	isis_subtlv_eir_admintag32() |
 	isis_subtlv_eir_admintag64().
+
+%%% Extended IS reachability SubTLVs
+-record (isis_subtlv_eis_link_id, {
+	   local :: integer(),
+	   remote :: integer()}).
+-type isis_subtlv_eis_link_id() :: #isis_subtlv_eis_link_id{}.
+
+-record (isis_subtlv_eis_ipv4_interface, {
+	   address :: integer()}).
+-type isis_subtlv_eis_ipv4_interface() :: #isis_subtlv_eis_ipv4_interface{}.
+
+-record (isis_subtlv_eis_unknown, {
+	   type :: integer(),
+	   value :: binary()}).
+-type isis_subtlv_eis_unknown() :: #isis_subtlv_eis_unknown{}.
+
+-type isis_subtlv_eis() ::
+	isis_subtlv_eis_link_id() |
+	isis_subtlv_eis_ipv4_interface() |
+	isis_subtlv_eis_unknown().
 
 %%%-------------------------------------------------------------------
 %%% IS-IS raw packet format

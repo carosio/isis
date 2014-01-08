@@ -86,6 +86,21 @@
 	{admin_tag_64bit, 2}
 	]}).
 
+-enum({subtlv_eis,
+       [{unknown, 0},
+	{admin_group, 3},
+	{link_id, 4},
+	{link_remote_id, 5},
+	{ipv4_interface, 6},
+	{ipv4_neighbor, 8},
+	{max_bandwitdh, 9},
+	{reservable_bandwidth, 10},
+	{unreservable_bandwidth, 11},
+	{te_metric, 18},
+	{link_protection, 20},
+	{interface_switching, 21}
+	]}).
+
 %%%
 %%% Other defines that are used in IS-IS
 %%%

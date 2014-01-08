@@ -13,7 +13,8 @@
 -include_lib("eunit/include/eunit.hrl").
 
 %% API
--export([decode/1, encode/2, decode_tlvs/2, encode_tlv/1, encode_lsp/2]).
+-export([decode/1, encode/2, decode_tlvs/4, encode_tlv/1, encode_lsp/2,
+	binary_list_size/1]).
 -export_type([isis_pdu/0]).
 
 %%%===================================================================
@@ -85,29 +86,20 @@ encode(_, _) ->
 %%%===================================================================
 %%% TLV and subTLV decoders
 %%%===================================================================
--spec decode_subtlv_eir_value(binary(), atom()) -> {ok, isis_subtlv_eir()} | error.
-decode_subtlv_eir_value(<<Value:32>>, admin_tag_32bit) ->
-    {ok, #isis_subtlv_eir_admintag32{tag = Value}};
-decode_subtlv_eir_value(<<Value:64>>, admin_tag_64bit) ->
-    {ok, #isis_subtlv_eir_admintag64{tag = Value}};
-decode_subtlv_eir_value(_, _) -> error.
+-spec decode_subtlv_eir(atom(), integer(), binary()) -> isis_subtlv_eir() | error.
+decode_subtlv_eir(admin_tag_32bit, _Type, <<Value:32>>) ->
+    #isis_subtlv_eir_admintag32{tag = Value};
+decode_subtlv_eir(admin_tag_64bit, _Type, <<Value:64>>) ->
+    #isis_subtlv_eir_admintag64{tag = Value};
+decode_subtlv_eir(_, _, _) -> error.
 
--spec decode_subtlv_eir(binary(), [isis_subtlv_eir()]) -> [isis_subtlv_eir()] | error.
-decode_subtlv_eir(<<Type:8, Length:8, Value:Length/binary, Rest/binary>>, SubTLVs) ->
-    TypeA =
-	try isis_enum:to_atom(subtlv_eir, Type) of
-	    Atom -> Atom
-	catch
-	    bad_enum -> error
-	end,
-    case decode_subtlv_eir_value(Value, TypeA) of
-	{ok, SubTLV} ->
-	    decode_subtlv_eir(Rest, [SubTLV | SubTLVs]);
-	_ -> error
-    end;
-decode_subtlv_eir(<<>>, SubTLVs) ->
-    lists:reverse(SubTLVs);
-decode_subtlv_eir(_, _) -> error.
+-spec decode_subtlv_eis(atom(), integer(), binary()) -> isis_subtlv_eis() | error.
+decode_subtlv_eis(link_id, _Type, <<Local:32, Remote:32>>) ->
+    #isis_subtlv_eis_link_id{local = Local, remote = Remote};
+decode_subtlv_eis(ipv4_interface, _Type, <<IP:32>>) ->
+    #isis_subtlv_eis_ipv4_interface{address = IP};
+decode_subtlv_eis(_, Type, Value) ->
+    #isis_subtlv_eis_unknown{type = Type, value = Value}.
 
 -spec decode_tlv_area_address(binary(), [binary()]) -> [binary()] | error.
 decode_tlv_area_address(<<>>, Areas) ->
@@ -116,6 +108,23 @@ decode_tlv_area_address(<<Len:8, Area:Len/binary, Rest/binary>>, Areas) ->
     decode_tlv_area_address(Rest, [Area | Areas]);
 decode_tlv_area_address(_, _) ->
     error.
+
+-spec decode_tlv_is_reachability(binary(), [isis_tlv_is_reachability_detail()]) ->
+					[isis_tlv_is_reachability_detail()] | error.
+decode_tlv_is_reachability(<<Default:1/binary, Delay:1/binary,
+			     Expense:1/binary, Error:1/binary,
+			     Neighbor_Id:7/binary, Rest/binary>>, Neighbors) ->
+    DefaultM = decode_isis_metric_information(Default, default),
+    DelayM = decode_isis_metric_information(Delay, false),
+    ExpenseM = decode_isis_metric_information(Expense, false),
+    ErrorM = decode_isis_metric_information(Error, false),
+    IR = #isis_tlv_is_reachability_detail{neighbor = Neighbor_Id,
+					  default = DefaultM, delay = DelayM,
+					  expense = ExpenseM, error = ErrorM},
+    decode_tlv_is_reachability(Rest, [IR | Neighbors]);
+decode_tlv_is_reachability(<<>>, Neighbors) ->
+    lists:reverse(Neighbors);
+decode_tlv_is_reachability(_, _) -> error.
 
 -spec decode_tlv_lsp_entry(binary(), [isis_tlv_lsp_entry_detail()]) ->
 				  [isis_tlv_lsp_entry_detail()] | error.
@@ -140,11 +149,7 @@ decode_isis_metric_information(<<0:1, B7:1, Metric:6>>, default) ->
 			     metric = Metric};
 decode_isis_metric_information(<<B8:1, B7:1, Metric:6>>, Type) when
       Type /= default ->
-    Supported = 
-	case B8 of
-	    0 -> false;
-	    1 -> true
-	end,
+    Supported = isis_enum:to_atom(boolean, B8),
     #isis_metric_information{metric_supported = Supported,
 			     metric_type = isis_enum:to_atom(metric_type, B7),
 			     metric = Metric};
@@ -186,7 +191,7 @@ decode_tlv_extended_ip_reachability(
 	    0 -> {[], Rest2} ;
 	    1 ->
 		<<SubTLV_Len:8, SubTLVb:SubTLV_Len/binary, Rest3/binary>> = Rest,
-		{decode_subtlv_eir(SubTLVb, []), Rest3}
+		{decode_tlvs(SubTLVb, subtlv_eir, fun decode_subtlv_eir/3, []), Rest3}
 	end,
     UpA = isis_enum:to_atom(boolean, Up),
     EIR = #isis_tlv_extended_ip_reachability_detail{
@@ -200,6 +205,23 @@ decode_tlv_extended_ip_reachability(<<>>, Values) ->
     lists:reverse(Values);
 decode_tlv_extended_ip_reachability(_, _) -> error.
 
+decode_tlv_extended_reachability(
+  <<Neighbor_Id:7/binary, Metric:24,
+    SubTLV_Len:8, SubTLVb:SubTLV_Len/binary, Rest/binary>>, Values) ->
+    case decode_tlvs(SubTLVb, subtlv_eis, fun decode_subtlv_eis/3, []) of
+	{ok, SubTLVs} ->
+	    EIS = #isis_tlv_extended_reachability_detail{
+		     neighbour = Neighbor_Id,
+		     metric = Metric,
+		     sub_tlv = SubTLVs},
+	    decode_tlv_extended_reachability(Rest, [EIS | Values]);
+	_ -> error
+    end;
+decode_tlv_extended_reachability(<<>>, Values) ->
+    lists:reverse(Values);
+decode_tlv_extended_reachability(_, _) -> error.
+
+
 
 %%--------------------------------------------------------------------
 %% @doc Convert a binary TLV into a record of the appropriate type,
@@ -210,6 +232,11 @@ decode_tlv_extended_ip_reachability(_, _) -> error.
 decode_tlv(area_address, _Type, Value) ->
     Areas = decode_tlv_area_address(Value, []),
     #isis_tlv_area_address{areas = Areas};
+decode_tlv(is_reachability, _Type, <<Virtual:8, Rest/binary>>) ->
+    VirtualA = isis_enum:to_atom(boolean, Virtual),
+    Neighbors = decode_tlv_is_reachability(Rest, []),
+    #isis_tlv_is_reachability{virtual = VirtualA,
+			      is_reachability = Neighbors};
 decode_tlv(padding, _Type, Value) ->
     #isis_tlv_padding{size = byte_size(Value)};
 decode_tlv(lsp_entry, _Type, Value) ->
@@ -223,32 +250,40 @@ decode_tlv(ip_internal_reachability, _Type, Value) ->
 decode_tlv(extended_ip_reachability, _Type, Value) ->
     EIR = decode_tlv_extended_ip_reachability(Value, []),
     #isis_tlv_extended_ip_reachability{reachability = EIR};
+decode_tlv(extended_reachability, _Type, Value) ->
+    EIS = decode_tlv_extended_reachability(Value, []),
+    #isis_tlv_extended_reachability{reachability = EIS};
 decode_tlv(ip_interface_address, _Type, Value) ->
     Addresses = [X || <<X:32>> <= Value],
     #isis_tlv_ip_interface_address{addresses = Addresses};
-decode_tlv(protocols_supported, _Value, Value) ->
+decode_tlv(protocols_supported, _Type, Value) ->
     Protocols = [isis_enum:to_atom(protocols, X)
 		 || X <- binary:bin_to_list(Value)],
     #isis_tlv_protocols_supported{protocols = Protocols};
+decode_tlv(te_router_id, _Type, <<Router_Id:32>>) ->
+    #isis_tlv_te_router_id{router_id = Router_Id};
 decode_tlv(unknown, Type, Value) ->
     #isis_tlv_unknown{type = Type, bytes = Value};
 decode_tlv(_, Type, Value) ->
     decode_tlv(unknown, Type, Value).
 
--spec decode_tlvs(binary(), [isis_tlv()]) -> {ok, [isis_tlv()]} | error.
-decode_tlvs(<<>>, TLVs) ->
+-spec decode_tlvs(binary(), atom(), fun(), [isis_tlv()]) -> {ok, [isis_tlv()]} | error.
+decode_tlvs(<<>>, _Enum, _Fun, TLVs) ->
     {ok, lists:reverse(TLVs)};
 decode_tlvs(<<Type:8, Length:8, Value:Length/binary, Rest/binary>>,
-	    TLVs) ->
+	    Enum, TLVDecode, TLVs) ->
     TLV_Type = 
-	try isis_enum:to_atom(tlv, Type) of
+	try isis_enum:to_atom(Enum, Type) of
 	    Atom -> Atom
 	catch
 	    bad_enum -> unknown
 	end,
-    TLV = decode_tlv(TLV_Type, Type, Value),
-    decode_tlvs(Rest, [TLV | TLVs]);
-decode_tlvs(_, _) -> error.
+    case TLVDecode(TLV_Type, Type, Value) of
+	error -> error;
+	TLV ->
+	    decode_tlvs(Rest, Enum, TLVDecode, [TLV | TLVs])
+    end;
+decode_tlvs(_, _,_,_) -> error.
 
 
 %%%===================================================================
@@ -261,14 +296,6 @@ encode_subtlv_eir_detail(#isis_subtlv_eir_admintag32{tag = Tag}) ->
 encode_subtlv_eir_detail(#isis_subtlv_eir_admintag64{tag = Tag}) ->
     Type = isis_enum:to_int(subtlv_eir, admin_tag_64bit),
     <<Type:8, 8:8, Tag:64>>.
-
--spec encode_subtlv_eir([isis_subtlv_eir()]) -> binary().
-encode_subtlv_eir(SubTLVs) ->
-    lists:foldr(
-      fun(A, B) ->
-	      Bs = encode_subtlv_eir_detail(A),
-	      <<B/binary, Bs/binary>> end,
-      <<>>, SubTLVs).
 			
 -spec encode_tlv_area_address([binary()], binary()) -> binary().
 encode_tlv_area_address([A | As], B) ->
@@ -291,87 +318,95 @@ encode_tlv_metric_info(false,
     MT = isis_enum:to_int(metric_type, Metric_Type),
     <<ST:1, MT:1, Metric:6>>.
 
--spec encode_tlv_extended_ip_reachability(isis_tlv_extended_ip_reachability_detail()) -> binary().
+-spec encode_tlv_extended_ip_reachability(isis_tlv_extended_ip_reachability_detail()) -> [binary()].
 encode_tlv_extended_ip_reachability(
   #isis_tlv_extended_ip_reachability_detail{
      prefix = Prefix, mask_len = Mask_Len,
      metric = Metric, up = UpA,
      sub_tlv = SubTLVs}) ->
-
-    SubTLVb = encode_subtlv_eir(SubTLVs),
+    SubTLVB = encode_tlvs(SubTLVs, fun encode_subtlv_eir_detail/1),
+    SubTLV_Len = binary_list_size(SubTLVB),
     Present = 
-	case byte_size(SubTLVb) of
+	case SubTLV_Len of
 	    0 -> 0;
-	    _ -> 1
+	    true -> 1
 	end,
     %%% Mask_Len -> whole bytes, then we shift to lineup
     PLenBytes = erlang:trunc((Mask_Len + 7) / 8),
     PLenBits = PLenBytes * 8,
     Calc_Prefix = Prefix bsr (32 - PLenBits),
     Up = isis_enum:to_int(boolean, UpA),
-    <<Metric:32, Up:1, Present:1, Mask_Len:6,
-      Calc_Prefix:PLenBits, SubTLVb/binary>>.
+    [<<Metric:32, Up:1, Present:1, Mask_Len:6,
+      Calc_Prefix:PLenBits, SubTLV_Len:8>> | SubTLVB].
 
--spec encode_tlv(isis_tlv()) -> binary().
+-spec encode_tlv(isis_tlv()) -> [binary()].
 encode_tlv(#isis_tlv_area_address{areas = Areas}) ->
-    encode_tlv(area_address, encode_tlv_area_address(Areas, <<>>));
+    encode_tlv(area_address, tlv, encode_tlv_area_address(Areas, <<>>));
 encode_tlv(#isis_tlv_padding{size = Size}) ->
-    encode_tlv(isis_tlv_padding, <<0:(Size * 8)>>);
+    encode_tlv(padding, tlv, <<0:(Size * 8)>>);
 encode_tlv(#isis_tlv_lsp_entry{lsps = LSPS}) ->
-    LSPb = lists:foldr(
+    LSPb = lists:map(
 	     fun(#isis_tlv_lsp_entry_detail{lifetime = Lifetime,
 					    lsp_id = LSP_Id,
 					    sequence = Sequence,
-					    checksum = Checksum},
-		B) -> 
-		     <<B/binary, Lifetime:16, LSP_Id:8/binary, Sequence:32, Checksum:16>> end,
-	     <<>>, LSPS),
-    encode_tlv(lsp_entry, LSPb);
+					    checksum = Checksum}) -> 
+		     <<Lifetime:16, LSP_Id:8/binary, Sequence:32, Checksum:16>> end,
+	     LSPS),
+    encode_tlv_list(lsp_entry, tlv, LSPb);
 encode_tlv(#isis_tlv_ip_internal_reachability{ip_reachability = IP_Reachability}) ->
-    IP_Rb = lists:foldr(
+    IP_Rb = lists:map(
 	      fun(#isis_tlv_ip_internal_reachability_detail{ip_address = IP_Address,
 							    subnet_mask = Subnet_Mask,
 							    default = Default,
 							    delay = Delay,
 							    expense = Expense,
-							    error = Error}, B)
+							    error = Error})
 		 -> DefaultB = encode_tlv_metric_info(default, Default),
 		    DelayB = encode_tlv_metric_info(false, Delay),
 		    ExpenseB = encode_tlv_metric_info(false, Expense),
 		    ErrorB = encode_tlv_metric_info(false, Error),
-		    <<B/binary, DefaultB/binary, DelayB/binary,
+		    <<DefaultB/binary, DelayB/binary,
 		      ExpenseB/binary, ErrorB/binary,
 		      IP_Address:32, Subnet_Mask:32>>
 	      end,
-	      <<>>, IP_Reachability),
-    encode_tlv(ip_internal_reachability, IP_Rb);
+	      IP_Reachability),
+    encode_tlv_list(ip_internal_reachability, tlv, IP_Rb);
 encode_tlv(#isis_tlv_dynamic_hostname{hostname = Hostname}) ->
-    encode_tlv(dynamic_hostname, binary:list_to_bin(Hostname));
+    encode_tlv(dynamic_hostname, tlv, binary:list_to_bin(Hostname));
 encode_tlv(#isis_tlv_ip_interface_address{addresses = Addresses}) ->
-    As = lists:foldr(fun(A, B) -> <<A:32, B/binary>> end,
-		     <<>>, Addresses),
-    encode_tlv(ip_interface_address, As);
+    As = lists:map(fun(A) -> <<A:32>> end, Addresses),
+    encode_tlv_list(ip_interface_address, tlv, As);
 encode_tlv(#isis_tlv_extended_ip_reachability{reachability = EIR}) ->
-    Bs = lists:foldr(
-	   fun(A, B) -> Ab = encode_tlv_extended_ip_reachability(A),
-			<<B/binary, Ab/binary>> end,
-	   <<>>, EIR),
-    encode_tlv(extended_ip_reachability, Bs);
+    Bs = lists:map(fun(A) -> encode_tlv_extended_ip_reachability(A) end, EIR),
+    encode_tlv_list(extended_ip_reachability, tlv, Bs);
 encode_tlv(#isis_tlv_protocols_supported{protocols = Protocols}) ->
-    Ps = lists:foldr(fun(A, B) -> At = isis_enum:to_int(protocols, A),
-				  <<At:8, B/binary>> end,
-		     <<>>, Protocols),
-    encode_tlv(protocols_supported, Ps);
+    Ps = lists:map(fun(A) -> At = isis_enum:to_int(protocols, A),
+			     <<At:8>> end, Protocols),
+    encode_tlv_list(protocols_supported, tlv, Ps);
+encode_tlv(#isis_tlv_te_router_id{router_id = Router_Id}) ->
+    encode_tlv(te_router_id, tlv, <<Router_Id:32>>);
 encode_tlv(#isis_tlv_unknown{type = Type, bytes = Bytes}) ->
-    <<Type:8, Bytes/binary>>;
+    S = byte_size(Bytes),
+    [<<Type:8, S:8, Bytes/binary>>];
 encode_tlv(_) ->
     <<>>.
 
--spec encode_tlv(atom(), binary()) -> binary().
-encode_tlv(Type, Value) ->
-    T = isis_enum:to_int(tlv, Type),
+-spec encode_tlv(atom(), atom(), binary()) -> [binary()].
+encode_tlv(Type, Enum, Value) ->
+    T = isis_enum:to_int(Enum, Type),
     S = byte_size(Value),
-    <<T:8, S:8, Value/binary>>.
+    [<<T:8, S:8, Value/binary>>].
+
+
+-spec encode_tlv_list(atom(), atom(), [binary()]) -> [binary()].
+encode_tlv_list(Type, Enum, Values) ->
+    S = binary_list_size(Values),
+    T = isis_enum:to_int(Enum, Type),
+    [<<T:8, S:8>> | Values].
+
+-spec encode_tlvs(list(), fun()) -> [binary()].
+encode_tlvs(TLVs, Encoder) ->
+    lists:map(Encoder, TLVs).
 
 %%%===================================================================
 %%% PDU decoders
@@ -381,7 +416,7 @@ encode_tlv(Type, Value) ->
 decode_lan_iih(<<_Res1:6, Circuit_Type:2, Source_ID:6/binary,
 		 Holding_Time:16, PDU_Len:16, _Res2:1, Priority:7,
 		 DIS:7/binary, TLV_Binary/binary>>, PDU_Len) ->
-    case decode_tlvs(TLV_Binary, []) of
+    case decode_tlvs(TLV_Binary, tlv, fun decode_tlv/3, []) of
 	error -> error;
 	{ok, TLVS} ->
 	    {ok, #isis_iih{circuit_type = Circuit_Type,
@@ -397,7 +432,7 @@ decode_lan_iih(_, _) -> error.
 decode_common_lsp(<<PDU_Len:16, Lifetime:16, LSP_ID:8/binary,
 		    Sequence_Number:32, _Checksum:16, _Flags:8,
 		    TLV_Binary/binary>>, PDU_Len) ->
-    case decode_tlvs(TLV_Binary, []) of
+    case decode_tlvs(TLV_Binary, tlv, fun decode_tlv/3, []) of
 	error -> error;
 	{ok, TLVS} ->
 	    {ok, #isis_lsp{pdu_type = pdu_type_unset,
@@ -412,7 +447,7 @@ decode_common_lsp(_, _) -> error.
 -spec decode_common_csnp(binary(), integer()) -> {ok, isis_csnp()} | error.
 decode_common_csnp(<<PDU_Len:16, Source:7/binary, Start:8/binary,
 		     End:8/binary, TLV_Binary/binary>>, PDU_Len) ->
-    case decode_tlvs(TLV_Binary, []) of
+    case decode_tlvs(TLV_Binary, tlv, fun decode_tlv/3, []) of
 	error -> error;
 	{ok, TLVS} ->
 	    {ok, #isis_csnp{source_id = Source,
@@ -426,7 +461,7 @@ decode_common_csnp(_, _) -> error.
 -spec decode_common_psnp(binary(), integer()) -> {ok, isis_psnp()} | error.
 decode_common_psnp(<<PDU_Len:16, Source:7/binary,
 		     TLV_Binary/binary>>, PDU_Len) ->
-    case decode_tlvs(TLV_Binary, []) of
+    case decode_tlvs(TLV_Binary, tlv, fun decode_tlv/3, []) of
 	error -> error;
 	{ok, TLVS} ->
 	    {ok, #isis_psnp{source_id = Source,
@@ -469,17 +504,29 @@ decode_pdu(_, _, _, _) -> error.
 %%% PDU encoders
 %%%===================================================================
 
+pdu_flatten(Binaries) ->
+    list_to_binary(Binaries).
+
+binary_list_size([H | T], Acc) when is_list(H) ->
+    binary_list_size(T, binary_list_size(H, Acc));
+binary_list_size([H | T], Acc) when is_binary(H) ->
+    binary_list_size(T, Acc + byte_size(H));
+binary_list_size(B, Acc) when is_binary(B)->
+    Acc + byte_size(B);
+binary_list_size([], Acc) ->
+    Acc.
+
+binary_list_size(Binaries) ->
+    binary_list_size(Binaries, 0).
+
 encode_lsp(Lsp_Type,
 	   #isis_lsp{version = Version, pdu_type = Lsp_Type,
 		     remaining_lifetime = Lifetime,
 		     lsp_id = LSP_Id, sequence_number = Sequence,
 		     tlv = TLVs} = PDU) ->
-    TLV_Bs =
-	lists:foldr(fun (A, B) ->
-			    Ab = encode_tlv(A), <<Ab/binary, B/binary>>
-		    end,
-		    <<>>, TLVs),
-    {ok, TLV_Bs}.
+    TLV_Bs = encode_tlvs(TLVs, fun encode_tlv/1),
+    Pdu = pdu_flatten(TLV_Bs),
+    {ok, Pdu}.
 				 
 
 %%%===================================================================
