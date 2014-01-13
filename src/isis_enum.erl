@@ -32,6 +32,14 @@
 	     {level2_psnp, 27}]}).
 
 %%%
+%%% ISType - isis system type
+%%%
+-enum({istype, [{error, 0},
+		{level_1, 1},
+		{level_2, 2},
+		{level_1_2, 3}]}).
+
+%%%
 %%% TLV types used in PDUs - its an 8bit field, but there are some
 %%% Sub-TLVs that are per-TLV
 %%%

@@ -85,7 +85,7 @@
 -type isis_tlv_extended_ip_reachability() :: #isis_tlv_extended_ip_reachability{}.
 
 -record (isis_tlv_extended_reachability_detail, {
-	   neighbour :: binary(),
+	   neighbor :: binary(),
 	   metric :: integer(),
 	   sub_tlv :: [isis_subtlv_eis()]}).
 -type isis_tlv_extended_reachability_detail() :: #isis_tlv_extended_reachability_detail{}.
@@ -179,6 +179,17 @@
 	  }).
 -type isis_header() :: #isis_header{}.
 
+-record (isis_iih, {
+	   circuit_type :: atom(),
+	   pdu_type :: atom(),                  %% L1 or L2
+	   source_id :: binary(),
+	   holding_time :: integer(),
+	   priority :: integer(),
+	   dis :: binary(),
+	   tlv :: [isis_tlv()]
+	  }).
+-type isis_iih() :: #isis_iih{}.
+
 %%%-------------------------------------------------------------------
 %%% IS-IS LSP
 %%% 
@@ -192,23 +203,16 @@
 %%% TLVs                      remaining bytes
 %%%-------------------------------------------------------------------
 
--record (isis_iih, {
-	   circuit_type :: integer(),
-	   pdu_type :: atom(),                  %% L1 or L2
-	   source_id :: binary(),
-	   holding_time :: integer(),
-	   priority :: integer(),
-	   dis :: binary(),
-	   tlv :: [isis_tlv()]
-	  }).
--type isis_iih() :: #isis_iih{}.
-
 -record (isis_lsp, {
 	   version :: integer(),
 	   pdu_type :: atom(),                  %% L1 or L2 LSP
 	   remaining_lifetime :: integer(),
 	   lsp_id :: binary(),
 	   sequence_number :: integer(),
+	   checksum :: integer(),
+	   partition :: atom(),
+	   overload :: atom(),
+	   isis_type :: atom(),
 	   tlv :: [isis_tlv()]
 	  }).
 -type isis_lsp() :: #isis_lsp{}.

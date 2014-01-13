@@ -13,9 +13,12 @@
 -include_lib("eunit/include/eunit.hrl").
 
 %% API
--export([decode/1, encode/2, decode_tlvs/4, encode_tlv/1, encode_lsp/2,
-	binary_list_size/1]).
--export_type([isis_pdu/0]).
+-export([decode/1, encode/1, calculate_checksum/2]).
+%% For debugging...
+-compile(export_all).
+%% The types we define and use
+-export_type([isis_pdu/0, isis_tlv/0,
+	      isis_subtlv_eir/0, isis_subtlv_eis/0]).
 
 %%%===================================================================
 %%% API
@@ -31,10 +34,10 @@
 %%     <<16#83:8, Len:8, Version:8, ID_Len:8,
 %%     _Res1:3, PDU_Type:5, PDU_Version:8, _Res2:8,
 %%     Max_Areas:8, Rest/binary>> = Binary,
-decode(Binary) when byte_size(Binary) >= ?ISIS_MIN_MSG_SIZE ->
-    <<16#83:8, Len:8, Version:8, ID_Len:8,
-    _Res1:3, PDU_Type:5, PDU_Version:8, _Res2:8,
-    Max_Areas:8, Rest/binary>> = Binary,
+decode(<<16#83:8, Len:8, Version:8, ID_Len:8,
+	 _Res1:3, PDU_Type:5, PDU_Version:8, _Res2:8,
+	 Max_Areas:8, Rest/binary>> = Binary)
+  when byte_size(Binary) >= ?ISIS_MIN_MSG_SIZE ->
     Type =
 	try isis_enum:to_atom(pdu, PDU_Type) of
 	    Atom -> Atom
@@ -55,28 +58,12 @@ decode(_Binary) -> error.
 %% @doc encode a set of IS-IS terms into a PDU
 %% @end
 %%--------------------------------------------------------------------
--spec encode(atom(), isis_pdu()) -> {ok, binary()} | error.
-encode(pdu_type_unset, _Message) ->
-    error;
-encode(level1_iih, _Message) ->
-    error;
-encode(level2_iih, _Message) ->
-    error;
-encode(p2p_iih, _Message) ->
-    error;
-encode(level1_lsp, #isis_lsp{} = LSP) ->
-    encode_lsp(level1_lsp, LSP);
-encode(level2_lsp, #isis_lsp{} = LSP) ->
-    encode_lsp(level2_lsp, LSP);
-encode(level1_csnp, _Message) ->
-    error;
-encode(level2_csnp, _Message) ->
-    error;
-encode(level1_psnp, _Message) ->
-    error;
-encode(level2_psnp, _Message) ->
-    error;
-encode(_, _) ->
+-spec encode(isis_pdu()) -> {ok, list()} | error.
+encode(#isis_iih{} = IIH) ->
+    encode_iih(IIH);
+encode(#isis_lsp{} = LSP) ->
+    encode_lsp(LSP);
+encode(_) ->
     error.
 
 %%%===================================================================
@@ -211,7 +198,7 @@ decode_tlv_extended_reachability(
     case decode_tlvs(SubTLVb, subtlv_eis, fun decode_subtlv_eis/3, []) of
 	{ok, SubTLVs} ->
 	    EIS = #isis_tlv_extended_reachability_detail{
-		     neighbour = Neighbor_Id,
+		     neighbor = Neighbor_Id,
 		     metric = Metric,
 		     sub_tlv = SubTLVs},
 	    decode_tlv_extended_reachability(Rest, [EIS | Values]);
@@ -296,6 +283,15 @@ encode_subtlv_eir_detail(#isis_subtlv_eir_admintag32{tag = Tag}) ->
 encode_subtlv_eir_detail(#isis_subtlv_eir_admintag64{tag = Tag}) ->
     Type = isis_enum:to_int(subtlv_eir, admin_tag_64bit),
     <<Type:8, 8:8, Tag:64>>.
+
+encode_subtlv_eis_detail(#isis_subtlv_eis_link_id{local = Local,
+						  remote = Remote}) ->
+    encode_tlv(link_id, subtlv_eis, <<Local:32, Remote:32>>);
+encode_subtlv_eis_detail(#isis_subtlv_eis_ipv4_interface{address = Address}) ->
+    encode_tlv(ipv4_interface, subtlv_eis, <<Address:32>>);
+encode_subtlv_eis_detail(#isis_subtlv_eis_unknown{type = Type, value = Value}) ->
+    S = byte_size(Value),
+    [<<Type:8, S:8, Value/binary>>].
 			
 -spec encode_tlv_area_address([binary()], binary()) -> binary().
 encode_tlv_area_address([A | As], B) ->
@@ -303,6 +299,20 @@ encode_tlv_area_address([A | As], B) ->
     encode_tlv_area_address(As, <<B/binary, S:8, A/binary>>);
 encode_tlv_area_address([], B) ->
     B.
+
+-spec encode_tlv_is_reachability(isis_tlv_is_reachability_detail()) -> binary().
+encode_tlv_is_reachability(
+  #isis_tlv_is_reachability_detail{neighbor = Neighbor,
+				   default = Default,
+				   delay = Delay,
+				   expense = Expense,
+				   error = Error}) ->
+    DefaultB = encode_tlv_metric_info(default, Default),
+    DelayB = encode_tlv_metric_info(false, Delay),
+    ExpenseB = encode_tlv_metric_info(false, Expense),
+    ErrorB = encode_tlv_metric_info(false, Error),
+    <<DefaultB/binary, DelayB/binary, ExpenseB/binary,
+      ErrorB/binary, Neighbor/binary>>.
 
 -spec encode_tlv_metric_info(atom(), isis_metric_information()) -> binary().
 encode_tlv_metric_info(default,
@@ -318,6 +328,22 @@ encode_tlv_metric_info(false,
     MT = isis_enum:to_int(metric_type, Metric_Type),
     <<ST:1, MT:1, Metric:6>>.
 
+-spec encode_tlv_ip_internal_reachability(isis_tlv_ip_internal_reachability_detail()) -> binary().
+encode_tlv_ip_internal_reachability(
+  #isis_tlv_ip_internal_reachability_detail{ip_address = IP_Address,
+					    subnet_mask = Subnet_Mask,
+					    default = Default,
+					    delay = Delay,
+					    expense = Expense,
+					    error = Error}) ->
+    DefaultB = encode_tlv_metric_info(default, Default),
+    DelayB = encode_tlv_metric_info(false, Delay),
+    ExpenseB = encode_tlv_metric_info(false, Expense),
+    ErrorB = encode_tlv_metric_info(false, Error),
+    <<DefaultB/binary, DelayB/binary,
+      ExpenseB/binary, ErrorB/binary,
+      IP_Address:32, Subnet_Mask:32>>.
+
 -spec encode_tlv_extended_ip_reachability(isis_tlv_extended_ip_reachability_detail()) -> [binary()].
 encode_tlv_extended_ip_reachability(
   #isis_tlv_extended_ip_reachability_detail{
@@ -326,10 +352,10 @@ encode_tlv_extended_ip_reachability(
      sub_tlv = SubTLVs}) ->
     SubTLVB = encode_tlvs(SubTLVs, fun encode_subtlv_eir_detail/1),
     SubTLV_Len = binary_list_size(SubTLVB),
-    Present = 
+    {Present, SubTLV_LenB} = 
 	case SubTLV_Len of
-	    0 -> 0;
-	    true -> 1
+	    0 -> {0, <<>>};
+	    _ -> {1, <<SubTLV_Len:8>>}
 	end,
     %%% Mask_Len -> whole bytes, then we shift to lineup
     PLenBytes = erlang:trunc((Mask_Len + 7) / 8),
@@ -337,39 +363,41 @@ encode_tlv_extended_ip_reachability(
     Calc_Prefix = Prefix bsr (32 - PLenBits),
     Up = isis_enum:to_int(boolean, UpA),
     [<<Metric:32, Up:1, Present:1, Mask_Len:6,
-      Calc_Prefix:PLenBits, SubTLV_Len:8>> | SubTLVB].
+      Calc_Prefix:PLenBits, SubTLV_LenB/binary>> | SubTLVB].
+
+-spec encode_tlv_extended_reachability(isis_tlv_extended_reachability_detail()) -> [binary()].
+encode_tlv_extended_reachability(
+  #isis_tlv_extended_reachability_detail{
+     neighbor = Neighbor_Id,
+     metric = Metric,
+     sub_tlv = SubTLVs}) ->
+    SubTLVB = encode_tlvs(SubTLVs, fun encode_subtlv_eis_detail/1),
+    SubTLV_Len = binary_list_size(SubTLVB),
+    [<<Neighbor_Id:7/binary, Metric:24, SubTLV_Len:8>> | SubTLVB].
+
+-spec encode_tlv_lsp_entry(isis_tlv_lsp_entry_detail()) -> binary().
+encode_tlv_lsp_entry(
+  #isis_tlv_lsp_entry_detail{lifetime = Lifetime,
+			     lsp_id = LSP_Id,
+			     sequence = Sequence,
+			     checksum = Checksum}) -> 
+    <<Lifetime:16, LSP_Id:8/binary, Sequence:32, Checksum:16>>.
 
 -spec encode_tlv(isis_tlv()) -> [binary()].
 encode_tlv(#isis_tlv_area_address{areas = Areas}) ->
     encode_tlv(area_address, tlv, encode_tlv_area_address(Areas, <<>>));
+encode_tlv(#isis_tlv_is_reachability{virtual = VirtualA,
+				     is_reachability = Neighbors}) ->
+    Virtual = isis_enum:to_int(boolean, VirtualA),
+    Ns = lists:map(fun encode_tlv_is_reachability/1, Neighbors),
+    encode_tlv_list(is_reachability, tlv, [<<Virtual:8>>, Ns]);
 encode_tlv(#isis_tlv_padding{size = Size}) ->
     encode_tlv(padding, tlv, <<0:(Size * 8)>>);
 encode_tlv(#isis_tlv_lsp_entry{lsps = LSPS}) ->
-    LSPb = lists:map(
-	     fun(#isis_tlv_lsp_entry_detail{lifetime = Lifetime,
-					    lsp_id = LSP_Id,
-					    sequence = Sequence,
-					    checksum = Checksum}) -> 
-		     <<Lifetime:16, LSP_Id:8/binary, Sequence:32, Checksum:16>> end,
-	     LSPS),
+    LSPb = lists:map(fun encode_tlv_lsp_entry/1, LSPS),
     encode_tlv_list(lsp_entry, tlv, LSPb);
 encode_tlv(#isis_tlv_ip_internal_reachability{ip_reachability = IP_Reachability}) ->
-    IP_Rb = lists:map(
-	      fun(#isis_tlv_ip_internal_reachability_detail{ip_address = IP_Address,
-							    subnet_mask = Subnet_Mask,
-							    default = Default,
-							    delay = Delay,
-							    expense = Expense,
-							    error = Error})
-		 -> DefaultB = encode_tlv_metric_info(default, Default),
-		    DelayB = encode_tlv_metric_info(false, Delay),
-		    ExpenseB = encode_tlv_metric_info(false, Expense),
-		    ErrorB = encode_tlv_metric_info(false, Error),
-		    <<DefaultB/binary, DelayB/binary,
-		      ExpenseB/binary, ErrorB/binary,
-		      IP_Address:32, Subnet_Mask:32>>
-	      end,
-	      IP_Reachability),
+    IP_Rb = lists:map(fun encode_tlv_ip_internal_reachability/1, IP_Reachability),
     encode_tlv_list(ip_internal_reachability, tlv, IP_Rb);
 encode_tlv(#isis_tlv_dynamic_hostname{hostname = Hostname}) ->
     encode_tlv(dynamic_hostname, tlv, binary:list_to_bin(Hostname));
@@ -377,8 +405,11 @@ encode_tlv(#isis_tlv_ip_interface_address{addresses = Addresses}) ->
     As = lists:map(fun(A) -> <<A:32>> end, Addresses),
     encode_tlv_list(ip_interface_address, tlv, As);
 encode_tlv(#isis_tlv_extended_ip_reachability{reachability = EIR}) ->
-    Bs = lists:map(fun(A) -> encode_tlv_extended_ip_reachability(A) end, EIR),
+    Bs = lists:map(fun encode_tlv_extended_ip_reachability/1, EIR),
     encode_tlv_list(extended_ip_reachability, tlv, Bs);
+encode_tlv(#isis_tlv_extended_reachability{reachability = EIS}) ->
+    Bs = lists:map(fun encode_tlv_extended_reachability/1, EIS),
+    encode_tlv_list(extended_reachability, tlv, Bs);
 encode_tlv(#isis_tlv_protocols_supported{protocols = Protocols}) ->
     Ps = lists:map(fun(A) -> At = isis_enum:to_int(protocols, A),
 			     <<At:8>> end, Protocols),
@@ -419,7 +450,8 @@ decode_lan_iih(<<_Res1:6, Circuit_Type:2, Source_ID:6/binary,
     case decode_tlvs(TLV_Binary, tlv, fun decode_tlv/3, []) of
 	error -> error;
 	{ok, TLVS} ->
-	    {ok, #isis_iih{circuit_type = Circuit_Type,
+	    CT = isis_enum:to_atom(istype, Circuit_Type),
+	    {ok, #isis_iih{circuit_type = CT,
 			   source_id = Source_ID,
 			   holding_time = Holding_Time,
 			   priority = Priority,
@@ -430,7 +462,9 @@ decode_lan_iih(_, _) -> error.
 
 -spec decode_common_lsp(binary(), integer()) -> {ok, isis_lsp()} | error.
 decode_common_lsp(<<PDU_Len:16, Lifetime:16, LSP_ID:8/binary,
-		    Sequence_Number:32, _Checksum:16, _Flags:8,
+		    Sequence_Number:32, Checksum:16,
+		    Partition:1, _ATT_Bits:4,
+		    Overload:1, Type:2,
 		    TLV_Binary/binary>>, PDU_Len) ->
     case decode_tlvs(TLV_Binary, tlv, fun decode_tlv/3, []) of
 	error -> error;
@@ -439,6 +473,10 @@ decode_common_lsp(<<PDU_Len:16, Lifetime:16, LSP_ID:8/binary,
 			   remaining_lifetime = Lifetime,
 			   lsp_id = LSP_ID,
 			   sequence_number = Sequence_Number,
+			   checksum = Checksum,
+			   partition = isis_enum:to_atom(boolean, Partition),
+			   overload = isis_enum:to_atom(boolean, Overload),
+			   isis_type = isis_enum:to_atom(istype, Type),
 			   tlv = TLVS}}
     end;
 decode_common_lsp(_, _) -> error.
@@ -503,31 +541,115 @@ decode_pdu(_, _, _, _) -> error.
 %%%===================================================================
 %%% PDU encoders
 %%%===================================================================
+isis_header(Type, Area) ->
+    T = isis_enum:to_int(pdu, Type),
+    <<16#83:8, 27:8, 1:8, 0:8, 0:3, T:5, 1:8, 0:8,
+      Area:8>>.
 
-pdu_flatten(Binaries) ->
-    list_to_binary(Binaries).
+-spec encode_iih(isis_iih()) -> {ok, list()} | error.
+encode_iih(#isis_iih{pdu_type = Type,
+		     circuit_type = Circuit_Type,
+		     source_id = Source_Id,
+		     holding_time = Holding_Time,
+		     priority = Priority,
+		     dis = DIS,
+		     tlv = TLVs}) ->
+    Header = isis_header(Type, 0),
+    CT = isis_enum:to_int(istype, Circuit_Type),
+    IIH1 = <<0:6, CT:2, Source_Id:6/binary, Holding_Time:16>>,
+    IIH2 = <<0:1, Priority:7, DIS:7/binary>>,
+    TLV_Bs = encode_tlvs(TLVs, fun encode_tlv/1),
+    Len = binary_list_size([Header, IIH1, IIH2, TLV_Bs]) + 2,
+    {ok, [Header, IIH1, <<Len:16>>, IIH2, TLV_Bs]}.
 
+-spec encode_lsp(isis_lsp()) -> {ok, list()} | error.
+encode_lsp(#isis_lsp{version = _Version, pdu_type = Lsp_Type,
+		     remaining_lifetime = Lifetime,
+		     lsp_id = LSP_Id, sequence_number = Sequence,
+		     partition = Partition, overload = Overload,
+		     isis_type = ISType, tlv = TLVs}) ->
+    Header = isis_header(Lsp_Type, 0),
+    Pb = isis_enum:to_int(boolean, Partition),
+    Ob = isis_enum:to_int(boolean, Overload),
+    Ib = isis_enum:to_int(istype, ISType),
+    Lsp_Hdr1 = <<Lifetime:16>>,
+    Lsp_Hdr2 = <<LSP_Id/binary, Sequence:32>>,
+    %% Hard code ATT bits to zero, deprecated...
+    Lsp_Hdr3 = <<Pb:1, 0:4, Ob:1, Ib:2>>,
+    TLV_Bs = encode_tlvs(TLVs, fun encode_tlv/1),
+    Len = binary_list_size([Header, Lsp_Hdr1, Lsp_Hdr2, Lsp_Hdr3, TLV_Bs]) + 4,
+    {CSum1, CSum2} = calculate_checksum([Lsp_Hdr2, <<0:16>>, Lsp_Hdr3, TLV_Bs], 12),
+    {ok, [Header, <<Len:16>>, Lsp_Hdr1, Lsp_Hdr2,
+	  <<CSum1:8, CSum2:8>>, Lsp_Hdr3, TLV_Bs]}.
+
+%%%===================================================================
+%%% Utility functions
+%%%===================================================================
+
+%%--------------------------------------------------------------------
+%% @doc Converts a deeplist into a size, used rather than flattening
+%% the list of lists of binarys that are used to build PDUs
+%% @end
+%%--------------------------------------------------------------------
 binary_list_size([H | T], Acc) when is_list(H) ->
     binary_list_size(T, binary_list_size(H, Acc));
 binary_list_size([H | T], Acc) when is_binary(H) ->
     binary_list_size(T, Acc + byte_size(H));
-binary_list_size(B, Acc) when is_binary(B)->
-    Acc + byte_size(B);
+%binary_list_size(B, Acc) when is_binary(B)->
+%    Acc + byte_size(B);
 binary_list_size([], Acc) ->
     Acc.
 
 binary_list_size(Binaries) ->
     binary_list_size(Binaries, 0).
 
-encode_lsp(Lsp_Type,
-	   #isis_lsp{version = Version, pdu_type = Lsp_Type,
-		     remaining_lifetime = Lifetime,
-		     lsp_id = LSP_Id, sequence_number = Sequence,
-		     tlv = TLVs} = PDU) ->
-    TLV_Bs = encode_tlvs(TLVs, fun encode_tlv/1),
-    Pdu = pdu_flatten(TLV_Bs),
-    {ok, Pdu}.
-				 
+%%--------------------------------------------------------------------
+%% @doc Takes a list of binaries (deeplist style) and calculates the
+%% fletcher checksum. If this has been called with the checksum in
+%% place, the result should be {0,0} to show the checksum is valid.
+%%
+%% @end
+%%--------------------------------------------------------------------
+-spec fletcher_checksum(list(), {integer(), integer()}) -> {integer(), integer()}.
+fletcher_checksum([H|T], {CSum1, CSum2}) ->
+    CSum = lists:foldl(fun(A, {Sum1, Sum2}) ->
+			       S1 = ((Sum1 + A) rem 255),
+			       S2 = ((Sum2 + S1) rem 255),
+			       {S1, S2}
+		       end,
+		       {CSum1, CSum2}, [X || <<X:8>> <= H]),
+    fletcher_checksum(T, CSum);
+fletcher_checksum([], {CSum1, CSum2}) ->
+    {CSum1, CSum2}.
+
+verify_checksum(V) ->
+    fletcher_checksum(lists:flatten(V), {0, 0}) == {0, 0}.
+
+%%--------------------------------------------------------------------
+%% @doc Computes the checksum to be used in the packet. This requires
+%% to now the offset where the checksum will be placed and needs to
+%% know the length, so for now we flatten the deeplist (ugh).
+%%
+%% Its left to the caller to install the checksum, and assumes that
+%% the current place for the checksum is already zero.
+%%
+%% @end
+%%--------------------------------------------------------------------
+-spec calculate_checksum(list(), integer()) -> {integer(), integer()}.
+calculate_checksum(V, Offset) ->
+    B = list_to_binary(V),
+    {CSum1, CSum2} = fletcher_checksum([B], {0, 0}),
+    X1 = ((byte_size(B) - Offset -1) * CSum1 - CSum2) rem 255,
+    X = case X1 =< 0 of
+	     true -> (X1 + 255);
+	     false -> X1
+	 end,
+    Y1 = 510 - CSum1 - X,
+    Y  = case Y1 >= 255 of
+	     true -> Y1 - 255;
+	     false -> Y1
+	 end,
+    {X, Y}.
 
 %%%===================================================================
 %%% EUnit tests
@@ -541,5 +663,6 @@ isis_protocol_test() ->
     ?assertMatch({ok, _CSNP}, DecodedCSNPResult),
     {ok, LSP} = DecodeDLSPResult,
     %% Expected to fail from here for now...
-    {ok, EncodedLSP} = isis_protocol:encode(level2_lsp, LSP),
-    ?assertMatch(EncodedLSP, isis_debug:valid_lsp()).
+    {ok, EncodedLSP} = isis_protocol:encode(LSP),
+    ELSP = list_to_binary(EncodedLSP),
+    ?assertMatch(ELSP, isis_debug:valid_lsp()).
