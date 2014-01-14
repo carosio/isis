@@ -228,7 +228,7 @@
 
 -record (isis_psnp, {
 	   pdu_type :: atom(),
-	  source_id :: binary(),
+	   source_id :: binary(),
 	   tlv :: [isis_tlv()]
 	  }).
 -type isis_psnp() :: #isis_psnp{}.
