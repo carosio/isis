@@ -62,7 +62,7 @@
 	     {extended_ip_reachability, 135},
 	     {dynamic_hostname, 137},
 	     {slrg, 138},
-	     {restart_signaling, 211},
+	     {restart, 211},
 	     {mt_is_reachability, 222},
 	     {mt_supported, 229},
 	     {ipv6_interface_address, 232},

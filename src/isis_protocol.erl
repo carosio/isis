@@ -207,7 +207,7 @@ decode_tlv_extended_reachability(
 		     sub_tlv = SubTLVs},
 	    decode_tlv_extended_reachability(Rest, [EIS | Values]);
 	_ -> error
-    end;
+    end;    
 decode_tlv_extended_reachability(<<>>, Values) ->
     lists:reverse(Values);
 decode_tlv_extended_reachability(_, _) -> error.
@@ -248,13 +248,37 @@ decode_tlv(ip_interface_address, _Type, Value) ->
     Addresses = [X || <<X:32>> <= Value],
     #isis_tlv_ip_interface_address{addresses = Addresses};
 decode_tlv(protocols_supported, _Type, Value) ->
-    Protocols = [isis_enum:to_atom(protocols, X)
-		 || X <- binary:bin_to_list(Value)],
+    Protocols = [isis_enum:to_atom(protocols, X) || <<X:8>> <= Value],
     #isis_tlv_protocols_supported{protocols = Protocols};
 decode_tlv(te_router_id, _Type, <<Router_Id:32>>) ->
     #isis_tlv_te_router_id{router_id = Router_Id};
+decode_tlv(restart, _Type,
+	   <<_Res:5, Supress:1, Ack:1, Restart:1>>) ->
+    #isis_tlv_restart{
+       request = isis_enum:to_atom(boolean, Restart),
+       acknowledge = isis_enum:to_atom(boolean, Ack),
+       supress_adjacency = isis_enum:to_atom(boolean, Supress),
+       remaining = -1,
+       neighbor = <<>>};
+decode_tlv(restart, _Type,
+	   <<_Res:5, Supress:1, Ack:1, Restart:1, Remaining:16>>) ->
+    #isis_tlv_restart{
+       request = isis_enum:to_atom(boolean, Restart),
+       acknowledge = isis_enum:to_atom(boolean, Ack),
+       supress_adjacency = isis_enum:to_atom(boolean, Supress),
+       remaining = Remaining,
+       neighbor = <<>>};
+decode_tlv(restart, _Type,
+	   <<_Res:5, Supress:1, Ack:1, Restart:1, Remaining:16, Neighbor:6/binary>>) ->
+    #isis_tlv_restart{
+       request = isis_enum:to_atom(boolean, Restart),
+       acknowledge = isis_enum:to_atom(boolean, Ack),
+       supress_adjacency = isis_enum:to_atom(boolean, Supress),
+       remaining = Remaining,
+       neighbor = Neighbor};
 decode_tlv(unknown, Type, Value) ->
     #isis_tlv_unknown{type = Type, bytes = Value};
+
 decode_tlv(_, Type, Value) ->
     decode_tlv(unknown, Type, Value).
 

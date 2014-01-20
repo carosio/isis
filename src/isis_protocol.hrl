@@ -106,6 +106,14 @@
 	   router_id :: integer()}).
 -type isis_tlv_te_router_id() :: #isis_tlv_te_router_id{}.
 
+-record (isis_tlv_restart, {
+	   request :: boolean(),
+	   acknowledge :: boolean(),
+	   supress_adjacency :: boolean(),
+	   remaining :: integer(),
+	   neighbor :: binary()}).
+-type isis_tlv_restart() :: #isis_tlv_restart{}.
+
 -type isis_tlv() ::
 	isis_tlv_area_address() |
 	isis_tlv_is_reachability() |
@@ -118,6 +126,7 @@
 	isis_tlv_extended_reachability() |
 	isis_tlv_protocols_supported() |
 	isis_tlv_te_router_id() |
+	isis_tlv_restart() |
 	isis_tlv_unknown().
 
 %%%===================================================================

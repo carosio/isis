@@ -10,6 +10,8 @@
 
 -include("isis_protocol.hrl").
 
+-define(ETH_P_802_2, 16#0400).
+
 -define(TEST_INVALID_LSP,
   <<16#83, 16#1B>>).
 -define(TEST_VALID_LSP,
@@ -96,6 +98,30 @@ valid_csnp() ->
 
 invalid_lsp() ->
     ?TEST_INVALID_LSP.
+
+debug_socket(Ifindex) ->
+    {ok, Ref} = inert:start(),
+    {ok, S} = procket:open(0, [{progname, "sudo /usr/local/bin/procket"},
+			       {family, packet},
+			       {type, raw},
+			       {protocol, ?ETH_P_802_2}]),
+    Family = procket:family(packet),
+    LL = <<Family:16/native, ?ETH_P_802_2:16/native, Ifindex:32/native,
+	   0:16, 0:8, 0:8, 0:8/unit:8>>,
+    io:format("LL size: ~p (~p)~n", [byte_size(LL), LL]),
+    ok = procket:bind(S, LL),
+    %% run_socket(Ref, S).
+    erlang:open_port({fd, S, S}, [binary, stream]).
+
+run_socket(Ref, S) ->
+    inert:poll(Ref, S, [{mode, read}]),
+    case procket:recvfrom(S, 2048) of
+	{ok, <<_R:17/binary, PDU/binary>>} ->
+	    io:format("Received: ~p~n", [isis_protocol:decode(PDU)]),
+	    
+	    run_socket(Ref, S);
+	_ -> error
+    end.
 
 %%%===================================================================
 %%% Internal functions
