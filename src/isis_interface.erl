@@ -57,7 +57,7 @@
 %% @end
 %%--------------------------------------------------------------------
 start_link(Args) ->
-    gen_server:start_link({local, ?SERVER}, ?MODULE, Args, []).
+    gen_server:start_link(?MODULE, Args, []).
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -250,7 +250,8 @@ handle_pdu(From, #isis_iih{} = IIH,
 		gen_fsm:send_event(Pid, {iih, IIH}),
 		Adjs;
 	    _ ->
-		{ok, NewPid} = isis_adjacency:start_link([{snpa, State#state.mac},
+		{ok, NewPid} = isis_adjacency:start_link([{neighbor, From},
+							  {snpa, State#state.mac},
 							  {interface, self()}]),
 		gen_fsm:send_event(NewPid, {iih, IIH}),
 		dict:store(From, NewPid, Adjs)

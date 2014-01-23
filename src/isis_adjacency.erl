@@ -24,6 +24,7 @@
 -define(SERVER, ?MODULE).
 
 -record(state, {
+	  neighbor,      %% Neighbor's SNPA (ie. whom we're adjacent with)
 	  interface,     %% PID handling the interface
 	  snpa,          %% Our SNPA
 	  timer          %% Hold timer for this adjacency
@@ -43,7 +44,7 @@
 %% @end
 %%--------------------------------------------------------------------
 start_link(Args) ->
-    gen_fsm:start_link({local, ?SERVER}, ?MODULE, Args, []).
+    gen_fsm:start_link(?MODULE, Args, []).
 
 %%%===================================================================
 %%% gen_fsm callbacks
@@ -114,11 +115,18 @@ up({iih, IIH}, State) ->
 	    _ -> State
 	end,
     {next_state, up, NewState};
+up({timeout}, State) ->
+    NewState = start_timer(State),
+    {next_state, down, NewState};
 up(stop, State) ->
     {stop, stop, State}.
 
-down({iih, IIH}, State) ->
-    {next_state, init, State};
+down({iih, _}, State) ->
+    NewState = start_timer(State),
+    {next_state, init, NewState};
+down({timeout}, State) ->
+    cancel_timer(State),
+    {stop, timeout, State};
 down(stop, State) ->
     {stop, stop, State}.
 
@@ -227,6 +235,8 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+parse_args([{neighbor, Value} | T], State) ->
+    parse_args(T, State#state{neighbor = Value});
 parse_args([{snpa, Value} | T], State) ->
     parse_args(T, State#state{snpa = Value});
 parse_args([{interface, Pid} | T], State) ->
