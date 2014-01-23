@@ -58,7 +58,7 @@ decode(_Binary) -> error.
 %% @doc encode a set of IS-IS terms into a PDU
 %% @end
 %%--------------------------------------------------------------------
--spec encode(isis_pdu()) -> {ok, list()} | error.
+-spec encode(isis_pdu()) -> {ok, list(), integer()} | error.
 encode(#isis_iih{} = IIH) ->
     encode_iih(IIH);
 encode(#isis_lsp{} = LSP) ->
@@ -223,6 +223,9 @@ decode_tlv_extended_reachability(_, _) -> error.
 decode_tlv(area_address, _Type, Value) ->
     Areas = decode_tlv_area_address(Value, []),
     #isis_tlv_area_address{areas = Areas};
+decode_tlv(is_neighbors, _Type, Value) ->
+    Neighbors = [X || <<X:6/binary>> <= Value],
+    #isis_tlv_is_neighbors{neighbors = Neighbors};
 decode_tlv(is_reachability, _Type, <<Virtual:8, Rest/binary>>) ->
     VirtualA = isis_enum:to_atom(boolean, Virtual),
     Neighbors = decode_tlv_is_reachability(Rest, []),
@@ -247,6 +250,9 @@ decode_tlv(extended_reachability, _Type, Value) ->
 decode_tlv(ip_interface_address, _Type, Value) ->
     Addresses = [X || <<X:32>> <= Value],
     #isis_tlv_ip_interface_address{addresses = Addresses};
+decode_tlv(ipv6_interface_address, _Type, Value) ->
+    Addresses = [X || <<X:16/binary>> <= Value],
+    #isis_tlv_ipv6_interface_address{addresses = Addresses};
 decode_tlv(protocols_supported, _Type, Value) ->
     Protocols = [isis_enum:to_atom(protocols, X) || <<X:8>> <= Value],
     #isis_tlv_protocols_supported{protocols = Protocols};
@@ -419,6 +425,8 @@ encode_tlv(#isis_tlv_is_reachability{virtual = VirtualA,
     Virtual = isis_enum:to_int(boolean, VirtualA),
     Ns = lists:map(fun encode_tlv_is_reachability/1, Neighbors),
     encode_tlv_list(is_reachability, tlv, [<<Virtual:8>>, Ns]);
+encode_tlv(#isis_tlv_is_neighbors{neighbors = Neighbors}) ->
+    encode_tlv_list(is_neighbors, tlv, Neighbors);
 encode_tlv(#isis_tlv_padding{size = Size}) ->
     encode_tlv(padding, tlv, <<0:(Size * 8)>>);
 encode_tlv(#isis_tlv_lsp_entry{lsps = LSPS}) ->
@@ -573,7 +581,7 @@ isis_header(Type, Len, Area) ->
     <<16#83:8, Len:8, 1:8, 0:8, 0:3, T:5, 1:8, 0:8,
       Area:8>>.
 
--spec encode_iih(isis_iih()) -> {ok, list()} | error.
+-spec encode_iih(isis_iih()) -> {ok, list(), integer()} | error.
 encode_iih(#isis_iih{pdu_type = Type,
 		     circuit_type = Circuit_Type,
 		     source_id = Source_Id,
@@ -587,9 +595,10 @@ encode_iih(#isis_iih{pdu_type = Type,
     IIH2 = <<0:1, Priority:7, DIS:7/binary>>,
     TLV_Bs = encode_tlvs(TLVs, fun encode_tlv/1),
     Len = binary_list_size([Header, IIH1, IIH2, TLV_Bs]) + 2,
-    {ok, [Header, IIH1, <<Len:16>>, IIH2, TLV_Bs]}.
+    Pdu = [Header, IIH1, <<Len:16>>, IIH2, TLV_Bs],
+    {ok, Pdu, Len}.
 
--spec encode_lsp(isis_lsp()) -> {ok, list()} | error.
+-spec encode_lsp(isis_lsp()) -> {ok, list(), integer()} | error.
 encode_lsp(#isis_lsp{version = _Version, pdu_type = Lsp_Type,
 		     remaining_lifetime = Lifetime,
 		     lsp_id = LSP_Id, sequence_number = Sequence,
@@ -606,10 +615,11 @@ encode_lsp(#isis_lsp{version = _Version, pdu_type = Lsp_Type,
     TLV_Bs = encode_tlvs(TLVs, fun encode_tlv/1),
     Len = binary_list_size([Header, Lsp_Hdr1, Lsp_Hdr2, Lsp_Hdr3, TLV_Bs]) + 4,
     {CSum1, CSum2} = calculate_checksum([Lsp_Hdr2, <<0:16>>, Lsp_Hdr3, TLV_Bs], 12),
-    {ok, [Header, <<Len:16>>, Lsp_Hdr1, Lsp_Hdr2,
-	  <<CSum1:8, CSum2:8>>, Lsp_Hdr3, TLV_Bs]}.
+    PDU = [Header, <<Len:16>>, Lsp_Hdr1, Lsp_Hdr2,
+	  <<CSum1:8, CSum2:8>>, Lsp_Hdr3, TLV_Bs],
+    {ok, PDU, Len}.
 
--spec encode_csnp(isis_csnp()) -> {ok, list()} | error.
+-spec encode_csnp(isis_csnp()) -> {ok, list(), integer()} | error.
 encode_csnp(#isis_csnp{pdu_type = Type, source_id = Source_Id,
 		       start_lsp_id = Start_LSP, end_lsp_id = End_LSP,
 		       tlv = TLVs}) ->
@@ -617,16 +627,16 @@ encode_csnp(#isis_csnp{pdu_type = Type, source_id = Source_Id,
     CSNP = <<Source_Id:7/binary, Start_LSP:8/binary, End_LSP:8/binary>>,
     TLV_Bs = encode_tlvs(TLVs, fun encode_tlv/1),
     Len = binary_list_size([Header, CSNP, TLV_Bs]) + 2,
-    {ok, [Header, <<Len:16>>, CSNP, TLV_Bs]}.
+    {ok, [Header, <<Len:16>>, CSNP, TLV_Bs], Len}.
 
--spec encode_psnp(isis_psnp()) -> {ok, list()} | error.
+-spec encode_psnp(isis_psnp()) -> {ok, list(), integer()} | error.
 encode_psnp(#isis_psnp{pdu_type = Type, source_id = Source_Id,
 		       tlv = TLVs}) ->
     Header = isis_header(Type, 27, 0),
     PSNP = <<Source_Id:7/binary>>,
     TLV_Bs = encode_tlvs(TLVs, fun encode_tlv/1),
     Len = binary_list_size([Header, PSNP, TLV_Bs]) + 2,
-    {ok, [Header, <<Len:16>>, PSNP, TLV_Bs]}.
+    {ok, [Header, <<Len:16>>, PSNP, TLV_Bs], Len}.
 
 %%%===================================================================
 %%% Utility functions
@@ -709,6 +719,6 @@ isis_protocol_test() ->
     ?assertMatch({ok, _CSNP}, DecodedCSNPResult),
     {ok, LSP} = DecodeDLSPResult,
     %% Expected to fail from here for now...
-    {ok, EncodedLSP} = isis_protocol:encode(LSP),
+    {ok, EncodedLSP, _Len} = isis_protocol:encode(LSP),
     ELSP = list_to_binary(EncodedLSP),
     ?assertMatch(ELSP, isis_debug:valid_lsp()).
