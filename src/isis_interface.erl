@@ -326,13 +326,15 @@ create_sockaddr_ll(Ifindex) ->
 interface_details(Socket, Name) ->
     N = list_to_binary(Name),
     Req = <<N/binary, 0:(8*(40 - byte_size(N)))>>,
-    {ok, Mac_Response} = procket:ioctl(Socket,
-				      ?SIOCGIFHWADDR, Req),
-    {ok, Ifindex_Response} = procket:ioctl(Socket,
-					  ?SIOCGIFINDEX, Req),
-    {ok, MTU_Response} = procket:ioctl(Socket,
-				       ?SIOCGIFMTU, Req),
-    <<_:16/binary, I:32/native, _/binary>> = Ifindex_Response,
-    <<_:18/binary, Mac:6/binary, _/binary>> = Mac_Response,
-    <<_:16/binary, MTU:16/native, _/binary>> = MTU_Response,
-    {I, Mac, MTU}.
+    case procket:ioctl(Socket, ?SIOCGIFHWADDR, Req) of
+	{error, _} -> error;
+	{ok, Mac_Response} -> 
+	    {ok, Ifindex_Response} = procket:ioctl(Socket,
+						   ?SIOCGIFINDEX, Req),
+	    {ok, MTU_Response} = procket:ioctl(Socket,
+					       ?SIOCGIFMTU, Req),
+	    <<_:16/binary, I:32/native, _/binary>> = Ifindex_Response,
+	    <<_:18/binary, Mac:6/binary, _/binary>> = Mac_Response,
+	    <<_:16/binary, MTU:16/native, _/binary>> = MTU_Response,
+	    {I, Mac, MTU}
+    end.

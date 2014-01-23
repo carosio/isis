@@ -108,7 +108,12 @@ init(stop, State) ->
     {stop, stop, State}.
 
 up({iih, IIH}, State) ->
-    {next_state, up, State};
+    NewState =
+	case seen_ourselves(IIH, State) of
+	    true -> start_timer(State);
+	    _ -> State
+	end,
+    {next_state, up, NewState};
 up(stop, State) ->
     {stop, stop, State}.
 
@@ -249,8 +254,12 @@ cancel_timer(State) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec seen_ourselves(isis_iih(), tuple()) -> boolean().
-seen_ourselves(#isis_iih{tlv = TLVS}, State) ->
-    io:format("TLVs: ~p ~n", [TLVS]),
-    false.
+seen_ourselves(#isis_iih{tlv = TLVs}, State) ->
+    R = lists:map(fun(A) -> seen_ourselves_tlv(A, State) end,
+		  TLVs),
+    length(R) > 0.
 
+seen_ourselves_tlv(#isis_tlv_is_neighbors{neighbors = N}, State) ->
+    lists:filter(fun(A) -> A =:= State#state.snpa end, N);
+seen_ourselves_tlv(_, _) ->
+    [].
