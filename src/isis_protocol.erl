@@ -124,8 +124,8 @@ decode_tlv_lsp_entry(<<>>, LSPs) ->
 decode_tlv_lsp_entry(<<Lifetime:16, LSP_Id:8/binary,
 		       Sequence:32, Checksum:16, Rest/binary>>, LSPs) ->
     decode_tlv_lsp_entry(Rest, [#isis_tlv_lsp_entry_detail{
-				   lifetime = Lifetime,
 				   lsp_id = LSP_Id,
+				   lifetime = Lifetime,
 				   sequence = Sequence,
 				   checksum = Checksum}
 				| LSPs]);
@@ -253,6 +253,16 @@ decode_tlv(ip_interface_address, _Type, Value) ->
 decode_tlv(ipv6_interface_address, _Type, Value) ->
     Addresses = [X || <<X:16/binary>> <= Value],
     #isis_tlv_ipv6_interface_address{addresses = Addresses};
+decode_tlv(ipv6_reachability, _Type, <<Metric:32, Up:1, X:1, _S:1,
+				       _Res:5, PLen:8, Rest/binary>>) ->
+    PLenBytes = erlang:trunc((PLen + 7) / 8),
+    <<Prefix:PLenBytes/binary, SubTLV/binary>> = Rest,
+    #isis_tlv_ipv6_reachability{metric = Metric,
+				 up = isis_enum:to_atom(boolean, Up),
+				 external = isis_enum:to_atom(boolean, X),
+				 mask_len = PLen,
+				 prefix = Prefix,
+				 sub_tlv = SubTLV};
 decode_tlv(protocols_supported, _Type, Value) ->
     Protocols = [isis_enum:to_atom(protocols, X) || <<X:8>> <= Value],
     #isis_tlv_protocols_supported{protocols = Protocols};
@@ -443,6 +453,22 @@ encode_tlv(#isis_tlv_ip_interface_address{addresses = Addresses}) ->
 encode_tlv(#isis_tlv_extended_ip_reachability{reachability = EIR}) ->
     Bs = lists:map(fun encode_tlv_extended_ip_reachability/1, EIR),
     encode_tlv_list(extended_ip_reachability, tlv, Bs);
+encode_tlv(#isis_tlv_ipv6_interface_address{addresses = Addresses}) ->
+    Bs = lists:map(fun(B) -> <<B:16/binary>> end, Addresses),
+    encode_tlv_list(ipv6_interface_address, tlv, Bs);
+encode_tlv(#isis_tlv_ipv6_reachability{metric = Metric, up = Up, external = External,
+				       mask_len = Mask_Len, prefix = Prefix,
+				       sub_tlv = Sub_TLV}) ->
+    P = case byte_size(Sub_TLV) of
+	    0 -> 0;
+	    _ -> 1
+	end,
+    U = isis_enum:to_int(boolean, Up),
+    E = isis_enum:to_int(boolean, External),
+    PBytes = erlang:trunc((Mask_Len + 7) / 8),
+    encode_tlv(ipv6_reachability, tlv,
+	       <<Metric:32, U:1, E:1, P:1, 0:5,
+		 Mask_Len:8, Prefix:PBytes/binary, Sub_TLV/binary>>);
 encode_tlv(#isis_tlv_extended_reachability{reachability = EIS}) ->
     Bs = lists:map(fun encode_tlv_extended_reachability/1, EIS),
     encode_tlv_list(extended_reachability, tlv, Bs);
@@ -496,7 +522,8 @@ decode_lan_iih(<<_Res1:6, Circuit_Type:2, Source_ID:6/binary,
 decode_lan_iih(_, _) -> error.
 
 -spec decode_common_lsp(binary(), integer()) -> {ok, isis_lsp()} | error.
-decode_common_lsp(<<PDU_Len:16, Lifetime:16, LSP_ID:8/binary,
+decode_common_lsp(<<PDU_Len:16, Lifetime:16,
+		    Sys_Id:6/binary, Pnode:8, Fragment:8,
 		    Sequence_Number:32, Checksum:16,
 		    Partition:1, _ATT_Bits:4,
 		    Overload:1, Type:2,
@@ -504,9 +531,11 @@ decode_common_lsp(<<PDU_Len:16, Lifetime:16, LSP_ID:8/binary,
     case decode_tlvs(TLV_Binary, tlv, fun decode_tlv/3, []) of
 	error -> error;
 	{ok, TLVS} ->
+	    LSP_ID = <<Sys_Id:6/binary, Pnode:8, Fragment:8>>,
 	    {ok, #isis_lsp{pdu_type = pdu_type_unset,
-			   remaining_lifetime = Lifetime,
 			   lsp_id = LSP_ID,
+			   last_update = erlang:now(),
+			   remaining_lifetime = Lifetime,
 			   sequence_number = Sequence_Number,
 			   checksum = Checksum,
 			   partition = isis_enum:to_atom(boolean, Partition),
@@ -601,7 +630,8 @@ encode_iih(#isis_iih{pdu_type = Type,
 -spec encode_lsp(isis_lsp()) -> {ok, list(), integer()} | error.
 encode_lsp(#isis_lsp{version = _Version, pdu_type = Lsp_Type,
 		     remaining_lifetime = Lifetime,
-		     lsp_id = LSP_Id, sequence_number = Sequence,
+		     lsp_id = LSP_Id,
+		     sequence_number = Sequence,
 		     partition = Partition, overload = Overload,
 		     isis_type = ISType, tlv = TLVs}) ->
     Header = isis_header(Lsp_Type, 27, 0),
@@ -609,7 +639,7 @@ encode_lsp(#isis_lsp{version = _Version, pdu_type = Lsp_Type,
     Ob = isis_enum:to_int(boolean, Overload),
     Ib = isis_enum:to_int(istype, ISType),
     Lsp_Hdr1 = <<Lifetime:16>>,
-    Lsp_Hdr2 = <<LSP_Id/binary, Sequence:32>>,
+    Lsp_Hdr2 = <<LSP_Id:8/binary, Sequence:32>>,
     %% Hard code ATT bits to zero, deprecated...
     Lsp_Hdr3 = <<Pb:1, 0:4, Ob:1, Ib:2>>,
     TLV_Bs = encode_tlvs(TLVs, fun encode_tlv/1),
@@ -706,6 +736,16 @@ calculate_checksum(V, Offset) ->
 	     false -> Y1
 	 end,
     {X, Y}.
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Jitter the timer according to the percent provided
+%%
+%% @end
+%%--------------------------------------------------------------------
+-spec jitter(integer(), integer()) -> integer().
+jitter(Miliseconds, JitterPercent) ->
+    round(Miliseconds * ((100-random:uniform(JitterPercent)) / 100)).
 
 %%%===================================================================
 %%% EUnit tests

@@ -8,6 +8,7 @@
 %%%-------------------------------------------------------------------
 
 -define(ISIS_MIN_MSG_SIZE, 27).
+-define(ISIS_HELLO_JITTER, 25).
 
 %%%===================================================================
 %%% TLV records
@@ -43,8 +44,8 @@
 -type isis_tlv_padding() :: #isis_tlv_padding{}.
 
 -record (isis_tlv_lsp_entry_detail, {
-	   lifetime :: integer(),
 	   lsp_id :: binary(),
+	   lifetime :: integer(),
 	   sequence :: integer(),
 	   checksum :: integer()}).
 -type isis_tlv_lsp_entry_detail() :: #isis_tlv_lsp_entry_detail{}.
@@ -106,6 +107,15 @@
 	   addresses :: [binary()]}).
 -type isis_tlv_ipv6_interface_address() :: #isis_tlv_ipv6_interface_address{}.
 
+-record (isis_tlv_ipv6_reachability, {
+	   metric :: integer(),
+	   up :: boolean(),
+	   external :: boolean(),
+	   mask_len :: integer(),
+	   prefix :: binary(),
+	   sub_tlv :: binary()}).
+-type isis_tlv_ipv6_reachability() :: #isis_tlv_ipv6_reachability{}.
+
 -record (isis_tlv_protocols_supported, {
 	   protocols :: [atom()]}).
 -type isis_tlv_protocols_supported() :: #isis_tlv_protocols_supported{}.
@@ -131,6 +141,7 @@
 	isis_tlv_dynamic_hostname() |
 	isis_tlv_ip_interface_address() |
 	isis_tlv_ipv6_interface_address() |
+	isis_tlv_ipv6_reachability() |
 	isis_tlv_ip_internal_reachability() |
 	isis_tlv_extended_ip_reachability() |
 	isis_tlv_extended_reachability() |
@@ -223,10 +234,11 @@
 %%%-------------------------------------------------------------------
 
 -record (isis_lsp, {
+	   lsp_id :: binary(),                  %% The key
+	   last_update :: {integer(), integer(), integer()},
 	   version :: integer(),
 	   pdu_type :: atom(),                  %% L1 or L2 LSP
 	   remaining_lifetime :: integer(),
-	   lsp_id :: binary(),
 	   sequence_number :: integer(),
 	   checksum :: integer(),
 	   partition :: atom(),

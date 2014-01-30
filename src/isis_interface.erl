@@ -13,9 +13,10 @@
 -include("isis_protocol.hrl").
 
 -define(DEFAULT_INTERVAL, 10).
--define(SIOCGIFINDEX, 16#8933).
--define(SIOCGIFHWADDR, 16#8927).
 -define(SIOCGIFMTU, 16#8921).
+-define(SIOCGIFHWADDR, 16#8927).
+-define(SIOCADDMULTI, 16#8931).
+-define(SIOCGIFINDEX, 16#8933).
 
 %% API
 -export([start_link/1, send_packet/2, stop/1,
@@ -23,6 +24,7 @@
 
 %% Debug export
 -export([]).
+-compile(export_all).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -42,7 +44,8 @@
 	  hello_interval,  %% Hello interval
 	  hold_time,       %% Hold time
 	  timer,           %% Timer reference
-	  adjacencies      %% Dict for SNPA -> FSM pid
+	  adjacencies,     %% Dict for SNPA -> FSM pid
+	  dis              %% DIS for this interface
 	 }).
 
 %%%===================================================================
@@ -53,7 +56,7 @@
 %% @doc
 %% Starts the server
 %%
-%% @spec start_link() -> {ok, Pid} | ignore | {error, Error}
+%% @spec start_link(list()) -> {ok, Pid} | ignore | {error, Error}
 %% @end
 %%--------------------------------------------------------------------
 start_link(Args) ->
@@ -97,7 +100,6 @@ init([{Name, Ref}]) ->
 		   hello_interval = ?DEFAULT_INTERVAL,
 		   hold_time = (3 * ?DEFAULT_INTERVAL),
 		   timer = Timer, adjacencies = dict:new()},
-    send_iih(State),
     {ok, State}.
 
 %%--------------------------------------------------------------------
@@ -197,8 +199,10 @@ handle_info({timeout, _Ref, trigger}, State) ->
     erlang:cancel_timer(State#state.timer),
     send_iih(State),
     Timer = 
-	erlang:start_timer((State#state.hello_interval * 1000),
-			   self(), trigger),
+	erlang:start_timer(
+	  isis_protocol:jitter((State#state.hello_interval * 1000),
+			       ?ISIS_HELLO_JITTER),
+	  self(), trigger),
     {noreply, State#state{timer = Timer}};
 
 handle_info(Info, State) ->
@@ -233,15 +237,165 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+send_lsps(LSPs, State) ->
+    lists:map(fun(L) -> case isis_protocol:encode(L) of
+			    {ok, Bin, Len} -> send_pdu(Bin, Len, State);
+			    _ -> io:format("Failed to encode LSP ~p~n",
+					   [L#isis_lsp.lsp_id])
+			end
+	      end, LSPs),
+    ok.
 
 %%--------------------------------------------------------------------
 %% @private
 %% @doc
-%% Handle an arriving PDU.
+%%
+%% A PSNP is either ack-ing an LSP we've sent, or its requesting
+%% specific LSPs. So if the sequence number is set, then we should
+%% send the LSP. Otherwise, there's nothing to do.
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec handle_pdu(binary(), isis_iih(), tuple()) -> tuple().
+
+-spec handle_psnp(isis_psnp(), tuple()) -> ok | error.
+handle_psnp(#isis_psnp{tlv = TLVs}, State) ->
+    %% Extract and create lsp_entry_detail records for the range from
+    %% our datbase
+    DBPid = isis_system:lspdb(State#state.system_ref),
+    DBRef = isis_lspdb:get_db(DBPid),
+    PSNP_LSPs =
+	lists:foldl(fun(F, Acc) ->
+			    case is_record(F, isis_tlv_lsp_entry) of
+				true -> Acc ++ F#isis_tlv_lsp_entry.lsps;
+				_ -> Acc
+			    end
+		    end,
+		    [], TLVs),
+    FilterFun = fun(#isis_tlv_lsp_entry_detail{lifetime = L, sequence = S, checksum = C}) ->
+			L == 0, S == 0, C == 0
+		end,
+    Filtered = lists:filter(FilterFun, PSNP_LSPs),
+    LSP_Ids = lists:map(fun(F) -> F#isis_tlv_lsp_entry_detail.lsp_id end, Filtered),
+    LSPs = isis_lspdb:lookup_lsps(LSP_Ids, DBRef),
+    send_lsps(LSPs, State),
+    ok.
+    
+
+-spec handle_csnp(isis_csnp(), tuple()) -> ok | error.
+handle_csnp(#isis_csnp{start_lsp_id = Start,
+		       end_lsp_id = End,
+		       tlv = TLVs}, State) ->
+    %% Extract and create lsp_entry_detail records for the range from
+    %% our datbase
+    DBPid = isis_system:lspdb(State#state.system_ref),
+    DBRef = isis_lspdb:get_db(DBPid),
+    DB_LSPs = 
+	lists:map(fun({ID, Seq, Check, Life, _TS}) ->
+			  #isis_tlv_lsp_entry_detail{lifetime = Life,
+						     lsp_id = ID,
+						     sequence = Seq,
+						     checksum = Check}
+		  end,
+		  isis_lspdb:range(Start, End, DBRef)),
+
+    %% Convert the CSNP TLVs into a single list of lsp_entry_details...
+    CSNP_LSPs =
+	lists:foldl(fun(F, Acc) ->
+			    case is_record(F, isis_tlv_lsp_entry) of
+				true -> Acc ++ F#isis_tlv_lsp_entry.lsps;
+				_ -> Acc
+			    end
+		    end,
+		    [], TLVs),
+    %% Compare the 2 lists, to get our announce/request sets
+    {Request, Announce} = compare_lsp_entries(DB_LSPs, CSNP_LSPs, {[], []}),
+    announce_lsps(Announce, State),
+    ok.
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% 
+%% Take 2 lists of isis_lsp_tlv_entry_details - the first from our
+%% database, the second from the CSNP packet. We iterate the lists:
+%%   If the LSP is on the first, but not the second, we need to announce
+%%   If the LSP is on the second, but not eh first - we must request it
+%%   If the LSP is on both, check the sequence number...
+%%
+%% @end
+%%--------------------------------------------------------------------
+-spec compare_lsp_entries([isis_tlv_lsp_entry_detail()],
+			  [isis_tlv_lsp_entry_detail()], {[binary()], [binary()]}) ->
+				 {[binary()], [binary()]}.
+compare_lsp_entries([#isis_tlv_lsp_entry_detail{lsp_id = L, sequence = LN} | LT],
+		    [#isis_tlv_lsp_entry_detail{lsp_id = H, sequence = HN} | HT],
+		    {Request, Announce})
+  when L == H, LN < HN ->
+    compare_lsp_entries(LT, HT, {[L | Request], Announce});
+compare_lsp_entries([#isis_tlv_lsp_entry_detail{lsp_id = L, sequence = LN} | LT],
+		    [#isis_tlv_lsp_entry_detail{lsp_id = H, sequence = HN} | HT],
+		    {Request, Announce})
+  when L == H, LN > HN ->
+    compare_lsp_entries(LT, HT, {Request, [H | Announce]});
+compare_lsp_entries([#isis_tlv_lsp_entry_detail{lsp_id = L, sequence = LN} | LT],
+		    [#isis_tlv_lsp_entry_detail{lsp_id = H, sequence = HN} | HT],
+		    {Request, Announce})
+  when L == H, LN == HN ->
+    compare_lsp_entries(LT, HT, {Request, Announce});
+compare_lsp_entries([#isis_tlv_lsp_entry_detail{lsp_id = L} | LT],
+		    [#isis_tlv_lsp_entry_detail{lsp_id = H} | _HT] = L2,
+		    {Request, Announce})
+  when L < H ->
+    compare_lsp_entries(LT, L2, {Request, [L | Announce]});
+compare_lsp_entries([#isis_tlv_lsp_entry_detail{lsp_id = L} | _LT] = L1,
+		    [#isis_tlv_lsp_entry_detail{lsp_id = H} | HT],
+		    {Request, Announce})
+  when L > H ->
+    compare_lsp_entries(L1, HT, {[H | Request], Announce});
+compare_lsp_entries([],
+		    [#isis_tlv_lsp_entry_detail{lsp_id = H} | HT],
+		    {Request, Announce}) ->
+    %% We're missing an LSP, add to the request list
+    compare_lsp_entries([], HT, {[H | Request], Announce});
+compare_lsp_entries([#isis_tlv_lsp_entry_detail{lsp_id = L} | LT],
+		    [],
+		    {Request, Announce}) ->
+    %% We have the LSP but the neighbor doesn't, so add to the announce list
+    compare_lsp_entries(LT, [], {Request, [L | Announce]});
+compare_lsp_entries([], [], {Request, Announce}) ->
+    {lists:reverse(Request), lists:reverse(Announce)}.
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% 
+%% Given a list of LSPs, announce them...
+%%
+%% @end
+%%--------------------------------------------------------------------
+-spec announce_lsps(list(), tuple()) -> ok.
+announce_lsps(IDs, State) ->
+    DBPid = isis_system:lspdb(State#state.system_ref),
+    DBRef = isis_lspdb:get_db(DBPid),
+    LSPs = isis_lspdb:lookup_lsps(lists:sort(IDs), DBRef),
+    lists:map(fun(LSP) ->
+		      case isis_protocol:encode(LSP) of
+			  {ok, Bin, Len} -> send_pdu(Bin, Len, State);
+			  _ -> io:format("Failed to encode LSP ~p~n",
+					 [LSP#isis_lsp.lsp_id])
+		      end
+	      end, LSPs),
+    ok.
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% 
+%% Handle the various PDUs that we can receive on this interface
+%%
+%% @end
+%%--------------------------------------------------------------------
+-spec handle_pdu(binary(), isis_pdu(), tuple()) -> tuple().
 handle_pdu(From, #isis_iih{} = IIH,
 	   #state{adjacencies = Adjs} = State) ->
     NewAdjs = 
@@ -257,7 +411,18 @@ handle_pdu(From, #isis_iih{} = IIH,
 		dict:store(From, NewPid, Adjs)
 	end,
     State#state{adjacencies = NewAdjs};
-handle_pdu(_, _, State) ->
+handle_pdu(_From, #isis_lsp{} = LSP, State) ->
+    LSP_Db = isis_system:lspdb(State#state.system_ref),
+    isis_lspdb:store_lsp(LSP_Db, LSP),
+    State;
+handle_pdu(_From, #isis_csnp{} = CSNP, State) ->
+    handle_csnp(CSNP, State),
+    State;
+handle_pdu(_From, #isis_psnp{} = PSNP, State) ->
+    handle_psnp(PSNP, State),
+    State;
+handle_pdu(From, Pdu, State) ->
+    io:format("Ignoring PDU from ~p~n~p~n", [From, Pdu]),
     State.
 
 -spec set_values(list(), tuple()) -> tuple().
@@ -297,10 +462,11 @@ send_iih(State) ->
     IS_Neighbors =
 	lists:map(fun({A, _}) -> A end,
 		  dict:to_list(State#state.adjacencies)),
+    ID = isis_system:system_id(State#state.system_ref),
     IIH = #isis_iih{
 	     pdu_type = level2_iih,
 	     circuit_type = level_1_2,
-	     source_id = <<255, 255, 0, 0, 3, 3>>,
+	     source_id = ID,
 	     holding_time = State#state.hold_time,
 	     priority = 10,
 	     dis = <<255, 255, 0, 0, 3, 3, 0>>,
@@ -337,5 +503,11 @@ interface_details(Socket, Name) ->
 	    <<_:16/binary, I:32/native, _/binary>> = Ifindex_Response,
 	    <<_:18/binary, Mac:6/binary, _/binary>> = Mac_Response,
 	    <<_:16/binary, MTU:16/native, _/binary>> = MTU_Response,
+	    %% Req2 = <<N/binary, 0:(8*(16 - byte_size(N))), I:16/native,
+	    %%  	     16#01, 16#80, 16#c2, 0, 0, 16#14, 0:128>>,
+	    %% Req3 = <<N/binary, 0:(8*(16 - byte_size(N))), I:16/native,
+	    %%  	     16#01, 16#80, 16#c2, 0, 0, 16#15, 0:128>>,
+	    %% {ok, _} = procket:ioctl(Socket, ?SIOCADDMULTI, Req2),
+	    %% {ok, _} = procket:ioctl(Socket, ?SIOCADDMULTI, Req3),
 	    {I, Mac, MTU}
     end.

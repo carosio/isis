@@ -2,17 +2,23 @@
 %%% @author Rick Payne <rickp@rossfell.co.uk>
 %%% @copyright (C) 2014, Rick Payne
 %%% @doc
+%%% LSPDB - maintains the linkstate database for LSP fragments for
+%%% a given isis_system.
 %%%
 %%% @end
-%%% Created : 18 Jan 2014 by Rick Payne <rickp@rossfell.co.uk>
+%%% Created : 24 Jan 2014 by Rick Payne <rickp@rossfell.co.uk>
 %%%-------------------------------------------------------------------
--module(isis_system).
+-module(isis_lspdb).
 
 -behaviour(gen_server).
 
+-include("isis_protocol.hrl").
+-include_lib("stdlib/include/ms_transform.hrl").
+
 %% API
--export([start_link/1, add_interface/2, del_interface/2, list_interfaces/1,
-	 system_id/1, lspdb/1]).
+-export([start_link/1, get_db/1,
+	 lookup_lsps/2, store_lsp/2, delete_lsp/2,
+	 summary/1, range/3]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -20,14 +26,78 @@
 
 -define(SERVER, ?MODULE).
 
--record(state, {system_id,
-		lspdb,
-		interfaces,
-		pseudonodes}).
+-record(state, {db}).
 
 %%%===================================================================
 %%% API
 %%%===================================================================
+%%--------------------------------------------------------------------
+%% @doc
+%%
+%% Store an LSP into the database.
+%%
+%% @end
+%%--------------------------------------------------------------------
+store_lsp(Ref, LSP) ->
+    gen_server:call(Ref, {store, LSP}).
+
+%%--------------------------------------------------------------------
+%% @doc
+%%
+%% Given an LSP-Id, delete its from the LSP DB
+%%
+%% @end
+%%--------------------------------------------------------------------
+delete_lsp(Ref, LSP) ->
+    gen_server:call(Ref, {delete, LSP}).
+
+%%--------------------------------------------------------------------
+%% @doc
+%%
+%% Return the ETS database handle, as we allow concurrent reads. All
+%% writes come via the gen_server though.
+%%
+%% @end
+%%--------------------------------------------------------------------
+get_db(Ref) ->
+    gen_server:call(Ref, {get_db}).
+
+%%--------------------------------------------------------------------
+%% @doc
+%%
+%% Lookup a list of LSP. This is looked up directly from the process
+%% that calls this, rather than via the gen_server
+%%
+%% @end
+%%--------------------------------------------------------------------
+lookup_lsps(Ids, DB) ->
+    lookup(Ids, DB).
+
+%%--------------------------------------------------------------------
+%% @doc
+%%
+%% Extract a summary of the LSPs in the database - useful for building
+%% CSNP messages, for instance. This is looked up directly from the
+%% process that calls this, rather than via the gen_server
+%% 
+%% @end
+%%--------------------------------------------------------------------
+summary(DB) ->
+    lsp_summary(DB).
+
+%%--------------------------------------------------------------------
+%% @doc
+%%
+%% Extract information for all LSPs that lie within a given range. For
+%% instance, if we receive a CSNP with a start and end LSP-id, we can
+%% extract the summary and then compare that with the values in the
+%% TLV of the CSNP.
+%% 
+%% @end
+%%-------------------------------------------------------------------
+-spec range(binary(), binary(), integer()) -> list().
+range(Start_ID, End_ID, DB) ->
+    lsp_range(Start_ID, End_ID, DB).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -44,31 +114,6 @@ start_link(Args) ->
 %%%===================================================================
 
 %%--------------------------------------------------------------------
-%% @doc
-%%
-%% Add an interface to this IS-IS system, which will spawn a process
-%% to send hello's, handle incoming and outgoing packets etc..
-%%
-%% @end
-%%--------------------------------------------------------------------
--spec add_interface(pid(), string()) -> ok | error.
-add_interface(Ref, Name) ->
-    gen_server:call(Ref, {add_interface, Name, Ref}).
-
--spec del_interface(pid(), string()) -> ok | error.
-del_interface(Ref, Name) ->
-    gen_server:call(Ref, {del_interface, Name}).
-
-list_interfaces(Ref) ->
-    gen_server:call(Ref, {list_interfaces}).
-
-system_id(Ref) ->
-    gen_server:call(Ref, {system_id}).
-
-lspdb(Ref) ->
-    gen_server:call(Ref, {lspdb}).
-
-%%--------------------------------------------------------------------
 %% @private
 %% @doc
 %% Initializes the server
@@ -79,13 +124,9 @@ lspdb(Ref) ->
 %%                     {stop, Reason}
 %% @end
 %%--------------------------------------------------------------------
-init(Args) ->
-    {ok, LSPDb} = isis_lspdb:start_link([]),
-    State = #state{interfaces = dict:new(),
-		   pseudonodes = dict:new(),
-		   lspdb = LSPDb},
-    StartState = extract_args(Args, State),
-    {ok, StartState}.
+init([]) ->
+    DB = ets:new(lspdb, [ordered_set, {keypos, #isis_lsp.lsp_id}]),
+    {ok, #state{db = DB}}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -101,39 +142,16 @@ init(Args) ->
 %%                                   {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_call({add_interface, _, _}, _From,
-	    #state{system_id = ID} = State) when is_binary(ID) == false ->
-    {reply, {error, "invalid system id"}, State};
-handle_call({add_interface, Name, Ref}, _From,
-	    #state{interfaces = Interfaces} = State) ->
-    {ok, InterfacePid} = isis_interface:start_link([{Name, Ref}]),
-    NewInterfaces = dict:store(Name, InterfacePid, Interfaces),
-    {reply, ok, State#state{interfaces = NewInterfaces}};
+handle_call({get_db}, _From, State) ->
+    {reply, State#state.db, State};
 
-handle_call({del_interface, Name}, _From,
-	    #state{interfaces = Interfaces} = State) ->
-    NewInterfaces =
-	case dict:find(Name, Interfaces) of
-	    {ok, Pid} ->
-		isis_interface:stop(Pid),
-		dict:erase(Name, Interfaces);
-	    _ ->
-		Interfaces
-	end,
-    {reply, ok, State#state{interfaces = NewInterfaces}};		
+handle_call({store, #isis_lsp{} = LSP},
+	    _From, State) ->
+    {reply, ets:insert(State#state.db, LSP), State};
 
-handle_call({list_interfaces}, _From,
-	    #state{interfaces = Interfaces} = State) ->
-    Reply = Interfaces,
-    {reply, Reply, State};
-
-handle_call({system_id}, _From,
-	    #state{system_id = ID} = State) ->
-    {reply, ID, State};
-
-handle_call({lspdb}, _From,
-	    #state{lspdb = ID} = State) ->
-    {reply, ID, State};
+handle_call({delete, LSP},
+	    _From, State) ->
+    {reply, ets:delete(State#state.db, LSP), State};
 
 handle_call(_Request, _From, State) ->
     Reply = ok,
@@ -193,9 +211,24 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
-extract_args([{system_id, Id} | T], State) ->
-    extract_args(T, State#state{system_id = Id});
-extract_args([_ | T], State) ->
-    extract_args(T, State);
-extract_args([], State) ->
-    State.
+lookup(IDs, DB) ->
+    lists:map(fun(LSP) ->
+		      case ets:lookup(DB, LSP) of
+			  [L] -> L;
+			  [] -> []
+		      end
+	      end, IDs).
+
+lsp_summary(DB) ->
+    F = ets:fun2ms(fun(#isis_lsp{lsp_id = LSP_Id, remaining_lifetime = L,
+				 sequence_number = N,
+				 last_update = U, checksum = C}) ->
+			   {LSP_Id, U, L, N, C} end),
+    ets:select(DB, F).
+
+lsp_range(Start_ID, End_ID, DB) ->
+    F = ets:fun2ms(fun(#isis_lsp{lsp_id = LSP_Id, remaining_lifetime = L,
+				 last_update = U, sequence_number = N, checksum = C})
+		      when LSP_Id >= Start_ID, LSP_Id =< End_ID ->
+			   {LSP_Id, N, C, L, U} end),
+    ets:select(DB, F).

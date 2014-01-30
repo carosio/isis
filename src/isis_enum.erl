@@ -36,7 +36,7 @@
 %%%
 -enum({istype, [{error, 0},
 		{level_1, 1},
-		{level_2, 2},
+		{level_2, 2},      %% Invalid value really...
 		{level_1_2, 3}]}).
 
 %%%
@@ -66,6 +66,7 @@
 	     {mt_is_reachability, 222},
 	     {mt_supported, 229},
 	     {ipv6_interface_address, 232},
+	     {ipv6_reachability, 236},
 	     {mt_ipv6_reachability, 237},
 	     {p2p_adjacency_state, 240},
 	     {iih_sequence_number, 241},
