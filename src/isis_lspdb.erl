@@ -68,6 +68,9 @@ get_db(Ref) ->
 %% Lookup a list of LSP. This is looked up directly from the process
 %% that calls this, rather than via the gen_server
 %%
+%% The resulting list has had the remaining_lifetime updated, but not
+%% filter.
+%%
 %% @end
 %%--------------------------------------------------------------------
 lookup_lsps(Ids, DB) ->
@@ -88,14 +91,15 @@ summary(DB) ->
 %%--------------------------------------------------------------------
 %% @doc
 %%
-%% Extract information for all LSPs that lie within a given range. For
-%% instance, if we receive a CSNP with a start and end LSP-id, we can
-%% extract the summary and then compare that with the values in the
-%% TLV of the CSNP.
+%% Extract information for all LSPs that lie within a given range as
+%% long as they have not exceeded their lifetime. For instance, if we
+%% receive a CSNP with a start and end LSP-id, we can extract the
+%% summary and then compare that with the values in the TLV of the
+%% CSNP.
 %% 
 %% @end
 %%-------------------------------------------------------------------
--spec range(binary(), binary(), integer()) -> list().
+-spec range(binary(), binary(), atom() | integer()) -> list().
 range(Start_ID, End_ID, DB) ->
     lsp_range(Start_ID, End_ID, DB).
 
@@ -214,7 +218,7 @@ code_change(_OldVsn, State, _Extra) ->
 lookup(IDs, DB) ->
     lists:map(fun(LSP) ->
 		      case ets:lookup(DB, LSP) of
-			  [L] -> L;
+			  [L] -> isis_protoco:fixup_lifetime(L);
 			  [] -> []
 		      end
 	      end, IDs).
@@ -227,8 +231,9 @@ lsp_summary(DB) ->
     ets:select(DB, F).
 
 lsp_range(Start_ID, End_ID, DB) ->
+    Now = isis_protocol:current_timestamp(),
     F = ets:fun2ms(fun(#isis_lsp{lsp_id = LSP_Id, remaining_lifetime = L,
 				 last_update = U, sequence_number = N, checksum = C})
-		      when LSP_Id >= Start_ID, LSP_Id =< End_ID ->
+		      when LSP_Id >= Start_ID, LSP_Id =< End_ID, Now =< (L + U) ->
 			   {LSP_Id, N, C, L, U} end),
     ets:select(DB, F).

@@ -99,6 +99,13 @@ valid_csnp() ->
 invalid_lsp() ->
     ?TEST_INVALID_LSP.
 
+start() ->
+    {ok, SPid} = isis_system:start_link([{system_id, <<255,255,0,0,3,3>>},
+					 {areas, [<<73, 0, 2>>]}]),
+    DBPid = isis_system:lspdb(SPid),
+    DBRef = isis_lspdb:get_db(DBPid),
+    {SPid, DBPid, DBRef}.
+
 debug_socket(Ifindex) ->
     {ok, Ref} = inert:start(),
     {ok, S} = procket:open(0, [{progname, "sudo /usr/local/bin/procket"},

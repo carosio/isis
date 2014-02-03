@@ -11,7 +11,9 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/1, add_interface/2, del_interface/2, list_interfaces/1,
+-export([start_link/1,
+	 add_interface/2, del_interface/2, list_interfaces/1, set_interface/3,
+	 areas/1,
 	 system_id/1, lspdb/1]).
 
 %% gen_server callbacks
@@ -21,6 +23,7 @@
 -define(SERVER, ?MODULE).
 
 -record(state, {system_id,
+		areas = [],
 		lspdb,
 		interfaces,
 		pseudonodes}).
@@ -59,11 +62,17 @@ add_interface(Ref, Name) ->
 del_interface(Ref, Name) ->
     gen_server:call(Ref, {del_interface, Name}).
 
+set_interface(Ref, Name, Values) ->
+    gen_server:call(Ref, {set_interface, Name, Values}).
+
 list_interfaces(Ref) ->
     gen_server:call(Ref, {list_interfaces}).
 
 system_id(Ref) ->
     gen_server:call(Ref, {system_id}).
+
+areas(Ref) ->
+    gen_server:call(Ref, {areas}).
 
 lspdb(Ref) ->
     gen_server:call(Ref, {lspdb}).
@@ -106,7 +115,9 @@ handle_call({add_interface, _, _}, _From,
     {reply, {error, "invalid system id"}, State};
 handle_call({add_interface, Name, Ref}, _From,
 	    #state{interfaces = Interfaces} = State) ->
-    {ok, InterfacePid} = isis_interface:start_link([{Name, Ref}]),
+    {ok, InterfacePid} = isis_interface:start_link([{name, Name},
+						    {system_ref, Ref},
+						    {circuit_type, level_1_2}]),
     NewInterfaces = dict:store(Name, InterfacePid, Interfaces),
     {reply, ok, State#state{interfaces = NewInterfaces}};
 
@@ -122,6 +133,15 @@ handle_call({del_interface, Name}, _From,
 	end,
     {reply, ok, State#state{interfaces = NewInterfaces}};		
 
+handle_call({set_interface, Name, Values}, _From,
+	    #state{interfaces = Interfaces} = State) ->
+    case dict:find(Name, Interfaces) of
+	{ok, Pid} ->
+	    isis_interface:set(Pid, Values);
+	_ -> ok
+    end,
+    {reply, ok, State};
+
 handle_call({list_interfaces}, _From,
 	    #state{interfaces = Interfaces} = State) ->
     Reply = Interfaces,
@@ -130,6 +150,9 @@ handle_call({list_interfaces}, _From,
 handle_call({system_id}, _From,
 	    #state{system_id = ID} = State) ->
     {reply, ID, State};
+
+handle_call({areas}, _From, #state{areas = Areas} = State) ->
+    {reply, Areas, State};
 
 handle_call({lspdb}, _From,
 	    #state{lspdb = ID} = State) ->
@@ -195,6 +218,8 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 extract_args([{system_id, Id} | T], State) ->
     extract_args(T, State#state{system_id = Id});
+extract_args([{areas, Areas} | T], State) ->
+    extract_args(T, State#state{areas = Areas});
 extract_args([_ | T], State) ->
     extract_args(T, State);
 extract_args([], State) ->

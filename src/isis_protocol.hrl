@@ -9,6 +9,14 @@
 
 -define(ISIS_MIN_MSG_SIZE, 27).
 -define(ISIS_HELLO_JITTER, 25).
+-define(ISIS_PSNP_JITTER, 25).
+-define(ISIS_PSNP_TIMER, 10).
+
+-define(LSP_ENTRY_DETAIL_PER_TLV, 15).   %% 15 LSP_ENTY_DETAIL records per LSP_ENTRY TLV
+-define(LSP_ENTRY_PER_PDU, 6).           %% 6 LSP_ENTRY objects per PDU
+
+%% This isn't very pretty, but it sure calms down dialyzer on fun2ms() stuff...
+-type matchspec_atom() :: '_' | '$1' | '$2' | '$3' | '$4' | '$5' | '$6' | '$7' | '$8' | '$9'.
 
 %%%===================================================================
 %%% TLV records
@@ -44,10 +52,10 @@
 -type isis_tlv_padding() :: #isis_tlv_padding{}.
 
 -record (isis_tlv_lsp_entry_detail, {
-	   lsp_id :: binary(),
-	   lifetime :: integer(),
-	   sequence :: integer(),
-	   checksum :: integer()}).
+	   lsp_id = <<>> :: binary(),
+	   lifetime = 0 :: integer(),
+	   sequence = 0 :: integer(),
+	   checksum = 0 :: integer()}).
 -type isis_tlv_lsp_entry_detail() :: #isis_tlv_lsp_entry_detail{}.
 -record (isis_tlv_lsp_entry, {
 	   lsps :: [isis_tlv_lsp_entry_detail()]}).
@@ -234,17 +242,17 @@
 %%%-------------------------------------------------------------------
 
 -record (isis_lsp, {
-	   lsp_id :: binary(),                  %% The key
-	   last_update :: {integer(), integer(), integer()},
-	   version :: integer(),
-	   pdu_type :: atom(),                  %% L1 or L2 LSP
-	   remaining_lifetime :: integer(),
-	   sequence_number :: integer(),
-	   checksum :: integer(),
-	   partition :: atom(),
-	   overload :: atom(),
-	   isis_type :: atom(),
-	   tlv :: [isis_tlv()]
+	   lsp_id :: binary() | matchspec_atom(),        %% The key
+	   last_update :: integer() | matchspec_atom(),
+	   version :: integer() | matchspec_atom(),
+	   pdu_type :: atom() | matchspec_atom(),                  %% L1 or L2 LSP
+	   remaining_lifetime :: integer() | matchspec_atom(),
+	   sequence_number :: integer() | matchspec_atom(),
+	   checksum :: integer() | matchspec_atom(),
+	   partition :: atom() | matchspec_atom(),
+	   overload :: atom() | matchspec_atom(),
+	   isis_type :: atom() | matchspec_atom(),
+	   tlv :: [isis_tlv()] | matchspec_atom()
 	  }).
 -type isis_lsp() :: #isis_lsp{}.
 

@@ -13,9 +13,13 @@
 -include_lib("eunit/include/eunit.hrl").
 
 %% API
--export([decode/1, encode/1, calculate_checksum/2]).
+-export([decode/1, encode/1, calculate_checksum/2,
+	 package_tlvs/3,
+	 current_timestamp/0, fixup_lifetime/1, filter_lifetime/1]).
+
 %% For debugging...
 -compile(export_all).
+
 %% The types we define and use
 -export_type([isis_pdu/0, isis_tlv/0,
 	      isis_subtlv_eir/0, isis_subtlv_eis/0]).
@@ -69,6 +73,27 @@ encode(#isis_psnp{} = PSNP) ->
     encode_psnp(PSNP);
 encode(_) ->
     error.
+
+%%--------------------------------------------------------------------
+%% @doc encode a set of IS-IS terms into a PDU
+%% @end
+%%--------------------------------------------------------------------
+-spec package_tlvs(list(), fun(), integer()) -> list().
+package_tlvs(TLVs, PackageFun, Count) ->
+     package_tlvs(TLVs, PackageFun, Count, []).
+
+package_tlvs(TLVs, PackageFun, Count, Acc)
+  when length(TLVs) > Count ->
+    {Head, Tail} = lists:split(Count, TLVs),
+    Package = PackageFun(Head),
+    package_tlvs(Tail, PackageFun, Count, Package ++ Acc);
+package_tlvs([], _PackageFun, _Count, Acc) ->
+    lists:reverse(Acc);
+package_tlvs(TLVs, PackageFun, _Count, Acc) ->
+    Package = PackageFun(TLVs),
+    lists:reverse(Package ++ Acc).
+
+    
 
 %%%===================================================================
 %%% Internal functions
@@ -534,7 +559,7 @@ decode_common_lsp(<<PDU_Len:16, Lifetime:16,
 	    LSP_ID = <<Sys_Id:6/binary, Pnode:8, Fragment:8>>,
 	    {ok, #isis_lsp{pdu_type = pdu_type_unset,
 			   lsp_id = LSP_ID,
-			   last_update = erlang:now(),
+			   last_update = current_timestamp(),
 			   remaining_lifetime = Lifetime,
 			   sequence_number = Sequence_Number,
 			   checksum = Checksum,
@@ -662,7 +687,7 @@ encode_csnp(#isis_csnp{pdu_type = Type, source_id = Source_Id,
 -spec encode_psnp(isis_psnp()) -> {ok, list(), integer()} | error.
 encode_psnp(#isis_psnp{pdu_type = Type, source_id = Source_Id,
 		       tlv = TLVs}) ->
-    Header = isis_header(Type, 27, 0),
+    Header = isis_header(Type, 17, 0),
     PSNP = <<Source_Id:7/binary>>,
     TLV_Bs = encode_tlvs(TLVs, fun encode_tlv/1),
     Len = binary_list_size([Header, PSNP, TLV_Bs]) + 2,
@@ -746,6 +771,34 @@ calculate_checksum(V, Offset) ->
 -spec jitter(integer(), integer()) -> integer().
 jitter(Miliseconds, JitterPercent) ->
     round(Miliseconds * ((100-random:uniform(JitterPercent)) / 100)).
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Returns a timestamp in seconds that we can use to simply compare if
+%% LSPs have expired.
+%%
+%% @end
+%%--------------------------------------------------------------------
+-spec current_timestamp() -> integer().
+current_timestamp() ->
+    {A, B, _} = os:timestamp(),
+    ((A * 100000) + B).
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Remaining Lifetime = Lifetime - (Now - Head).
+%%
+%% @end
+%%--------------------------------------------------------------------
+-spec fixup_lifetime( isis_lsp()) -> isis_lsp().
+fixup_lifetime(#isis_lsp{remaining_lifetime = L, last_update = U} = LSP) ->
+    Remaining = L - (current_timestamp() - U),
+    LSP#isis_lsp{remaining_lifetime = Remaining}.
+
+-spec filter_lifetime(isis_lsp()) -> boolean().
+filter_lifetime(#isis_lsp{remaining_lifetime = L, last_update = U} = LSP) ->
+    Remaining = L - (current_timestamp() - U),
+    Remaining > 0.
 
 %%%===================================================================
 %%% EUnit tests
