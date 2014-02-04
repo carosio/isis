@@ -786,7 +786,7 @@ current_timestamp() ->
 
 %%--------------------------------------------------------------------
 %% @doc
-%% Remaining Lifetime = Lifetime - (Now - Head).
+%% Remaining Lifetime = Lifetime - (Now - Last Update).
 %%
 %% @end
 %%--------------------------------------------------------------------
@@ -796,7 +796,7 @@ fixup_lifetime(#isis_lsp{remaining_lifetime = L, last_update = U} = LSP) ->
     LSP#isis_lsp{remaining_lifetime = Remaining}.
 
 -spec filter_lifetime(isis_lsp()) -> boolean().
-filter_lifetime(#isis_lsp{remaining_lifetime = L, last_update = U} = LSP) ->
+filter_lifetime(#isis_lsp{remaining_lifetime = L, last_update = U}) ->
     Remaining = L - (current_timestamp() - U),
     Remaining > 0.
 

@@ -49,6 +49,7 @@
 	  priority = 0,    %% 0 - 127 (6 bit) for our priority, highest wins
 	  dis,             %% Current DIS for this interface ( 7 bytes, S-id + pseudonode)
 	  dis_priority,    %% Current DIS's priority
+	  are_we_dis = false,  %% True if we're the DIS
 	  circuit_type,    %% Level-1 or level-1-2 (just level-2 is invalid)
 	  %%srm,             %% 'Send Routing Message' - list of LSPs to announce
 	  ssn              %% 'Send Seq No' - list of LSPs to include in next PSNP
@@ -293,7 +294,23 @@ handle_psnp(#isis_psnp{tlv = TLVs}, State) ->
     LSPs = isis_lspdb:lookup_lsps(LSP_Ids, DBRef),
     send_lsps(LSPs, State),
     ok.
-    
+
+-spec handle_lsp(isis_lsp(), tuple()) -> tuple().
+handle_lsp(#isis_lsp{lsp_id = ID, sequence_number = TheirSeq} = LSP, State) ->
+    DBPid = isis_system:lspdb(State#state.system_ref),
+    DBRef = isis_lspdb:get_db(DBPid),
+    L = isis_lspdb:lookup_lsps([ID], DBRef),
+    case length(L) of
+	1 -> [OurLSP] = L,
+	     OurSeq = OurLSP#isis_lsp.sequence_number,
+	     case OurSeq < TheirSeq of
+		 true -> isis_lspdb:store_lsp(DBPid, LSP);
+		 _ -> ok
+	     end;
+	0 -> isis_lspdb:store_lsp(DBPid, LSP);
+	_ -> ok
+    end,
+    State.
 
 -spec handle_csnp(isis_csnp(), tuple()) -> tuple().
 handle_csnp(#isis_csnp{start_lsp_id = Start,
@@ -503,9 +520,7 @@ handle_pdu(From, #isis_iih{} = IIH,
     AdjState = State#state{adjacencies = NewAdjs},
     handle_dis_election(IIH, AdjState);
 handle_pdu(_From, #isis_lsp{} = LSP, State) ->
-    LSP_Db = isis_system:lspdb(State#state.system_ref),
-    isis_lspdb:store_lsp(LSP_Db, LSP),
-    State;
+    handle_lsp(LSP, State);
 handle_pdu(_From, #isis_csnp{} = CSNP, State) ->
     handle_csnp(CSNP, State);
 handle_pdu(_From, #isis_psnp{} = PSNP, State) ->
@@ -649,7 +664,7 @@ assume_dis(State) ->
 
     ID = isis_system:system_id(State#state.system_ref),
     DIS = <<ID:6/binary, Node:8>>,
-    NewState = State#state{dis = DIS},
+    NewState = State#state{dis = DIS, are_we_dis = true},
     send_iih(NewState),
     NewState.
 

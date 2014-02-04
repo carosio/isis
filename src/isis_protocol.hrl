@@ -12,6 +12,9 @@
 -define(ISIS_PSNP_JITTER, 25).
 -define(ISIS_PSNP_TIMER, 10).
 
+-define(DEFAULT_EXPIRY_TIMER, 60).
+-define(DEFAULT_LSP_AGEOUT, 60).
+
 -define(LSP_ENTRY_DETAIL_PER_TLV, 15).   %% 15 LSP_ENTY_DETAIL records per LSP_ENTRY TLV
 -define(LSP_ENTRY_PER_PDU, 6).           %% 6 LSP_ENTRY objects per PDU
 

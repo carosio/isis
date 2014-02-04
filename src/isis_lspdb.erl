@@ -26,7 +26,8 @@
 
 -define(SERVER, ?MODULE).
 
--record(state, {db}).
+-record(state, {db,
+	        expiry_timer}).
 
 %%%===================================================================
 %%% API
@@ -130,7 +131,8 @@ start_link(Args) ->
 %%--------------------------------------------------------------------
 init([]) ->
     DB = ets:new(lspdb, [ordered_set, {keypos, #isis_lsp.lsp_id}]),
-    {ok, #state{db = DB}}.
+    Timer = start_timer(),
+    {ok, #state{db = DB, expiry_timer = Timer}}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -184,6 +186,11 @@ handle_cast(_Msg, State) ->
 %%                                   {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
+handle_info({timeout, _Ref, expire}, State) ->
+    erlang:cancel_timer(State#state.expiry_timer),
+    expire_lsps(State),
+    Timer = start_timer(),
+    {noreply, State#state{expiry_timer = Timer}};
 handle_info(_Info, State) ->
     {noreply, State}.
 
@@ -215,25 +222,79 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%%
+%% Take a list of LSP-IDs and look them up in the database. Fixup the
+%% lifetime, but do not filter for zero or negative lifetimes...
+%%
+%% @end
+%%--------------------------------------------------------------------
+-spec lookup([binary()], integer()) -> [isis_lsp()].
 lookup(IDs, DB) ->
-    lists:map(fun(LSP) ->
+    lists:filtermap(fun(LSP) ->
 		      case ets:lookup(DB, LSP) of
-			  [L] -> isis_protoco:fixup_lifetime(L);
-			  [] -> []
+			  [L] -> {true, isis_protocol:fixup_lifetime(L)};
+			  [] -> false
 		      end
 	      end, IDs).
 
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%%
+%% Summarise the database (for CSNP generation). Returned format is:
+%% {Key, Sequence Number, Checksum, Remaining Lifetime}
+%%
+%% @end
+%%--------------------------------------------------------------------
+-spec lsp_summary(integer()) -> [{binary(), integer(), integer(), integer()}].
 lsp_summary(DB) ->
+    Now = isis_protocol:current_timestamp(),
     F = ets:fun2ms(fun(#isis_lsp{lsp_id = LSP_Id, remaining_lifetime = L,
 				 sequence_number = N,
 				 last_update = U, checksum = C}) ->
-			   {LSP_Id, U, L, N, C} end),
+			   {LSP_Id, N, C, L - (Now - U)} end),
     ets:select(DB, F).
 
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%%
+%% Summarise a range of the database. Format returned is:
+%% {LSP ID, Sequence Number, Checksum, Remaining Lifetime}
+%%
+%% @end
+%%--------------------------------------------------------------------
+-spec lsp_range(binary(), binary(), integer()) ->
+		       [{binary(), integer(), integer(), integer()}].
 lsp_range(Start_ID, End_ID, DB) ->
     Now = isis_protocol:current_timestamp(),
     F = ets:fun2ms(fun(#isis_lsp{lsp_id = LSP_Id, remaining_lifetime = L,
 				 last_update = U, sequence_number = N, checksum = C})
-		      when LSP_Id >= Start_ID, LSP_Id =< End_ID, Now =< (L + U) ->
-			   {LSP_Id, N, C, L, U} end),
+		      when LSP_Id >= Start_ID, LSP_Id =< End_ID, (L - (Now - U)) > 0 ->
+			   {LSP_Id, N, C, L - (Now - U)} end),
     ets:select(DB, F).
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%%
+%% Remove any LSP from the database that is ?DEFAULT_LSP_AGEOUT
+%% seconds older than the lifetime allowed.
+%%
+%% @end
+%%--------------------------------------------------------------------
+-spec expire_lsps(tuple()) -> tuple().
+expire_lsps(#state{db = DB}) ->
+    Now = isis_protocol:current_timestamp(),
+    F = ets:fun2ms(fun(#isis_lsp{lsp_id = LSP_Id, remaining_lifetime = L,
+				 last_update = U, sequence_number = N, checksum = C})
+		      when (L - (Now - U)) < -?DEFAULT_LSP_AGEOUT ->
+			   true end),
+    ets:select_delete(DB, F).
+
+
+start_timer() ->
+    erlang:start_timer((?DEFAULT_EXPIRY_TIMER * 1000), self(), expire).

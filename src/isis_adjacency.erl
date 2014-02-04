@@ -44,7 +44,8 @@
 %% @end
 %%--------------------------------------------------------------------
 start_link(Args) ->
-    gen_fsm:start_link(?MODULE, Args, []).
+    %% gen_fsm:start_link(?MODULE, Args, []).
+    gen_fsm:start(?MODULE, Args, []).
 
 %%%===================================================================
 %%% gen_fsm callbacks
@@ -194,6 +195,7 @@ handle_info({timeout, _Ref, trigger}, StateName, State) ->
 %% @end
 %%--------------------------------------------------------------------
 terminate(_Reason, _StateName, _State) ->
+    io:format("Terminating...~n"),
     ok.
 
 %%--------------------------------------------------------------------
