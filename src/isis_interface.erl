@@ -12,7 +12,7 @@
 
 -include("isis_protocol.hrl").
 
--define(DEFAULT_HELLO_INTERVAL, 10).
+-define(DEFAULT_HELLO_INTERVAL, 10 * 1000).
 -define(SIOCGIFMTU, 16#8921).
 -define(SIOCGIFHWADDR, 16#8927).
 -define(SIOCADDMULTI, 16#8931).
@@ -50,6 +50,8 @@
 	  dis,             %% Current DIS for this interface ( 7 bytes, S-id + pseudonode)
 	  dis_priority,    %% Current DIS's priority
 	  are_we_dis = false,  %% True if we're the DIS
+	  dis_continuation = undef,%% Do we have more CSNP's to send?
+	  dis_timer,       %% If we're DIS, we use this timer to announce CSNPs
 	  circuit_type,    %% Level-1 or level-1-2 (just level-2 is invalid)
 	  %%srm,             %% 'Send Routing Message' - list of LSPs to announce
 	  ssn              %% 'Send Seq No' - list of LSPs to include in next PSNP
@@ -102,14 +104,15 @@ set(Pid, Values) ->
 %% @end
 %%--------------------------------------------------------------------
 init(Args) ->
-    Timer = erlang:start_timer((?DEFAULT_HELLO_INTERVAL * 1000), self(), iih),
     State = extract_args(Args, #state{}),
+    Timer = start_timer(iih, State),
     {Socket, Mac, Ifindex, MTU, Port} = create_port(State#state.name),
     StartState = State#state{socket = Socket, port = Port,
 			     mac = Mac, mtu = MTU,
 			     ifindex = Ifindex, iih_timer = Timer,
 			     adjacencies = dict:new(),
-			     ssn_timer = undef, ssn = []},
+			     ssn_timer = undef, ssn = [],
+			     dis_timer = undef},
     {ok, StartState}.
 
 %%--------------------------------------------------------------------
@@ -166,16 +169,10 @@ handle_call(_Request, _From, State) ->
 handle_cast(stop, #state{port = Port,
 			 adjacencies = Adjs,
 			 iih_timer = IIHTimerRef,
-			 ssn_timer = SSNTimerRef} = State) ->
+			 ssn_timer = SSNTimerRef,
+			 dis_timer = DISTimerRef} = State) ->
     %% Cancel our timer
-    case IIHTimerRef of
-	undef -> undef;
-	_ -> erlang:cancel_timer(IIHTimerRef)
-    end,
-    case SSNTimerRef of
-	undef -> undef;
-	_ -> erlang:cancel_timer(SSNTimerRef)
-    end,
+    cancel_timers([IIHTimerRef, SSNTimerRef, DISTimerRef]),
     %% Close down the port (does this close the socket?)
     erlang:port_close(Port),
     %% Notify our adjacencies
@@ -214,19 +211,21 @@ handle_info({_port, {data, _}}, State) ->
     {noreply, State};
 
 handle_info({timeout, _Ref, iih}, State) ->
-    erlang:cancel_timer(State#state.iih_timer),
+    cancel_timers([State#state.iih_timer]),
     send_iih(State),
-    Timer = 
-	erlang:start_timer(
-	  isis_protocol:jitter((State#state.hello_interval * 1000),
-			       ?ISIS_HELLO_JITTER),
-	  self(), iih),
+    Timer = start_timer(iih, State),
     {noreply, State#state{iih_timer = Timer}};
 
 handle_info({timeout, _Ref, ssn}, State) ->
-    erlang:cancel_timer(State#state.ssn_timer),
+    cancel_timers([State#state.ssn_timer]),
     NewState = send_psnp(State#state{ssn_timer = undef}),
     {noreply, NewState};
+
+handle_info({timeout, _Ref, dis}, State) ->
+    cancel_timers([State#state.ssn_timer]),
+    NewState = send_csnp(State),
+    Timer = start_timer(dis, NewState),
+    {noreply, NewState#state{dis_timer = Timer}};
 
 handle_info(Info, State) ->
     io:format("Unknown message: ~p", [Info]),
@@ -303,7 +302,7 @@ handle_lsp(#isis_lsp{lsp_id = ID, sequence_number = TheirSeq} = LSP, State) ->
     case length(L) of
 	1 -> [OurLSP] = L,
 	     OurSeq = OurLSP#isis_lsp.sequence_number,
-	     case OurSeq < TheirSeq of
+	     case OurSeq =< TheirSeq of
 		 true -> isis_lspdb:store_lsp(DBPid, LSP);
 		 _ -> ok
 	     end;
@@ -321,7 +320,7 @@ handle_csnp(#isis_csnp{start_lsp_id = Start,
     DBPid = isis_system:lspdb(State#state.system_ref),
     DBRef = isis_lspdb:get_db(DBPid),
     DB_LSPs = 
-	lists:map(fun({ID, Seq, Check, Life, _TS}) ->
+	lists:map(fun({ID, Seq, Check, Life}) ->
 			  #isis_tlv_lsp_entry_detail{lifetime = Life,
 						     lsp_id = ID,
 						     sequence = Seq,
@@ -446,9 +445,7 @@ send_lsps(LSPs, State) ->
 update_ssn(LSP_Ids, #state{ssn = SSN} = State) ->
     Timer = 
 	case State#state.ssn_timer of
-	    undef -> erlang:start_timer(isis_protocol:jitter(?ISIS_PSNP_TIMER,
-							     ?ISIS_PSNP_JITTER),
-					self(), ssn);
+	    undef -> start_timer(ssn, State);
 	    _ -> State#state.ssn_timer
 	end,
     State#state{ssn = SSN ++ LSP_Ids, ssn_timer = Timer}.
@@ -594,7 +591,7 @@ send_pdu(Pdu, Pdu_Size, State) ->
 %% @private
 %% @doc
 %% 
-%%
+%% Send an IIH message
 %%
 %% @end
 %%--------------------------------------------------------------------
@@ -608,7 +605,7 @@ send_iih(State) ->
 	     pdu_type = level2_iih,
 	     circuit_type = State#state.circuit_type,
 	     source_id = ID,
-	     holding_time = State#state.hold_time,
+	     holding_time = erlang:trunc(State#state.hold_time / 1000),
 	     priority = State#state.priority,
 	     dis = State#state.dis,
 	     tlv =
@@ -622,6 +619,89 @@ send_iih(State) ->
 		 ]},
     {ok, PDU, PDU_Size} = isis_protocol:encode(IIH),
     send_pdu(PDU, PDU_Size, State).
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% 
+%% Extract the database in a series of chunks ready to turn into CSNP
+%% packets. We pace these out at a rate to avoid deludging the LAN.
+%%
+%% @end
+%%--------------------------------------------------------------------
+send_csnp(#state{dis_continuation = DC} = State) ->
+    DBPid = isis_system:lspdb(State#state.system_ref),
+    DBRef = isis_lspdb:get_db(DBPid),
+    Args = case DC of
+	       undef -> {start, 90};
+	       _ -> {continue, DC}
+	   end,
+    {Summary, Continue} = isis_lspdb:summary(Args, DBRef),
+    generate_csnp(Args, 90, Summary, State),
+    NextDC = 
+	case Continue of
+	    '$end_of_table' -> undef;
+	    _ -> Continue
+	end,
+    State#state{dis_continuation = NextDC}.
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% 
+%% Take a series of LSP Detail summaries that have been extracted from
+%% the database and package them up into TLVs and then place the TLVs
+%% into the CSNP. We do a little work to calculate the start and end
+%% lsp-id of this CSNP message.
+%%
+%% @end
+%%--------------------------------------------------------------------
+
+generate_csnp({Status, _}, Chunk_Size, Summary, State) ->
+    Sys_ID = isis_system:system_id(State#state.system_ref),
+    Source = <<Sys_ID:6/binary, 0:8>>,
+    {Start, End} = 
+	case length(Summary) of
+	    0 -> {<<255,255,255,255,255,255,255,255>>,
+		  <<255,255,255,255,255,255,255,255>>};
+	    _ ->
+		%% If this is teh start, our 'first' lsp is all-zeros
+		TStart =
+		    case Status of
+			start -> <<0,0,0,0,0,0,0,0>>;
+			_ ->
+			    %% Extract first LSP-ID
+			    {SID, _, _, _} = lists:nth(1, Summary),
+			    SID
+		    end,
+		%% If this is the end, all-ones
+		TEnd = 
+		    case  length(Summary) == Chunk_Size of
+			true ->
+			    %% Extract last LSP-ID
+			    {LID, _, _, _} = lists:last(Summary),
+			    LID;
+			_ -> <<255,255,255,255,255,255,255,255>>
+		    end,
+		{TStart, TEnd}
+	end,
+    Details = lists:map(fun({ID, Seq, Check, Lifetime}) ->
+				#isis_tlv_lsp_entry_detail{lsp_id = ID,
+							   sequence = Seq,
+							   checksum = Check,
+							   lifetime = Lifetime}
+			end, Summary),
+    DetailPackageFun = fun(F) -> [#isis_tlv_lsp_entry{lsps = F}] end,
+    TLVs = isis_protocol:package_tlvs(Details, DetailPackageFun,
+				      ?LSP_ENTRY_DETAIL_PER_TLV),
+    CSNP = #isis_csnp{pdu_type = level2_csnp,
+		      source_id = Source,
+		      start_lsp_id = Start,
+		      end_lsp_id = End,
+		      tlv = TLVs},
+    {ok, PDU, PDU_Size} = isis_protocol:encode(CSNP),
+    send_pdu(PDU, PDU_Size, State),
+    ok.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -662,9 +742,12 @@ assume_dis(State) ->
     %% Get pseudo-node here, create LSP etc..
     Node = 2,
 
+    DIS_Timer = start_timer(dis, State),
+
     ID = isis_system:system_id(State#state.system_ref),
     DIS = <<ID:6/binary, Node:8>>,
-    NewState = State#state{dis = DIS, are_we_dis = true},
+    NewState = State#state{dis = DIS, dis_timer = DIS_Timer,
+			   are_we_dis = true},
     send_iih(NewState),
     NewState.
 
@@ -707,6 +790,28 @@ interface_details(Socket, Name) ->
 	    %% {ok, _} = procket:ioctl(Socket, ?SIOCADDMULTI, Req3),
 	    {I, Mac, MTU}
     end.
+
+-spec cancel_timers(list()) -> ok.
+cancel_timers([H | T]) when H /= undef ->    
+    erlang:cancel_timer(H),
+    cancel_timers(T);
+cancel_timers([H | T]) when H == undef -> 
+    cancel_timers(T);
+cancel_timers([]) -> 
+    ok.
+
+start_timer(dis, #state{dis_continuation = DC} = State) when DC == undef ->
+    erlang:start_timer(isis_protocol:jitter(?ISIS_CSNP_TIMER, ?ISIS_CSNP_JITTER),
+		      self(), dis);
+start_timer(dis, #state{dis_continuation = DC} = State) ->
+    erlang:start_timer(erlang:trunc(?ISIS_CSNP_PACE_TIMER), self(), dis);
+start_timer(iih, State) ->
+    erlang:start_timer(isis_protocol:jitter(State#state.hello_interval,
+					    ?ISIS_HELLO_JITTER), self(), iih);
+start_timer(ssn, State) ->
+    erlang:start_timer(isis_protocol:jitter(?ISIS_PSNP_TIMER, ?ISIS_PSNP_JITTER),
+		      self(), ssn).
+
 
 extract_args([{name, Name} | T], State) ->
     extract_args(T, State#state{name = Name});

@@ -10,7 +10,11 @@
 -define(ISIS_MIN_MSG_SIZE, 27).
 -define(ISIS_HELLO_JITTER, 25).
 -define(ISIS_PSNP_JITTER, 25).
--define(ISIS_PSNP_TIMER, 10).
+-define(ISIS_CSNP_JITTER, 25).
+
+-define(ISIS_PSNP_TIMER, 10 * 1000).
+-define(ISIS_CSNP_TIMER, 10 * 1000).
+-define(ISIS_CSNP_PACE_TIMER, 0.25 * 1000).
 
 -define(DEFAULT_EXPIRY_TIMER, 60).
 -define(DEFAULT_LSP_AGEOUT, 60).

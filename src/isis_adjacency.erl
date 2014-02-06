@@ -226,7 +226,7 @@ start_timer(State) ->
     cancel_timer(State),
     Timeout = isis_interface:get_state(State#state.interface,
 				       hold_time),
-    Timer = erlang:start_timer(Timeout * 1000, self(), trigger),
+    Timer = erlang:start_timer(Timeout, self(), trigger),
     State#state{timer = Timer}.
 
 cancel_timer(State) ->

@@ -18,7 +18,7 @@
 %% API
 -export([start_link/1, get_db/1,
 	 lookup_lsps/2, store_lsp/2, delete_lsp/2,
-	 summary/1, range/3]).
+	 summary/2, range/3]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -86,8 +86,8 @@ lookup_lsps(Ids, DB) ->
 %% 
 %% @end
 %%--------------------------------------------------------------------
-summary(DB) ->
-    lsp_summary(DB).
+summary(Args, DB) ->
+    lsp_summary(Args, DB).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -249,14 +249,25 @@ lookup(IDs, DB) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec lsp_summary(integer()) -> [{binary(), integer(), integer(), integer()}].
-lsp_summary(DB) ->
+lsp_summary({start, Count}, DB) when Count > 0 ->
     Now = isis_protocol:current_timestamp(),
     F = ets:fun2ms(fun(#isis_lsp{lsp_id = LSP_Id, remaining_lifetime = L,
 				 sequence_number = N,
-				 last_update = U, checksum = C}) ->
+				 last_update = U, checksum = C})
+		      when (L - (Now - U)) > 0 ->
 			   {LSP_Id, N, C, L - (Now - U)} end),
-    ets:select(DB, F).
+    case ets:select(DB, F, Count) of
+	{Results, Continuation} -> {Results, Continuation};
+	'$end_of_table' -> {[], '$end_of_table'}
+    end;
+lsp_summary({continue, Continuation}, _DB) ->
+    case ets:select(Continuation) of
+	{Results, Next} -> {Results, Next};
+	'$end_of_table' -> {[], '$end_of_table'}
+    end;
+lsp_summary(_, _) ->
+    {[], '$end_of_table'}.
+
 
 %%--------------------------------------------------------------------
 %% @private
@@ -267,13 +278,14 @@ lsp_summary(DB) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec lsp_range(binary(), binary(), integer()) ->
+-spec lsp_range(binary(), binary(), atom() | integer()) ->
 		       [{binary(), integer(), integer(), integer()}].
 lsp_range(Start_ID, End_ID, DB) ->
     Now = isis_protocol:current_timestamp(),
     F = ets:fun2ms(fun(#isis_lsp{lsp_id = LSP_Id, remaining_lifetime = L,
 				 last_update = U, sequence_number = N, checksum = C})
-		      when LSP_Id >= Start_ID, LSP_Id =< End_ID, (L - (Now - U)) > 0 ->
+		      when LSP_Id >= Start_ID, LSP_Id =< End_ID, (L - (Now - U)) > 0,
+			   (L - (Now - U)) > 0 ->
 			   {LSP_Id, N, C, L - (Now - U)} end),
     ets:select(DB, F).
 
@@ -286,7 +298,7 @@ lsp_range(Start_ID, End_ID, DB) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec expire_lsps(tuple()) -> tuple().
+-spec expire_lsps(tuple()) -> integer().
 expire_lsps(#state{db = DB}) ->
     Now = isis_protocol:current_timestamp(),
     F = ets:fun2ms(fun(#isis_lsp{lsp_id = LSP_Id, remaining_lifetime = L,

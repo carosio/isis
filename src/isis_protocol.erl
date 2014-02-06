@@ -552,7 +552,7 @@ decode_common_lsp(<<PDU_Len:16, Lifetime:16,
 		    Sequence_Number:32, Checksum:16,
 		    Partition:1, _ATT_Bits:4,
 		    Overload:1, Type:2,
-		    TLV_Binary/binary>>, PDU_Len) ->
+		    TLV_Binary/binary>>, PDU_Len_Received) ->
     case decode_tlvs(TLV_Binary, tlv, fun decode_tlv/3, []) of
 	error -> error;
 	{ok, TLVS} ->
