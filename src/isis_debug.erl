@@ -102,9 +102,11 @@ invalid_lsp() ->
 start() ->
     {ok, SPid} = isis_system:start_link([{system_id, <<255,255,0,0,3,3>>},
 					 {areas, [<<73, 0, 2>>]}]),
-    DBPid = isis_system:lspdb(SPid),
+    DBPid = isis_system:lspdb(SPid, level_1),
+    DB2Pid = isis_system:lspdb(SPid, level_2),
     DBRef = isis_lspdb:get_db(DBPid),
-    {SPid, DBPid, DBRef}.
+    DB2Ref = isis_lspdb:get_db(DB2Pid),
+    {SPid, DBPid, DB2Pid, DBRef, DB2Ref}.
 
 debug_socket(Ifindex) ->
     {ok, Ref} = inert:start(),

@@ -13,8 +13,9 @@
 %% API
 -export([start_link/1,
 	 add_interface/2, del_interface/2, list_interfaces/1, set_interface/3,
+	 enable_level/3, disable_level/3,
 	 areas/1,
-	 system_id/1, lspdb/1]).
+	 system_id/1, lspdb/2]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -24,7 +25,8 @@
 
 -record(state, {system_id,
 		areas = [],
-		lspdb,
+		level1_lspdb,
+		level2_lspdb,
 		interfaces,
 		pseudonodes}).
 
@@ -68,14 +70,21 @@ set_interface(Ref, Name, Values) ->
 list_interfaces(Ref) ->
     gen_server:call(Ref, {list_interfaces}).
 
+enable_level(Ref, Interface, Level) ->
+    gen_server:call(Ref, {enable_level, Interface, Level}).
+
+disable_level(Ref, Interface, Level) ->
+    gen_server:call(Ref, {disable_level, Interface, Level}).
+
 system_id(Ref) ->
     gen_server:call(Ref, {system_id}).
 
 areas(Ref) ->
     gen_server:call(Ref, {areas}).
 
-lspdb(Ref) ->
-    gen_server:call(Ref, {lspdb}).
+-spec lspdb(pid(), atom()) -> pid() | atom().
+lspdb(Ref, Level) ->
+    gen_server:call(Ref, {lspdb, Level}).
 
 %%--------------------------------------------------------------------
 %% @private
@@ -89,10 +98,15 @@ lspdb(Ref) ->
 %% @end
 %%--------------------------------------------------------------------
 init(Args) ->
-    {ok, LSPDb} = isis_lspdb:start_link([]),
+    process_flag(trap_exit, true),
+    {ok, Level1_LSPDb} = isis_lspdb:start_link([{table, level_1}]),
+    erlang:monitor(process, Level1_LSPDb),
+    {ok, Level2_LSPDb} = isis_lspdb:start_link([{table, level_2}]),
+    erlang:monitor(process, Level2_LSPDb),
     State = #state{interfaces = dict:new(),
 		   pseudonodes = dict:new(),
-		   lspdb = LSPDb},
+		   level1_lspdb = Level1_LSPDb,
+		   level2_lspdb = Level2_LSPDb},
     StartState = extract_args(Args, State),
     {ok, StartState}.
 
@@ -116,8 +130,8 @@ handle_call({add_interface, _, _}, _From,
 handle_call({add_interface, Name, Ref}, _From,
 	    #state{interfaces = Interfaces} = State) ->
     {ok, InterfacePid} = isis_interface:start_link([{name, Name},
-						    {system_ref, Ref},
-						    {circuit_type, level_1_2}]),
+						    {system_ref, Ref}]),
+    erlang:monitor(process, InterfacePid),
     NewInterfaces = dict:store(Name, InterfacePid, Interfaces),
     {reply, ok, State#state{interfaces = NewInterfaces}};
 
@@ -131,7 +145,27 @@ handle_call({del_interface, Name}, _From,
 	    _ ->
 		Interfaces
 	end,
-    {reply, ok, State#state{interfaces = NewInterfaces}};		
+    {reply, ok, State#state{interfaces = NewInterfaces}};
+
+handle_call({enable_level, Interface, Level}, _From,
+	    #state{interfaces = Interfaces} = State) ->
+    case dict:find(Interface, Interfaces) of
+	{ok, Pid} ->
+	    R = isis_interface:enable_level(Pid, Level),
+	    {reply, R, State};
+	_ ->
+	    {reply, interface_not_found, State}
+    end;
+
+handle_call({disable_level, Interface, Level}, _From,
+	    #state{interfaces = Interfaces} = State) ->
+    case dict:find(Interface, Interfaces) of
+	{ok, Pid} ->
+	    R = isis_interface:disable_level(Pid, Level),
+	    {reply, R, State};
+	_ ->
+	    {reply, interface_not_found, State}
+    end;
 
 handle_call({set_interface, Name, Values}, _From,
 	    #state{interfaces = Interfaces} = State) ->
@@ -154,9 +188,14 @@ handle_call({system_id}, _From,
 handle_call({areas}, _From, #state{areas = Areas} = State) ->
     {reply, Areas, State};
 
-handle_call({lspdb}, _From,
-	    #state{lspdb = ID} = State) ->
+handle_call({lspdb, level_1}, _From,
+	    #state{level1_lspdb = ID} = State) ->
     {reply, ID, State};
+handle_call({lspdb, level_2}, _From,
+	    #state{level2_lspdb = ID} = State) ->
+    {reply, ID, State};
+handle_call({lspdb, _}, _From, State) ->
+    {reply, invalid_database, State};
 
 handle_call(_Request, _From, State) ->
     Reply = ok,

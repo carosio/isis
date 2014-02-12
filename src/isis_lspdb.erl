@@ -129,8 +129,9 @@ start_link(Args) ->
 %%                     {stop, Reason}
 %% @end
 %%--------------------------------------------------------------------
-init([]) ->
-    DB = ets:new(lspdb, [ordered_set, {keypos, #isis_lsp.lsp_id}]),
+init([{table, Table_ID}]) ->
+    process_flag(trap_exit, true),
+    DB = ets:new(Table_ID, [ordered_set, {keypos, #isis_lsp.lsp_id}]),
     Timer = start_timer(),
     {ok, #state{db = DB, expiry_timer = Timer}}.
 

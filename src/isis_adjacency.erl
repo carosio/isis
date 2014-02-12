@@ -24,8 +24,10 @@
 -define(SERVER, ?MODULE).
 
 -record(state, {
+	  level,         %% Our 'level'
 	  neighbor,      %% Neighbor's SNPA (ie. whom we're adjacent with)
 	  interface,     %% PID handling the interface
+	  level_pid,     %% PID handling the level
 	  snpa,          %% Our SNPA
 	  timer          %% Hold timer for this adjacency
 	 }).
@@ -65,6 +67,7 @@ start_link(Args) ->
 %% @end
 %%--------------------------------------------------------------------
 init(Args) ->
+    process_flag(trap_exit, true),
     State = parse_args(Args,
 		       #state{timer = undef}),
     {ok, new, State}.
@@ -219,13 +222,19 @@ parse_args([{snpa, Value} | T], State) ->
     parse_args(T, State#state{snpa = Value});
 parse_args([{interface, Pid} | T], State) ->
     parse_args(T, State#state{interface = Pid});
+parse_args([{level_pid, Pid} | T], State) ->
+    parse_args(T, State#state{level_pid = Pid});
+parse_args([{level, level1_iih} | T], State) ->
+    parse_args(T, State#state{level = level_1});
+parse_args([{level, level2_iih} | T], State) ->
+    parse_args(T, State#state{level = level_2});
 parse_args([], State) ->
     State.
 
 start_timer(State) ->
     cancel_timer(State),
-    Timeout = isis_interface:get_state(State#state.interface,
-				       hold_time),
+    Timeout = isis_interface_level:get_state(State#state.level_pid,
+					     hold_time),
     Timer = erlang:start_timer(Timeout, self(), trigger),
     State#state{timer = Timer}.
 
