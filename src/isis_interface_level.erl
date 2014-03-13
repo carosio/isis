@@ -26,7 +26,6 @@
 
 -record(state, {
 	  level,           %% The level
-	  system_ref,      %% Our ISIS system
 	  interface_ref,   %% Interface
 	  snpa,            %% Our mac address
 	  database = undef, %% The LSPDB reference
@@ -144,9 +143,7 @@ handle_cast({received, From, PDU}, State) ->
 
 
 handle_cast({set_database}, State) ->
-    DBPid = isis_system:lspdb(State#state.system_ref,
-			      State#state.level),
-    DB = isis_lspdb:get_db(DBPid),
+    DB = isis_lspdb:get_db(State#state.level),
     Timer = start_timer(iih, State),
     {noreply, State#state{database = DB, iih_timer = Timer}};
 
@@ -271,7 +268,7 @@ assume_dis(State) ->
 
     DIS_Timer = start_timer(dis, State),
 
-    ID = isis_system:system_id(State#state.system_ref),
+    ID = isis_system:system_id(),
     DIS = <<ID:6/binary, Node:8>>,
     NewState = State#state{dis = DIS, dis_timer = DIS_Timer,
 			   are_we_dis = true},
@@ -290,8 +287,8 @@ send_iih(State) ->
     IS_Neighbors =
 	lists:map(fun({A, _}) -> A end,
 		  dict:to_list(State#state.adjacencies)),
-    ID = isis_system:system_id(State#state.system_ref),
-    Areas = isis_system:areas(State#state.system_ref),
+    ID = isis_system:system_id(),
+    Areas = isis_system:areas(),
     Circuit = 
 	case State#state.level of
 	    level_1 -> level_1;
@@ -308,8 +305,9 @@ send_iih(State) ->
 		 [
 		  #isis_tlv_is_neighbors{neighbors = IS_Neighbors},
 
-		  %% Need to get these from the 'system' eventually...
 		  #isis_tlv_area_address{areas = Areas},
+
+		  %% Need to get these from the 'system' eventually...
 		  #isis_tlv_protocols_supported{protocols = [ipv4, ipv6]},
 		  #isis_tlv_ip_interface_address{addresses = [3232298904]}
 		 ]},
@@ -352,7 +350,7 @@ send_csnp(#state{database = DBRef, dis_continuation = DC} = State) ->
 %%--------------------------------------------------------------------
 
 generate_csnp({Status, _}, Chunk_Size, Summary, State) ->
-    Sys_ID = isis_system:system_id(State#state.system_ref),
+    Sys_ID = isis_system:system_id(),
     Source = <<Sys_ID:6/binary, 0:8>>,
     {Start, End} = 
 	case length(Summary) of
@@ -549,8 +547,8 @@ update_ssn(LSP_Ids, #state{ssn = SSN} = State) ->
 %% @end
 %%--------------------------------------------------------------------
 -spec send_psnp(tuple()) -> tuple().
-send_psnp(#state{system_ref = Ref, ssn = SSN} = State) ->
-    SID = isis_system:system_id(Ref),
+send_psnp(#state{ssn = SSN} = State) ->
+    SID = isis_system:system_id(),
     Source = <<SID:6/binary, 0:8>>,
     TLVs = 
 	lists:map(fun(LSP) -> #isis_tlv_lsp_entry_detail{lsp_id = LSP} end,
@@ -624,18 +622,29 @@ handle_psnp(#isis_psnp{tlv = TLVs}, State) ->
 %%--------------------------------------------------------------------
 -spec handle_lsp(isis_lsp(), tuple()) -> tuple().
 handle_lsp(#isis_lsp{lsp_id = ID, sequence_number = TheirSeq} = LSP, State) ->
-    DBPid = isis_system:lspdb(State#state.system_ref, State#state.level),
-    L = isis_lspdb:lookup_lsps([ID], State#state.database),
-    case length(L) of
-	1 -> [OurLSP] = L,
-	     OurSeq = OurLSP#isis_lsp.sequence_number,
-	     case OurSeq =< TheirSeq of
-		 true -> isis_lspdb:store_lsp(DBPid, LSP);
-		 _ -> ok
-	     end;
-	0 -> isis_lspdb:store_lsp(DBPid, LSP);
-	_ -> ok
+    <<RemoteSys:6/binary, _Rest/binary>> = ID,
+    case RemoteSys =:= isis_system:system_id() of
+	true -> handle_old_lsp(LSP, State);
+	_ ->
+	    L = isis_lspdb:lookup_lsps([ID], State#state.database),
+	    case length(L) of
+		1 -> [OurLSP] = L,
+		     OurSeq = OurLSP#isis_lsp.sequence_number,
+		     case OurSeq =< TheirSeq of
+			 true -> isis_lspdb:store_lsp(State#state.level, LSP);
+			 _ -> ok
+		     end;
+		0 -> isis_lspdb:store_lsp(State#state.level, LSP);
+		_ -> ok
+	    end
     end,
+    State.
+
+handle_old_lsp(#isis_lsp{lsp_id = ID} = LSP, State) ->
+    [OurLSP] = isis_lspdb:lookup_lsps([ID], State#state.database),
+    isis_lspdb:store_lsp(State#state.level, OurLSP#isis_lsp{
+					      sequence_number = (LSP#isis_lsp.sequence_number + 1)
+					     }),
     State.
 
 %%--------------------------------------------------------------------
@@ -698,7 +707,5 @@ parse_args([{snpa, M} | T], State) ->
     parse_args(T, State#state{snpa = M});
 parse_args([{interface, I} | T], State) ->
     parse_args(T, State#state{interface_ref = I});
-parse_args([{system, R} | T], State) ->
-    parse_args(T, State#state{system_ref = R});
 parse_args([], State) ->
     State.

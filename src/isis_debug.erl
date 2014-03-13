@@ -99,14 +99,64 @@ valid_csnp() ->
 invalid_lsp() ->
     ?TEST_INVALID_LSP.
 
-start() ->
-    {ok, SPid} = isis_system:start_link([{system_id, <<255,255,0,0,3,3>>},
-					 {areas, [<<73, 0, 2>>]}]),
-    DBPid = isis_system:lspdb(SPid, level_1),
-    DB2Pid = isis_system:lspdb(SPid, level_2),
-    DBRef = isis_lspdb:get_db(DBPid),
-    DB2Ref = isis_lspdb:get_db(DB2Pid),
-    {SPid, DBPid, DB2Pid, DBRef, DB2Ref}.
+%% Generate a chunk of LSPs into our LSPDB to test things So we create
+%% a list of 'Count' numbers, and then turn each one into an LSP that
+%% has 'reachability' to the previous and next LSP. ie. a long chain.
+%% We give them a hostname as well. Then we inject into the Database..
+inject_some_lsps(Level, Count, Seq) ->
+    Numbers = lists:seq(1, Count),
+    PDU = case Level of
+	      level_1 -> level1_lsp;
+	      _ -> level2_lsp
+	  end,
+    Creator = 
+	fun(N, Acc) ->
+		NeighborID = <<N:16, 0, 0, 0, 0, 0>>,
+		NextNeighborID = <<(N+1):16, 0, 0, 0, 0, 0>>,
+		LSPID = <<NeighborID/binary, 0>>,
+		Hostname = string:concat("injected", integer_to_list(N)),
+		L = #isis_lsp{
+		       lsp_id = LSPID,
+		       last_update = isis_protocol:current_timestamp(),
+		       pdu_type = PDU,
+		       remaining_lifetime = 500,
+		       sequence_number = Seq,
+		       partition = false,
+		       overload = false,
+		       isis_type = level_1_2,
+		       tlv = [#isis_tlv_area_address{areas = isis_system:areas()},
+			      #isis_tlv_protocols_supported{protocols = [ipv4]},
+			      #isis_tlv_dynamic_hostname{hostname = Hostname},
+			      #isis_tlv_extended_reachability{
+				 reachability = [#isis_tlv_extended_reachability_detail{
+						    neighbor = Acc,
+						    metric = N,
+						    sub_tlv = []},
+						#isis_tlv_extended_reachability_detail{
+						   neighbor = NextNeighborID,
+						   metric = N,
+						   sub_tlv = []
+						  }
+						]}
+			     ]
+		      },
+		CSum = isis_protocol:checksum(L),
+		%% isis_lspdb:store(level_2, L#isis_lsp{checksum = CSum}),
+		{L#isis_lsp{checksum = CSum}, NeighborID}
+	end,
+    Start = <<(isis_system:system_id()):6/binary, 0>>,
+    {LSPs, _} = lists:mapfoldl(Creator, Start, Numbers),
+    %% Now inject into the database
+    Injector = 	fun(L) -> isis_lspdb:store_lsp(Level, L) end,
+    lists:map(Injector, LSPs),
+    ok.
+
+purge_injected_lsps(Level, Count) ->
+    IDCreator = fun(N) -> <<N:16, 0, 0, 0, 0, 0, 0>> end,
+    LSPIDs = lists:map(IDCreator, lists:seq(1, Count)),
+    Purge = fun(LSPID) -> isis_lspdb:purge_lsp(Level, LSPID) end,
+    lists:map(Purge, LSPIDs),
+    ok.
 
 debug_socket(Ifindex) ->
     {ok, Ref} = inert:start(),

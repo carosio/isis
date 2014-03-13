@@ -57,14 +57,21 @@ init([]) ->
 
     SupFlags = {RestartStrategy, MaxRestarts, MaxSecondsBetweenRestarts},
 
-    %% Restart = permanent,
-    %% Shutdown = 2000,
-    %% Type = worker,
+    Restart = permanent,
+    Shutdown = 2000,
+    Type = worker,
 
-    %% AChild = {'AName', {'AModule', start_link, []},
-    %% 	      Restart, Shutdown, Type, ['AModule']},
-
-    {ok, {SupFlags, []}}.
+    ZChild = {zclient, {zclient, start_link, [[{type, isis}]]},
+     	      Restart, Shutdown, Type, [zclient]},
+    L1DB = {level1_lspdb, {isis_lspdb, start_link, [[{table, level_1}]]},
+	    Restart, Shutdown, Type, [isis_lspdb]},
+    L2DB = {level2_lspdb, {isis_lspdb, start_link, [[{table, level_2}]]},
+	    Restart, Shutdown, Type, [isis_lspdb]},
+    %% Move the system-id and area into the app config at somepoint...
+    ISIS = {isis, {isis_system, start_link, [[{system_id, <<255,255,0,0,3,3>>},
+					      {areas, [<<73, 0, 2>>]}]]},
+	    Restart, Shutdown, Type, [isis_system, isis_protocol, isis_enum]},
+    {ok, {SupFlags, [ZChild, L1DB, L2DB, ISIS]}}.
 
 %%%===================================================================
 %%% Internal functions

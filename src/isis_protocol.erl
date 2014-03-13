@@ -13,9 +13,10 @@
 -include_lib("eunit/include/eunit.hrl").
 
 %% API
--export([decode/1, encode/1, calculate_checksum/2,
+-export([decode/1, encode/1, checksum/1,
 	 package_tlvs/3,
-	 current_timestamp/0, fixup_lifetime/1, filter_lifetime/1]).
+	 current_timestamp/0, fixup_lifetime/1, filter_lifetime/1,
+	 filter_tlvs/2]).
 
 %% For debugging...
 -compile(export_all).
@@ -93,7 +94,17 @@ package_tlvs(TLVs, PackageFun, _Count, Acc) ->
     Package = PackageFun(TLVs),
     lists:reverse(Package ++ Acc).
 
-    
+%%--------------------------------------------------------------------
+%% @doc Filter a set of TLVs to include only the ones in the
+%% provided. You can filter for an individual TLV (and get back a set
+%% of TLVs that match) or a list.  @end
+%% --------------------------------------------------------------------
+filter_tlvs(AcceptedTLV, TLVs) when is_atom(AcceptedTLV) ->
+    [X || X <- TLVs, element(1, X) =:= AcceptedTLV];
+filter_tlvs(AcceptedTLVs, TLVs) ->
+    F = fun(T) -> lists:member(element(1, T), AcceptedTLVs) end,
+    lists:filter(F, TLVs).
+	  
 
 %%%===================================================================
 %%% Internal functions
@@ -442,6 +453,7 @@ encode_tlv_extended_reachability(
      sub_tlv = SubTLVs}) ->
     SubTLVB = encode_tlvs(SubTLVs, fun encode_subtlv_eis_detail/1),
     SubTLV_Len = binary_list_size(SubTLVB),
+    io:format("Encoded: ~p ~p ~p~n", [Neighbor_Id, Metric, SubTLVB]),
     [<<Neighbor_Id:7/binary, Metric:24, SubTLV_Len:8>> | SubTLVB].
 
 -spec encode_tlv_lsp_entry(isis_tlv_lsp_entry_detail()) -> binary().
@@ -520,7 +532,7 @@ encode_tlv(Type, Enum, Value) ->
 encode_tlv_list(Type, Enum, Values) ->
     S = binary_list_size(Values),
     T = isis_enum:to_int(Enum, Type),
-    [<<T:8, S:8>> | Values].
+    [<<T:8, S:8>>] ++ [Values].
 
 -spec encode_tlvs(list(), fun()) -> [binary()].
 encode_tlvs(TLVs, Encoder) ->
@@ -663,13 +675,21 @@ encode_lsp(#isis_lsp{version = _Version, pdu_type = Lsp_Type,
     Pb = isis_enum:to_int(boolean, Partition),
     Ob = isis_enum:to_int(boolean, Overload),
     Ib = isis_enum:to_int(istype, ISType),
-    Lsp_Hdr1 = <<Lifetime:16>>,
+    Lsp_Hdr1 =
+	case Lifetime =< 0 of
+	    true -> <<0:16>>;
+	    _ -> <<Lifetime:16>>
+	end,
     Lsp_Hdr2 = <<LSP_Id:8/binary, Sequence:32>>,
     %% Hard code ATT bits to zero, deprecated...
     Lsp_Hdr3 = <<Pb:1, 0:4, Ob:1, Ib:2>>,
     TLV_Bs = encode_tlvs(TLVs, fun encode_tlv/1),
     Len = binary_list_size([Header, Lsp_Hdr1, Lsp_Hdr2, Lsp_Hdr3, TLV_Bs]) + 4,
-    {CSum1, CSum2} = calculate_checksum([Lsp_Hdr2, <<0:16>>, Lsp_Hdr3, TLV_Bs], 12),
+    {CSum1, CSum2} =
+	case Lifetime =< 0 of
+	    true -> {0, 0};
+	    _ -> calculate_checksum([Lsp_Hdr2, <<0:16>>, Lsp_Hdr3, TLV_Bs], 12)
+	end,
     PDU = [Header, <<Len:16>>, Lsp_Hdr1, Lsp_Hdr2,
 	  <<CSum1:8, CSum2:8>>, Lsp_Hdr3, TLV_Bs],
     {ok, PDU, Len}.
@@ -799,6 +819,30 @@ fixup_lifetime(#isis_lsp{remaining_lifetime = L, last_update = U} = LSP) ->
 filter_lifetime(#isis_lsp{remaining_lifetime = L, last_update = U}) ->
     Remaining = L - (current_timestamp() - U),
     Remaining > 0.
+
+%%--------------------------------------------------------------------
+%% @doc Calculate the checksum for a given LSP record - used when we
+%% are the ones creating the LSP
+%% @end
+%%--------------------------------------------------------------------
+checksum(#isis_lsp{version = _Version, pdu_type = Lsp_Type,
+		   remaining_lifetime = Lifetime,
+		   lsp_id = LSP_Id,
+		   sequence_number = Sequence,
+		   partition = Partition, overload = Overload,
+		   isis_type = ISType, tlv = TLVs}) ->
+    Header = isis_header(Lsp_Type, 27, 0),
+    Pb = isis_enum:to_int(boolean, Partition),
+    Ob = isis_enum:to_int(boolean, Overload),
+    Ib = isis_enum:to_int(istype, ISType),
+    Lsp_Hdr1 = <<Lifetime:16>>,
+    Lsp_Hdr2 = <<LSP_Id:8/binary, Sequence:32>>,
+    %% Hard code ATT bits to zero, deprecated...
+    Lsp_Hdr3 = <<Pb:1, 0:4, Ob:1, Ib:2>>,
+    TLV_Bs = encode_tlvs(TLVs, fun encode_tlv/1),
+    Len = binary_list_size([Header, Lsp_Hdr1, Lsp_Hdr2, Lsp_Hdr3, TLV_Bs]) + 4,
+    {CSum1, CSum2} = calculate_checksum([Lsp_Hdr2, <<0:16>>, Lsp_Hdr3, TLV_Bs], 12),
+    (CSum1 * 256) + CSum2.
 
 %%%===================================================================
 %%% EUnit tests

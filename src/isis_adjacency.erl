@@ -26,6 +26,7 @@
 -record(state, {
 	  level,         %% Our 'level'
 	  neighbor,      %% Neighbor's SNPA (ie. whom we're adjacent with)
+	  lan_id,        %% Neighbor LAN ID
 	  interface,     %% PID handling the interface
 	  level_pid,     %% PID handling the level
 	  snpa,          %% Our SNPA
@@ -100,7 +101,7 @@ init({iih, IIH}, State) ->
 	    true -> up;
 	    _ -> init
 	end,
-    NewState = start_timer(State),
+    NewState = start_timer(State#state{lan_id = IIH#isis_iih.dis}),
     {next_state, NextState, NewState};
 init({timeout}, State) ->
     {next_state, init, State};
@@ -114,6 +115,8 @@ up({iih, IIH}, State) ->
 	    true -> start_timer(State);
 	    _ -> State
 	end,
+    %% Update our EIR to include this neighbor
+    %% update_adjacency(add, State),
     {next_state, up, NewState};
 up({timeout}, State) ->
     NewState = start_timer(State),
@@ -126,8 +129,10 @@ down({iih, _}, State) ->
     {next_state, init, NewState};
 down({timeout}, State) ->
     cancel_timer(State),
+    update_adjacency(del, State),
     {stop, timeout, State};
 down(stop, State) ->
+    update_adjacency(del, State),
     {stop, stop, State}.
 
 %%--------------------------------------------------------------------
@@ -260,3 +265,24 @@ seen_ourselves_tlv(#isis_tlv_is_neighbors{neighbors = N}, State) ->
     lists:filter(fun(A) -> A =:= State#state.snpa end, N);
 seen_ourselves_tlv(_, _) ->
     [].
+
+-spec update_adjacency(add | del, tuple()) -> atom().
+update_adjacency(add, State) ->
+    LSPID = <<(isis_system:system_id()):6/binary, 0:16>>,
+    case isis_lspdb:lookup_lsps([LSPID], isis_lspdb:get_db(State#state.level)) of
+	[LSP] ->
+	    ER = #isis_tlv_extended_reachability_detail{
+		    neighbor = State#state.lan_id,
+		    metric = 10
+		   },
+	    isis_lspdb:update_reachability({add, ER}, State#state.level, LSP);
+	_ -> ugh
+    end;
+update_adjacency(del, State) ->
+    LSPID = <<(isis_system:system_id()):6/binary, 0:16>>,
+    case isis_lspdb:lookup_lsps([LSPID], isis_lspdb:get_db(State#state.level)) of
+	[LSP] ->
+	    ER = #isis_tlv_extended_reachability_detail{neighbor = State#state.neighbor},
+	    isis_lspdb:update_reachability({del, ER}, State#state.level, LSP);
+	_ -> ugh
+    end.

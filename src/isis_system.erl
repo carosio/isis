@@ -10,12 +10,17 @@
 
 -behaviour(gen_server).
 
+-include("isis_system.hrl").
+-include("isis_protocol.hrl").
+-include("zclient.hrl").
+
 %% API
 -export([start_link/1,
-	 add_interface/2, del_interface/2, list_interfaces/1, set_interface/3,
-	 enable_level/3, disable_level/3,
-	 areas/1,
-	 system_id/1, lspdb/2]).
+	 add_interface/1, del_interface/1, list_interfaces/0, set_interface/2,
+	 enable_level/2, disable_level/2,
+	 set_hostname/1,
+	 areas/0, lsps/0,
+	 system_id/0]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -25,10 +30,10 @@
 
 -record(state, {system_id,
 		areas = [],
-		level1_lspdb,
-		level2_lspdb,
-		interfaces,
-		pseudonodes}).
+		lsps = [],
+		interfaces,   %% Our 'state' per interface
+		pseudonodes,
+		refresh_timer}).
 
 %%%===================================================================
 %%% API
@@ -42,7 +47,7 @@
 %% @end
 %%--------------------------------------------------------------------
 start_link(Args) ->
-    gen_server:start_link(?MODULE, Args, []).
+    gen_server:start_link({local, ?MODULE}, ?MODULE, Args, []).
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -56,35 +61,40 @@ start_link(Args) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec add_interface(pid(), string()) -> ok | error.
-add_interface(Ref, Name) ->
-    gen_server:call(Ref, {add_interface, Name, Ref}).
+-spec add_interface(string()) -> ok | error.
+add_interface(Name) ->
+    gen_server:call(?MODULE, {add_interface, Name}).
 
--spec del_interface(pid(), string()) -> ok | error.
-del_interface(Ref, Name) ->
-    gen_server:call(Ref, {del_interface, Name}).
+-spec del_interface(string()) -> ok | error.
+del_interface(Name) ->
+    gen_server:call(?MODULE, {del_interface, Name}).
 
-set_interface(Ref, Name, Values) ->
-    gen_server:call(Ref, {set_interface, Name, Values}).
+set_interface(Name, Values) ->
+    gen_server:call(?MODULE, {set_interface, Name, Values}).
 
-list_interfaces(Ref) ->
-    gen_server:call(Ref, {list_interfaces}).
+list_interfaces() ->
+    gen_server:call(?MODULE, {list_interfaces}).
 
-enable_level(Ref, Interface, Level) ->
-    gen_server:call(Ref, {enable_level, Interface, Level}).
+enable_level(Interface, Level) ->
+    gen_server:call(?MODULE, {enable_level, Interface, Level}).
 
-disable_level(Ref, Interface, Level) ->
-    gen_server:call(Ref, {disable_level, Interface, Level}).
+disable_level(Interface, Level) ->
+    gen_server:call(?MODULE, {disable_level, Interface, Level}).
 
-system_id(Ref) ->
-    gen_server:call(Ref, {system_id}).
+system_id() ->
+    gen_server:call(?MODULE, {system_id}).
 
-areas(Ref) ->
-    gen_server:call(Ref, {areas}).
+%% Return the areas we're in
+areas() ->
+    gen_server:call(?MODULE, {areas}).
 
--spec lspdb(pid(), atom()) -> pid() | atom().
-lspdb(Ref, Level) ->
-    gen_server:call(Ref, {lspdb, Level}).
+%% Return the list of LSPs that we originate
+lsps() ->
+    gen_server:call(?MODULE, {lsps}).
+
+set_hostname(Name) ->
+    gen_server:call(?MODULE, {hostname, Name}).
+
 
 %%--------------------------------------------------------------------
 %% @private
@@ -99,16 +109,28 @@ lspdb(Ref, Level) ->
 %%--------------------------------------------------------------------
 init(Args) ->
     process_flag(trap_exit, true),
-    {ok, Level1_LSPDb} = isis_lspdb:start_link([{table, level_1}]),
-    erlang:monitor(process, Level1_LSPDb),
-    {ok, Level2_LSPDb} = isis_lspdb:start_link([{table, level_2}]),
-    erlang:monitor(process, Level2_LSPDb),
     State = #state{interfaces = dict:new(),
-		   pseudonodes = dict:new(),
-		   level1_lspdb = Level1_LSPDb,
-		   level2_lspdb = Level2_LSPDb},
+		   pseudonodes = dict:new()},
     StartState = extract_args(Args, State),
-    {ok, StartState}.
+    SysID = StartState#state.system_id,
+    LSP_Id = <<SysID/binary, 0:16>>,
+    Lsp = #isis_lsp{lsp_id = LSP_Id, remaining_lifetime = 1200,
+		    last_update = isis_protocol:current_timestamp(),
+		    sequence_number = 1, partition = false,
+		    overload = false, isis_type = level_1_2,
+		    pdu_type = level1_lsp,
+		    tlv = [#isis_tlv_area_address{areas = StartState#state.areas},
+			   #isis_tlv_protocols_supported{protocols = [ipv4, ipv6]},
+			   #isis_tlv_extended_reachability{reachability = []}
+			  ]},
+    CSum = isis_protocol:checksum(Lsp),
+    L1Lsp = Lsp#isis_lsp{pdu_type = level1_lsp, checksum = CSum},
+    L2Lsp = Lsp#isis_lsp{pdu_type = level2_lsp, checksum = CSum},
+    isis_lspdb:store_lsp(level_1, L1Lsp),
+    isis_lspdb:store_lsp(level_2, L2Lsp),
+    zclient:subscribe(self()),
+    Timer = erlang:start_timer(600 * 1000, self(), refreshtimer),
+    {ok, StartState#state{lsps = [LSP_Id], refresh_timer = Timer}}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -124,55 +146,78 @@ init(Args) ->
 %%                                   {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_call({add_interface, _, _}, _From,
+handle_call({add_interface, _}, _From,
 	    #state{system_id = ID} = State) when is_binary(ID) == false ->
     {reply, {error, "invalid system id"}, State};
-handle_call({add_interface, Name, Ref}, _From,
+handle_call({add_interface, Name}, _From,
 	    #state{interfaces = Interfaces} = State) ->
-    {ok, InterfacePid} = isis_interface:start_link([{name, Name},
-						    {system_ref, Ref}]),
-    erlang:monitor(process, InterfacePid),
-    NewInterfaces = dict:store(Name, InterfacePid, Interfaces),
-    {reply, ok, State#state{interfaces = NewInterfaces}};
+    Interface = 
+	case dict:is_key(Name, Interfaces) of
+	    true -> dict:fetch(Name, Interfaces);
+	    _ -> #isis_interface{name = Name}
+	end,
+    NextState = 
+	case is_pid(Interface#isis_interface.pid) of
+	    true -> State;
+	    _ -> {ok, InterfacePid} = isis_interface:start_link([{name, Name}]),
+		 erlang:monitor(process, InterfacePid),
+		 NewInterfaces = dict:store(Name,
+					    Interface#isis_interface{pid = InterfacePid,
+								     enabled = true},
+					    Interfaces),
+		 State#state{interfaces = NewInterfaces}
+	end,
+    {reply, ok, NextState};
 
 handle_call({del_interface, Name}, _From,
 	    #state{interfaces = Interfaces} = State) ->
     NewInterfaces =
 	case dict:find(Name, Interfaces) of
-	    {ok, Pid} ->
-		isis_interface:stop(Pid),
-		dict:erase(Name, Interfaces);
+	    {ok, Interface} ->
+		isis_interface:stop(Interface#isis_interface.pid),
+		dict:store(Name, Interface#isis_interface{pid = undef, enabled = false},
+			   Interfaces);
 	    _ ->
 		Interfaces
 	end,
     {reply, ok, State#state{interfaces = NewInterfaces}};
 
-handle_call({enable_level, Interface, Level}, _From,
+handle_call({enable_level, InterfaceName, Level}, _From,
 	    #state{interfaces = Interfaces} = State) ->
-    case dict:find(Interface, Interfaces) of
-	{ok, Pid} ->
-	    R = isis_interface:enable_level(Pid, Level),
-	    {reply, R, State};
-	_ ->
-	    {reply, interface_not_found, State}
+    case dict:find(InterfaceName, Interfaces) of
+	{ok, Interface} ->
+	    case is_pid(Interface#isis_interface.pid) of
+		true -> {reply,
+			 isis_interface:enable_level(Interface#isis_interface.pid, Level),
+			 State};
+		_ -> {reply, not_enabled, State}
+	    end;
+	Buh ->
+	    io:format("Got: ~p~n", [Buh]),
+	    {reply, not_found, State}
     end;
 
-handle_call({disable_level, Interface, Level}, _From,
+handle_call({disable_level, InterfaceName, Level}, _From,
 	    #state{interfaces = Interfaces} = State) ->
-    case dict:find(Interface, Interfaces) of
-	{ok, Pid} ->
-	    R = isis_interface:disable_level(Pid, Level),
-	    {reply, R, State};
-	_ ->
-	    {reply, interface_not_found, State}
+    case dict:find(InterfaceName, Interfaces) of
+	{ok, Interface} ->
+	    case is_pid(Interface#isis_interface.pid) of
+		true -> R = isis_interface:disable_level(Interface#isis_interface.pid, Level),
+			{reply, R, State};
+		_ ->
+		    {reply, not_enabled, State}
+	    end;
+	_ -> {reply, not_enabled, State}
     end;
 
 handle_call({set_interface, Name, Values}, _From,
 	    #state{interfaces = Interfaces} = State) ->
     case dict:find(Name, Interfaces) of
-	{ok, Pid} ->
-	    isis_interface:set(Pid, Values);
-	_ -> ok
+	{ok, Interface} ->
+	    case is_pid(Interface#isis_interface.pid) of
+		true -> isis_interface:set(Interface#isis_interface.pid, Values);
+		_ -> ok
+	    end
     end,
     {reply, ok, State};
 
@@ -188,14 +233,15 @@ handle_call({system_id}, _From,
 handle_call({areas}, _From, #state{areas = Areas} = State) ->
     {reply, Areas, State};
 
-handle_call({lspdb, level_1}, _From,
-	    #state{level1_lspdb = ID} = State) ->
-    {reply, ID, State};
-handle_call({lspdb, level_2}, _From,
-	    #state{level2_lspdb = ID} = State) ->
-    {reply, ID, State};
-handle_call({lspdb, _}, _From, State) ->
-    {reply, invalid_database, State};
+handle_call({lsps}, _From, #state{lsps = LSPs} = State) ->
+    {reply, LSPs, State};
+
+handle_call({hostname, Name}, _From, #state{lsps = LSPs} = State) ->
+    lists:map(fun(LSP) ->
+		      isis_lspdb:replace_tlv(level_1, #isis_tlv_dynamic_hostname{hostname = Name}, LSP),
+		      isis_lspdb:replace_tlv(level_2, #isis_tlv_dynamic_hostname{hostname = Name}, LSP)
+	      end, LSPs),
+    {reply, ok, State};
 
 handle_call(_Request, _From, State) ->
     Reply = ok,
@@ -224,6 +270,15 @@ handle_cast(_Msg, State) ->
 %%                                   {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
+handle_info({add_interface, Interface}, State) ->
+    {noreply, add_interface(Interface, State)};
+handle_info({add_address, Interface, A}, State) ->
+    {noreply, add_address(A, Interface, State)};
+handle_info({timeout, _Ref, refreshtimer}, State) ->
+    refresh_lsps(level_1, State),
+    refresh_lsps(level_2, State),
+    Timer = erlang:start_timer(600 * 1000, self(), refreshtimer),
+    {noreply, State#state{refresh_timer = Timer}};
 handle_info(_Info, State) ->
     {noreply, State}.
 
@@ -263,3 +318,61 @@ extract_args([_ | T], State) ->
     extract_args(T, State);
 extract_args([], State) ->
     State.
+
+%%%===================================================================
+%%% Refresh LSPs
+%%%===================================================================
+refresh_lsps(Level, State) ->
+    LSPs = isis_lspdb:lookup_lsps(State#state.lsps, isis_lspdb:get_db(Level)),
+    Refresher =
+	fun(L) ->
+		NewLSP = L#isis_lsp{sequence_number = (L#isis_lsp.sequence_number+1),
+				    remaining_lifetime = 1200,
+				    last_update = isis_protocol:current_timestamp()},
+		isis_lspdb:store_lsp(Level, NewLSP),
+		isis_lspdb:flood_lsp(Level, NewLSP)
+	end,
+    lists:map(Refresher, LSPs).
+
+%%%===================================================================
+%%% Add interface
+%%%===================================================================
+add_interface(#zclient_interface{
+		 name = Name, ifindex = Ifindex,
+		 mtu = MTU, mtu6 = MTU6, mac = Mac}, State) ->
+    I = 
+	case dict:is_key(Name, State#state.interfaces) of
+	    true -> dict:fetch(Name, State#state.interfaces);
+	    _ -> #isis_interface{name = Name}
+	end,
+    NewInterfaces = 
+	dict:store(Name, I#isis_interface{ifindex = Ifindex,
+					  mac = Mac, mtu = MTU, mtu6 = MTU6},
+		   State#state.interfaces),
+    State#state{interfaces = NewInterfaces}.
+
+add_address(#zclient_address{afi = AFI, address = Address,
+			     mask_length = Mask},
+	    Name, State) ->
+    I = case dict:is_key(Name, State#state.interfaces) of
+	    true ->
+		dict:fetch(Name, State#state.interfaces);
+	    _ ->
+		#isis_interface{name = Name}
+	end,
+    A = #isis_address{afi = AFI, address = Address, mask = Mask},
+    NewA = add_to_list(A, I#isis_interface.addresses),
+    NewD = dict:store(Name, I#isis_interface{addresses = NewA}, State#state.interfaces),
+    State#state{interfaces = NewD}.
+
+add_to_list(Item, List) ->
+    Replacer = fun(I, _) when I =:= Item ->
+		       {I, true};
+		  (I, Acc) -> {I, Acc}
+	       end,
+    {NewList, Found} = lists:mapfoldl(Replacer, false, List),
+    case Found of
+	true -> NewList;
+	_ -> NewList ++ [Item]
+    end.
+	     

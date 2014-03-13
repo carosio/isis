@@ -19,6 +19,7 @@
 
 -define(DEFAULT_EXPIRY_TIMER, 60).
 -define(DEFAULT_LSP_AGEOUT, 60).
+-define(DEFAULT_SPF_DELAY, 0.01).   %% 100ms
 
 -define(LSP_ENTRY_DETAIL_PER_TLV, 15).   %% 15 LSP_ENTY_DETAIL records per LSP_ENTRY TLV
 -define(LSP_ENTRY_PER_PDU, 6).           %% 6 LSP_ENTRY objects per PDU
@@ -108,7 +109,7 @@
 -record (isis_tlv_extended_reachability_detail, {
 	   neighbor :: binary(),
 	   metric :: integer(),
-	   sub_tlv :: [isis_subtlv_eis()]}).
+	   sub_tlv = [] :: [isis_subtlv_eis()]}).
 -type isis_tlv_extended_reachability_detail() :: #isis_tlv_extended_reachability_detail{}.
 	   
 -record (isis_tlv_extended_reachability, {

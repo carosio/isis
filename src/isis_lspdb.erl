@@ -12,13 +12,16 @@
 
 -behaviour(gen_server).
 
+-include("isis_system.hrl").
 -include("isis_protocol.hrl").
 -include_lib("stdlib/include/ms_transform.hrl").
 
 %% API
 -export([start_link/1, get_db/1,
-	 lookup_lsps/2, store_lsp/2, delete_lsp/2,
-	 summary/2, range/3]).
+	 lookup_lsps/2, store_lsp/2, delete_lsp/2, purge_lsp/2,
+	 summary/2, range/3, extract_links/1,
+	 replace_tlv/3, update_reachability/3,
+	 run_spf/1, flood_lsp/2, bump_lsp/2]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -26,8 +29,12 @@
 
 -define(SERVER, ?MODULE).
 
--record(state, {db,
-	        expiry_timer}).
+-record(state, {db,               %% The ETS table we store our LSPs in
+		spf_required :: boolean(), %% Do we require an SPF run?
+	        expiry_timer,     %% We expire LSPs based on this timer
+	        spf_timer,        %% Dijkestra timer
+		hold_timer        %% SPF Hold timer
+	       }).
 
 %%%===================================================================
 %%% API
@@ -35,7 +42,9 @@
 %%--------------------------------------------------------------------
 %% @doc
 %%
-%% Store an LSP into the database.
+%% Store an LSP into the database. If we're replacing an existing LSP,
+%% check to see if we need to schedule an SPF run, otherwise we
+%% schedule one anyway.
 %%
 %% @end
 %%--------------------------------------------------------------------
@@ -51,6 +60,25 @@ store_lsp(Ref, LSP) ->
 %%--------------------------------------------------------------------
 delete_lsp(Ref, LSP) ->
     gen_server:call(Ref, {delete, LSP}).
+
+bump_lsp(Ref, LSP) ->
+    gen_server:cast(Ref, {bump, Ref, LSP}).
+
+%%--------------------------------------------------------------------
+%% @doc
+%%
+%% Purge an LSP
+%%
+%% @end
+%%--------------------------------------------------------------------
+purge_lsp(Ref, LSP) ->
+    case gen_server:call(Ref, {purge, LSP}) of
+	{ok, PurgedLSP} ->
+	    flood_lsp(Ref, PurgedLSP),
+	    ok;
+	Result -> Result
+    end.
+	     
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -74,6 +102,7 @@ get_db(Ref) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
+-spec lookup_lsps([binary()], atom()) -> [isis_lsp()].
 lookup_lsps(Ids, DB) ->
     lookup(Ids, DB).
 
@@ -106,13 +135,144 @@ range(Start_ID, End_ID, DB) ->
 
 %%--------------------------------------------------------------------
 %% @doc
+%%
+%% Take the LSP database and convert it into a list of {{From, To},
+%% Metric} 'edges' of the graph. This requires the LSP database to be
+%% locked, so we can do this as part of the gen_server. Once we have
+%% this, calculating the dijkestra can happen without the database
+%% being locked.
+%%
+%% Extending this to run for different topologies is relatively easy,
+%% but not done yet.
+%% 
+%% @end
+%%-------------------------------------------------------------------
+-spec extract_links(atom()) -> list().
+extract_links(Ref) ->
+    gen_server:call(Ref, {extract_links}).
+
+%%--------------------------------------------------------------------
+%% @doc
+%%
+%% For a given LSP, look it up, search the TLV for a matching TLV and
+%% replace it with the provided TLV, bump the sequence number and
+%% re-flood...
+%% 
+%% @end
+%%-------------------------------------------------------------------
+-spec replace_tlv(atom(), isis_tlv(), binary()) -> ok.
+replace_tlv(Level, TLV, LSP) ->
+    DB = isis_lspdb:get_db(Level),
+    case lookup_lsps([LSP], DB) of
+	[L] -> NewTLV = replace_tlv(L#isis_lsp.tlv, TLV),
+	       NewLSP = L#isis_lsp{tlv = NewTLV},
+	       CSum = isis_protocol:checksum(NewLSP),
+	       bump_lsp(Level, NewLSP#isis_lsp{checksum = CSum}),
+	       ok;
+	_ -> error
+    end.
+
+%%--------------------------------------------------------------------
+%% @doc
+%%
+%% Add/Del reachability to the TLVs
+%%
+%% @end
+%%--------------------------------------------------------------------
+update_reachability({AddDel, ER}, Level, #isis_lsp{tlv = TLVs} = LSP) ->
+    Worker =
+	fun(#isis_tlv_extended_reachability{reachability = R}, Flood) ->
+		{F, NewER} = update_eir(AddDel, ER, R),
+		case Flood of
+		    true ->
+			{#isis_tlv_extended_reachability{reachability = NewER}, true};
+		    _ -> {#isis_tlv_extended_reachability{reachability = NewER}, F}
+		end;
+	   (A, B) -> {A, B}
+	end,
+    {NewTLVs, Flood} = lists:mapfoldl(Worker, false, TLVs),
+    io:format("Was: ~p~nNow: ~p~n", [TLVs, NewTLVs]),
+    case Flood of
+	true ->
+	    NewLSP = LSP#isis_lsp{tlv = NewTLVs},
+	    bump_lsp(Level, NewLSP);
+	_ -> ok
+    end.
+
+%%--------------------------------------------------------------------
+%% @doc
+%%
+%% Bump sequence number and flood.
+%%
+%% @end
+%%--------------------------------------------------------------------
+bump_an_lsp(Level, L, State) ->
+    ets:insert(State#state.db,
+	       L#isis_lsp{
+		 sequence_number = (L#isis_lsp.sequence_number + 1),
+		 remaining_lifetime = 1200,
+		 last_update = isis_protocol:current_timestamp()}),
+    flood_lsp(Level, L).
+
+purge(LSP, State) ->
+    case ets:lookup(State#state.db, LSP) of
+	[OldLSP] ->
+	    PurgedLSP = OldLSP#isis_lsp{tlv = [], remaining_lifetime = 0, checksum = 0,
+					last_update = isis_protocol:current_timestamp()},
+	    ets:insert(State#state.db, PurgedLSP),
+	    {ok, PurgedLSP};
+	_ -> missing_lsp
+    end.
+	    
+
+flood_lsp(Level, LSP) ->
+    case isis_protocol:encode(LSP) of
+	{ok, Packet, Size} ->
+	    D = isis_system:list_interfaces(),
+	    I = dict:to_list(D),
+	    Sender = fun({N, #isis_interface{pid = P}}) ->
+			     case is_pid(P) of
+				 true -> isis_interface:send_pdu(P, Packet, Size, Level);
+				 _ -> ok
+			     end
+		     end,
+	    lists:map(Sender, I),
+	    ok;
+	_ -> error
+    end.
+		     
+
+%%--------------------------------------------------------------------
+%% @doc
+%%
+%% Run Djkestra.
+%% 
+%% @end
+%%-------------------------------------------------------------------
+-spec run_spf(atom()) -> list().
+run_spf(Pid) ->
+    SysID = isis_system:system_id(),
+    Build_Graph =
+	fun({From, To}, Metric, G) ->
+		graph:add_vertex(G, From),
+		graph:add_vertex(G, To),
+		graph:add_edge(G, From, To, Metric),
+		G
+	end,
+    Edges = extract_links(Pid),
+    Graph = graph:empty(directed),
+    dict:fold(Build_Graph, Graph, Edges),
+    dijkstra:run(Graph, SysID).
+
+%%--------------------------------------------------------------------
+%% @doc
 %% Starts the server
 %%
 %% @spec start_link(list()) -> {ok, Pid} | ignore | {error, Error}
 %% @end
 %%--------------------------------------------------------------------
-start_link(Args) ->
-    gen_server:start_link(?MODULE, Args, []).
+start_link([{table, Table_Id}] = Args) ->
+    gen_server:start_link({local, Table_Id}, ?MODULE, Args, []).
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -132,8 +292,8 @@ start_link(Args) ->
 init([{table, Table_ID}]) ->
     process_flag(trap_exit, true),
     DB = ets:new(Table_ID, [ordered_set, {keypos, #isis_lsp.lsp_id}]),
-    Timer = start_timer(),
-    {ok, #state{db = DB, expiry_timer = Timer}}.
+    Timer = start_timer(expiry, #state{expiry_timer = undef}),
+    {ok, #state{db = DB, expiry_timer = Timer, spf_timer = undef}}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -154,11 +314,27 @@ handle_call({get_db}, _From, State) ->
 
 handle_call({store, #isis_lsp{} = LSP},
 	    _From, State) ->
-    {reply, ets:insert(State#state.db, LSP), State};
+    OldLSP = ets:lookup(State#state.db, LSP#isis_lsp.lsp_id),
+    NewState = 
+	case spf_type_required(OldLSP, LSP) of
+	    full -> schedule_spf(full, State);
+	    partial -> schedule_spf(partial, State);
+	    incremental -> schedule_spf(incremental, State);
+	    none -> State
+	end,
+    Result = ets:insert(NewState#state.db, LSP),
+    {reply, Result, NewState};
 
 handle_call({delete, LSP},
 	    _From, State) ->
     {reply, ets:delete(State#state.db, LSP), State};
+
+handle_call({purge, LSP}, _From, State) ->
+    Result = purge(LSP, State),
+    {reply, Result, State};
+
+handle_call({extract_links}, _From, State) ->
+    {reply, populate_links(State), State};
 
 handle_call(_Request, _From, State) ->
     Reply = ok,
@@ -174,6 +350,9 @@ handle_call(_Request, _From, State) ->
 %%                                  {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
+handle_cast({bump, Level, LSP}, State) ->
+    bump_an_lsp(Level, LSP, State),
+    {noreply, State};
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
@@ -187,11 +366,15 @@ handle_cast(_Msg, State) ->
 %%                                   {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_info({timeout, _Ref, expire}, State) ->
+handle_info({timeout, _Ref, expiry}, State) ->
     erlang:cancel_timer(State#state.expiry_timer),
     expire_lsps(State),
-    Timer = start_timer(),
+    Timer = start_timer(expiry, State),
     {noreply, State#state{expiry_timer = Timer}};
+handle_info({timeout, _Ref, spf}, State) ->
+    erlang:cancel_timer(State#state.spf_timer),
+    %% Dijkestra...
+    {noreply, State#state{spf_timer = undef}};
 handle_info(_Info, State) ->
     {noreply, State}.
 
@@ -232,7 +415,7 @@ code_change(_OldVsn, State, _Extra) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec lookup([binary()], integer()) -> [isis_lsp()].
+-spec lookup([binary()], atom()) -> [isis_lsp()].
 lookup(IDs, DB) ->
     lists:filtermap(fun(LSP) ->
 		      case ets:lookup(DB, LSP) of
@@ -255,7 +438,7 @@ lsp_summary({start, Count}, DB) when Count > 0 ->
     F = ets:fun2ms(fun(#isis_lsp{lsp_id = LSP_Id, remaining_lifetime = L,
 				 sequence_number = N,
 				 last_update = U, checksum = C})
-		      when (L - (Now - U)) > 0 ->
+		      when (L - (Now - U)) > -?DEFAULT_LSP_AGEOUT ->
 			   {LSP_Id, N, C, L - (Now - U)} end),
     case ets:select(DB, F, Count) of
 	{Results, Continuation} -> {Results, Continuation};
@@ -308,6 +491,170 @@ expire_lsps(#state{db = DB}) ->
 			   true end),
     ets:select_delete(DB, F).
 
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%%
+%% Compare the previous LSP with the new LSP and depending on what has
+%% changed, and figure out what sort of spf run is required.
+%% SPF Type can be:
+%%    full - a full dijkestra run is required
+%%
+%% @end
+%%--------------------------------------------------------------------
+-spec spf_type_required([isis_lsp()], isis_lsp()) -> full | partial | incremental | none.
+spf_type_required([], LSP) ->
+    L = isis_protocol:filter_tlvs(isis_tlv_extended_reachability,
+				  LSP#isis_lsp.tlv),
+    case length(L) >= 1 of
+	true -> full;
+	_ -> none
+    end;
+spf_type_required([OldLSP], NewLSP) ->
+    OldR = isis_protocol:filter_tlvs(isis_tlv_extended_reachability,
+				     OldLSP#isis_lsp.tlv),
+    NewR = isis_protocol:filter_tlvs(isis_tlv_extended_reachability,
+				     NewLSP#isis_lsp.tlv),
+    case OldR =:= NewR of
+	true -> partial;
+	_ -> incremental
+    end.
 
-start_timer() ->
-    erlang:start_timer((?DEFAULT_EXPIRY_TIMER * 1000), self(), expire).
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%%
+%% Schedule an SPF of the appropriate type...
+%%
+%% @end
+%%--------------------------------------------------------------------
+-spec schedule_spf(full | partial | incremental, tuple()) -> tuple().
+schedule_spf(full, State) ->
+    State;
+schedule_spf(partial, State) ->
+    State;
+schedule_spf(incremental, State) ->
+    State.
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%%
+%% Convert the LSP database into a set of {From, To}, Metric values
+%% stored in a dict. We'll prefer the metrics from the
+%% extended-reachability TLV over those in a standard reachability
+%% TLV.
+%%
+%% At the end, for every {A, B} entry, there should be a {B, A} entry,
+%% otherwise we should not use the link.
+%%
+%% @end
+%%--------------------------------------------------------------------
+populate_dict(D, From, {To, Metric}) ->
+    NewD = 
+	case dict:find({From, To}, D) of
+	    error -> dict:store({From, To}, Metric, D);
+	    {ok, _Value} -> D
+	end,
+    NewD;
+populate_dict(D, From, [#isis_tlv_extended_reachability_detail{
+			 neighbor = N, metric = M} | Ts]) ->
+    NewD = populate_dict(D, From, {N, M}),
+    populate_dict(NewD, From, Ts);
+populate_dict(D, From, [#isis_tlv_is_reachability_detail{
+			   neighbor = N, default = M} | Ts]) ->
+    NewD = populate_dict(D, From, {N, M#isis_metric_information.metric}),
+    populate_dict(NewD, From, Ts);
+populate_dict(D, From, [#isis_tlv_is_reachability{is_reachability = R} | Ts]) ->
+    NewD = populate_dict(D, From, R),
+    populate_dict(NewD, From, Ts);
+populate_dict(D, From, [#isis_tlv_extended_reachability{reachability = R} | Ts]) ->
+    NewD = populate_dict(D, From, R),
+    populate_dict(NewD, From, Ts);
+populate_dict(D, _From, []) ->
+    D.
+
+extract_reachability(D, From, TLV) ->
+    Extendeds = isis_protocol:filter_tlvs(isis_tlv_extended_reachability, TLV),
+    Normals = isis_protocol:filter_tlvs(isis_tlv_is_reachability, TLV),
+    D1 = populate_dict(D, From, Extendeds),
+    D2 = populate_dict(D1, From, Normals),
+    D2.
+
+populate_links(State) ->    
+    Reachability =
+	fun(L, Acc) ->
+		<<Sys:7/binary, _/binary>> = L#isis_lsp.lsp_id,
+		extract_reachability(Acc, Sys, L#isis_lsp.tlv)
+	end,
+    Edges = ets:foldl(Reachability, dict:new(), State#state.db),
+    Edges.
+
+-spec start_timer(atom(), tuple()) -> integer() | ok.
+start_timer(expiry, #state{expiry_timer = T}) when T =/= undef ->
+    erlang:start_timer((?DEFAULT_EXPIRY_TIMER * 1000), self(), expiry);
+start_timer(spf, #state{spf_timer = S}) when S =/= undef ->
+    erlang:start_timer((?DEFAULT_SPF_DELAY * 1000), self(), spf);
+start_timer(_, _) ->
+    ok.
+
+%%--------------------------------------------------------------------
+%% @doc
+%%
+%% Simplistic replacement of an existing TLV with a new TLV. If you
+%% want to do something cleverer with regards to replacing parts of a
+%% TLV, then you need to write some more code..
+%%
+%% @end
+%%--------------------------------------------------------------------
+-spec replace_tlv([isis_tlv()], isis_tlv()) -> [isis_tlv()].
+replace_tlv(TLVs, TLV) ->
+    Type = element(1, TLV),
+    F = fun(A, Found) ->
+		case element(1, A) =:= Type of
+		    true -> {TLV, true};
+		    _ -> {A, Found}
+		end
+	end,
+    case lists:mapfoldl(F, false, TLVs) of
+	{L, true} -> L;
+	{L, _} -> L ++ [TLV]
+    end.
+
+-spec update_eir(atom(), isis_tlv_extended_reachability_detail(),
+		 [isis_tlv_extended_reachability_detail()]) ->
+			{atom(), [isis_tlv_extended_reachability_detail()]}.
+update_eir(add,
+	   #isis_tlv_extended_reachability_detail{neighbor = N} = UpdatedER, R) ->
+    %% Iterate the list, if we find it - has it changed? We don't want
+    %% to flood if the EIR for this neighbor has not changed....
+    Replacer =
+	fun(ExistingER, _) when ExistingER =:= UpdatedER ->
+		{UpdatedER, {true, false}};
+	   (#isis_tlv_extended_reachability_detail{neighbor = T}, _) when T =:= N ->
+		{UpdatedER, {true, true}};
+	   (E, Acc) -> {E, Acc}
+	end,
+    {NewER, {Found, Modified}} = lists:mapfoldl(Replacer, {false, false}, R),
+    io:format("Was: ~p~nNow: ~p~n", [R, NewER]),
+    Result = 
+	case {NewER, {Found, Modified}} of
+	    {NewER, {true, true}} -> {true, NewER};
+	    {NewER, {true, false}} -> {false, NewER};
+	    {NewER, {false, false}} -> {true, NewER ++ [UpdatedER]}
+	end,
+    io:format("Returning: ~p~n", [Result]),
+    Result;
+update_eir(del,
+	   #isis_tlv_extended_reachability_detail{neighbor = N}, R) ->
+    Filter =
+	fun(#isis_tlv_extended_reachability_detail{neighbor = T}) when T =:= N ->
+		false;
+	   (_) -> true
+	end,
+    New = lists:filter(Filter, R),
+    Flood = length(New) =/= length(R),
+    {Flood, New}.
+	    
+	    
+		 

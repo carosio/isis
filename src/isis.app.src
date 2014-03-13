@@ -4,9 +4,7 @@
   {registered, []},
   {applications, [
 		  kernel,
-		  stdlib,
-		  sasl,
-		  lager
+		  stdlib
 		  ]},
   {mod, { isis_app, []}},
   {env, []}

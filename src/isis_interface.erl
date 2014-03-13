@@ -38,7 +38,6 @@
 	  ifindex,         %% Interface ifindex
 	  socket,          %% Procket socket...
 	  port,            %% Erlang port handling socket
-	  system_ref,      %% Our 'IS-IS'
 	  mac,             %% This interface's MAC address
 	  mtu,             %% Interface MTU
 	  circuit_type,    %% Level-1 or level-1-2 (just level-2 is invalid)
@@ -195,7 +194,7 @@ handle_info({_port, {data,
 		handle_pdu(From, DecodedPDU, State),
 		State;
 	    _ ->
-		io:format("Failed to decode: ~p~n", [PDU]),
+		%% io:format("Failed to decode: ~p~n", [PDU]),
 		State
 	end,
     {noreply, NewState};
@@ -285,7 +284,6 @@ handle_enable_level(level_1, #state{level1 = Level_1} = State) ->
 	    undef ->
 		{ok, Pid} = isis_interface_level:start_link([{level, level_1},
 							     {snpa, State#state.mac},
-							     {system, State#state.system_ref},
 							     {interface, self()}]),
 		Pid;
 	    _ -> Level_1
@@ -297,7 +295,6 @@ handle_enable_level(level_2, #state{level2 = Level_2} = State) ->
 	    undef ->
 		{ok, Pid} = isis_interface_level:start_link([{level, level_2},
 							     {snpa, State#state.mac},
-							     {system, State#state.system_ref},
 							     {interface, self()}]),
 		Pid;
 	    _ -> Level_2
@@ -421,8 +418,6 @@ interface_details(Socket, Name) ->
 
 extract_args([{name, Name} | T], State) ->
     extract_args(T, State#state{name = Name});
-extract_args([{system_ref, Ref} | T], State) ->
-    extract_args(T, State#state{system_ref = Ref});
 extract_args([{circuit_type, Type} | T] , State) ->
     extract_args(T, State#state{circuit_type = Type});
 extract_args([], State) ->
