@@ -494,7 +494,13 @@ encode_tlv(#isis_tlv_extended_ip_reachability{reachability = EIR}) ->
     Bs = lists:map(fun encode_tlv_extended_ip_reachability/1, EIR),
     encode_tlv_list(extended_ip_reachability, tlv, Bs);
 encode_tlv(#isis_tlv_ipv6_interface_address{addresses = Addresses}) ->
-    Bs = lists:map(fun(B) -> <<B:16/binary>> end, Addresses),
+    %% Takes either binary or integer addresses...
+    Bs = lists:map(fun(B) when is_integer(B) ->
+			   <<B:(16*8)>>;
+		      (B) when is_binary(B) ->
+			   <<B:16/binary>>
+		   end,
+		   Addresses),
     encode_tlv_list(ipv6_interface_address, tlv, Bs);
 encode_tlv(#isis_tlv_ipv6_reachability{metric = Metric, up = Up, external = External,
 				       mask_len = Mask_Len, prefix = Prefix,

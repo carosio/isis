@@ -18,6 +18,7 @@
 -export([start_link/1,
 	 %% Interface configuration (add/del/set/list)
 	 add_interface/1, del_interface/1, list_interfaces/0, set_interface/2,
+	 get_interface/1,
 	 %% Enable / disable level on an interface
 	 enable_level/2, disable_level/2,
 	 %% TLV setting code:
@@ -82,6 +83,9 @@ set_interface(Name, Values) ->
 
 list_interfaces() ->
     gen_server:call(?MODULE, {list_interfaces}).
+
+get_interface(Name) ->
+    gen_server:call(?MODULE, {get_interface, Name}).
 
 enable_level(Interface, Level) ->
     gen_server:call(?MODULE, {enable_level, Interface, Level}).
@@ -211,6 +215,15 @@ handle_call({set_interface, Name, Values}, _From,
 handle_call({list_interfaces}, _From,
 	    #state{interfaces = Interfaces} = State) ->
     Reply = Interfaces,
+    {reply, Reply, State};
+
+handle_call({get_interface, Name}, _From,
+	    #state{interfaces = Interfaces} = State) ->
+    Reply = 
+	case dict:find(Name, Interfaces) of
+	    {ok, I} -> I;
+	    Error -> Error
+	end,
     {reply, Reply, State};
 
 handle_call({system_id}, _From,

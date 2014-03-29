@@ -290,6 +290,8 @@ send_iih(SID, State) ->
 	lists:map(fun({A, _}) -> A end,
 		  dict:to_list(State#state.adjacencies)),
     Areas = isis_system:areas(),
+    V4Addresses = isis_interface:get_addresses(State#state.interface_ref, ipv4),
+    V6Addresses = isis_interface:get_addresses(State#state.interface_ref, ipv6),
     DIS = case State#state.dis of
 	      undef -> <<SID:6/binary, 0:8>>;
 	      D -> D
@@ -309,12 +311,11 @@ send_iih(SID, State) ->
 	     tlv =
 		 [
 		  #isis_tlv_is_neighbors{neighbors = IS_Neighbors},
-
 		  #isis_tlv_area_address{areas = Areas},
-
+		  #isis_tlv_ip_interface_address{addresses = V4Addresses},
+		  #isis_tlv_ipv6_interface_address{addresses = V6Addresses},
 		  %% Need to get these from the 'system' eventually...
-		  #isis_tlv_protocols_supported{protocols = [ipv4, ipv6]},
-		  #isis_tlv_ip_interface_address{addresses = [3232298904]}
+		  #isis_tlv_protocols_supported{protocols = [ipv4, ipv6]}
 		 ]},
     {ok, PDU, PDU_Size} = isis_protocol:encode(IIH),
     send_pdu(PDU, PDU_Size, State).

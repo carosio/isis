@@ -10,6 +10,7 @@
 
 -behaviour(gen_server).
 
+-include("isis_system.hrl").
 -include("isis_protocol.hrl").
 
 -define(SIOCGIFMTU, 16#8921).
@@ -20,7 +21,8 @@
 %% API
 -export([start_link/1, send_pdu/4, stop/1,
 	 get_state/3, get_state/1, set/2,
-	 enable_level/2, disable_level/2, levels/1]).
+	 enable_level/2, disable_level/2, levels/1,
+	 get_addresses/2]).
 
 %% Debug export
 -export([]).
@@ -85,6 +87,9 @@ disable_level(Pid, Level) ->
 
 levels(Pid) ->
     gen_server:call(Pid, {levels}).
+
+get_addresses(Pid, Family) ->
+    gen_server:call(Pid, {get_addresses, Family}).
 
 %%--------------------------------------------------------------------
 %% @private
@@ -155,6 +160,16 @@ handle_call({levels}, _From, State) ->
 	    {_, _} -> [level_1, level_2]
 	end,
     {reply, Levels, State};
+
+handle_call({get_addresses, Family}, _From, State) ->
+    Interface = isis_system:get_interface(State#state.name),
+    Matcher = fun(#isis_address{afi = F, address = A})
+		    when F =:= Family -> {true, A};
+		 (_) -> false
+	      end,
+    Addresses = lists:filtermap(Matcher,
+				Interface#isis_interface.addresses),
+    {reply, Addresses, State};
 
 handle_call(_Request, _From, State) ->
     Reply = ok,
