@@ -398,10 +398,11 @@ add_or_update_address(del, Address, Addresses) ->
 %% --------------------------------------------------------------------
 update_router_id(#zclient_prefix{afi = Afi} = Address, State) ->
     F = fun(A) when A#zclient_prefix.afi =:= Afi ->
-		true;
-	   (_) -> false
+		false;
+	   (_) -> true
 	end,
     NR = lists:filter(F, State#state.router_id),
+    update_listeners({router_id, Address}, State),
     State#state{router_id = NR ++ [Address]}.
 
 read_ipv4_route(_Type, _Flags, Info, MaskLen, R0) ->
@@ -434,8 +435,6 @@ read_ipv4_route(_Type, _Flags, Info, MaskLen, R0) ->
 		 {MetricT, R5T};
 	    _ -> {0, R4}
 	end,
-    io:format("Handling ipv4_route: ~p/~p ~p ~p ~p ~p~n",
-	      [Address, MaskLen, Nexthop, Ifindex, Distance, Metric]),
     P = #zclient_prefix{afi = ipv4, address = Address, mask_length = MaskLen},
     R = #zclient_route{prefix = P, nexthop = Nexthop, metric = Metric},
     R.
@@ -470,8 +469,6 @@ read_ipv6_route(_Type, _Flags, Info, MaskLen, R0) ->
 		 {MetricT, R5T};
 	    _ -> {0, R4}
 	end,
-    io:format("Handling ipv6_route: ~p/~p ~p ~p ~p ~p~n",
-	      [Address, MaskLen, Nexthop, Ifindex, Distance, Metric]),
     P = #zclient_prefix{afi = ipv6, address = Address, mask_length = MaskLen},
     R = #zclient_route{prefix = P, nexthop = Nexthop, metric = Metric},
     R.
@@ -498,7 +495,13 @@ update_listeners(Msg, #state{listeners = Listeners}) ->
 %% @doc Send the current state to a new subscriber, as discrete events.
 %% @end
 %%--------------------------------------------------------------------
-send_current_state(Pid, #state{interfaces = Interfaces}) ->
+send_current_state(Pid, #state{router_id = RouterIDs,
+			       interfaces = Interfaces}) ->
+    %% Send router-id
+    RF = fun(RI) -> Pid ! {router_id, RI} end,
+    lists:map(RF, RouterIDs),
+
+    %% Now send interface information
     I = dict:to_list(Interfaces),
     F = fun({_, A}) ->
 		Z = A#zclient_interface{addresses = []},

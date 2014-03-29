@@ -26,7 +26,9 @@
 	 %% Query
 	 areas/0, lsps/0, system_id/0,
 	 %% Misc APIs - check autoconf collision etc
-	 check_autoconf_collision/1, schedule_lsp_refresh/0]).
+	 check_autoconf_collision/1, schedule_lsp_refresh/0,
+	 %% TLV Update routines
+	 update_tlv/3]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -102,6 +104,9 @@ check_autoconf_collision(TLVs) ->
 
 schedule_lsp_refresh() ->
     gen_server:cast(?MODULE, {schedule_lsp_refresh}).
+
+update_tlv(TLV, Node, Level) ->
+    gen_server:cast(?MODULE, {update_tlv, TLV, Node, Level}).
 
 %% Return the areas we're in
 areas() ->
@@ -279,6 +284,10 @@ handle_cast({schedule_lsp_refresh},
     {noreply, State#state{refresh_timer = Timer}};
 handle_cast({schedule_lsp_refresh}, State) ->
     {noreply, State};
+handle_cast({update_tlv, TLV, Node, Level},
+	    #state{frags = Frags} = State) ->
+    NewFrags = isis_protocol:update_tlv(TLV, Node, Level, Frags),
+    {noreply, State#state{frags = NewFrags}};
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
@@ -302,6 +311,8 @@ handle_info({redistribute_add, Route}, State) ->
     {noreply, add_redistribute(Route, State)};
 handle_info({redistribute_delete, Route}, State) ->
     {noreply, delete_redistribute(Route, State)};
+handle_info({router_id, Address}, State) ->
+    {noreply, update_router_id(Address, State)};
 handle_info({timeout, _Ref, lsp_ageout}, State) ->
     lsp_ageout_check(State),
     Timer = erlang:start_timer(isis_protocol:jitter(?DEFAULT_AGEOUT_CHECK, 10) * 1000,
@@ -477,7 +488,7 @@ create_initial_frags(State) ->
 	    _ -> TLVs
 	end,
     Creator = fun(TLV, {Level, Frags}) -> 
-		      {Level, isis_protocol:merge_whole_tlv(TLV, 0, Level, Frags)}
+		      {Level, isis_protocol:update_tlv(TLV, 0, Level, Frags)}
 	      end,
     {_, F} = lists:foldl(Creator, {level_1, []}, FingerPrintTLVs),
     io:format("Created: F: ~p~n", [F]),
@@ -488,8 +499,8 @@ create_initial_frags(State) ->
 
 set_tlv_hostname(Name, State) ->
     TLV = #isis_tlv_dynamic_hostname{hostname = Name},
-    L1Frags = isis_protocol:merge_whole_tlv(TLV, 0, level_1, State#state.frags),
-    L2Frags = isis_protocol:merge_whole_tlv(TLV, 0, level_2, L1Frags),
+    L1Frags = isis_protocol:update_tlv(TLV, 0, level_1, State#state.frags),
+    L2Frags = isis_protocol:update_tlv(TLV, 0, level_2, L1Frags),
     State#state{frags = L2Frags}.
 
 %%%===================================================================
@@ -549,6 +560,24 @@ autoconf_next_interface(State) ->
     %% F = fun(#isis_interface{mac = Mac}) when 
     State.
 
+update_address_tlv(Updater, ipv4, Address, Mask, State) ->
+    TLV = #isis_tlv_extended_ip_reachability{
+	     reachability =
+		 [#isis_tlv_extended_ip_reachability_detail{
+		     prefix = Address,
+		     mask_len = Mask,
+		     metric = 0,
+		     up = true,
+		     sub_tlv = []}]},
+    update_frags(Updater, TLV, 0, State);
+update_address_tlv(Updater, ipv6, Address, Mask, State) ->
+    TLV = #isis_tlv_ipv6_reachability{prefix = <<Address:128/big>>, up = true,
+				      mask_len = Mask, metric = 0,
+				      external = false,
+				      sub_tlv = <<>>},
+    update_frags(Updater, TLV, 0, State).
+
+
 %%%===================================================================
 %%% Add address
 %%%===================================================================
@@ -564,47 +593,56 @@ add_address(#zclient_prefix{afi = AFI, address = Address,
     A = #isis_address{afi = AFI, address = Address, mask = Mask},
     NewA = add_to_list(A, I#isis_interface.addresses),
     NewD = dict:store(Name, I#isis_interface{addresses = NewA}, State#state.interfaces),
-    State#state{interfaces = NewD}.
+    NewState = update_address_tlv(fun isis_protocol:update_tlv/4,
+				  AFI, Address, Mask, State),
+    NewState#state{interfaces = NewD}.
 
-delete_address(#zclient_prefix{} = A, Name, State) ->
-    ok.
+delete_address(#zclient_prefix{afi = AFI, address = Address, mask_length = Mask} = A,
+	       Name, State) ->
+    case dict:is_key(Name, State#state.interfaces) of
+	true ->
+	    I = dict:fetch(Name, State#state.interfaces),
+	    NewA = delete_from_list(A, I#isis_interface.addresses),
+	    NewD = dict:store(Name, I#isis_interface{addresses = NewA}, State#state.interfaces),
+	    NewState = update_address_tlv(fun isis_protocol:delete_tlv/4,
+					  AFI, Address, Mask, State),
+	    NewState#state{interfaces = NewD};
+	_ -> State
+    end.
 
 add_redistribute(#zclient_route{prefix = #zclient_prefix{afi = ipv4, address = Address,
 						     mask_length = Mask},
 				metric = Metric}, State) ->
-    TLV = 
-	#isis_tlv_extended_ip_reachability_detail{
-	   prefix = Address,
-	   mask_len = Mask,
-	   metric = Metric,
-	   up = true,
-	   sub_tlv = []},
-    io:format("Handling redist add: ~p~n", [TLV]),
-    State;
+    TLV = #isis_tlv_extended_ip_reachability{
+	     reachability =
+		 [#isis_tlv_extended_ip_reachability_detail{
+		     prefix = Address,
+		     mask_len = Mask,
+		     metric = Metric,
+		     up = true,
+		     sub_tlv = []}]},
+    update_frags(fun isis_protocol:update_tlv/4, TLV, 0, State);
 add_redistribute(#zclient_route{prefix = #zclient_prefix{afi = ipv6, address = Address,
 						     mask_length = Mask},
-				nexthop = Nexthop, metric = Metric}, State) ->
+				metric = Metric}, State) ->
     TLV = 
 	#isis_tlv_ipv6_reachability{prefix = <<Address:128/big>>, up = true,
 				    mask_len = Mask, metric = Metric,
 				    external = true,
 				    sub_tlv = <<>>},
-    F1 = isis_protocol:update_tlv(TLV, 0, level_1, State#state.frags),
-    F2 = isis_protocol:update_tlv(TLV, 0, level_2, F1),
-    State#state{frags = F2}.
-
+    update_frags(fun isis_protocol:update_tlv/4, TLV, 0, State).
 
 delete_redistribute(#zclient_route{prefix = #zclient_prefix{afi = ipv4, address = Address,
 							    mask_length = Mask},
 				   metric = Metric}, State) ->
-    %% TLV = 
-    %% 	#isis_tlv_extended_ip_reachability_detail{
-    %% 	   prefix = Address,
-    %% 	   mask_len = Mask,
-    %% 	   metric = Metric,
-    %% 	   up = true,
-    %% 	   sub_tlv = []},
-    State;
+    TLV = 
+     	#isis_tlv_extended_ip_reachability_detail{
+     	   prefix = Address,
+     	   mask_len = Mask,
+     	   metric = Metric,
+     	   up = true,
+     	   sub_tlv = []},
+    update_frags(fun isis_protocol:delete_tlv/4, TLV, 0, State);
 delete_redistribute(#zclient_route{prefix = #zclient_prefix{afi = ipv6, address = Address,
 							    mask_length = Mask},
 				   metric = Metric}, State) ->
@@ -612,9 +650,21 @@ delete_redistribute(#zclient_route{prefix = #zclient_prefix{afi = ipv6, address 
 	#isis_tlv_ipv6_reachability{prefix = <<Address:128>>, up = true,
 				    mask_len = Mask, metric = Metric,
 				    sub_tlv = []},
-    F1 = isis_protocol:delete_tlv(TLV, 0, level1, State#state.frags),
-    F2 = isis_protocol:delete_tlv(TLV, 0, level2, F1),
-    State#state{frags = F2}.
+    update_frags(fun isis_protocol:delete_tlv/4, TLV, 0, State).
+
+update_router_id(#zclient_prefix{afi = ipv4, address = A},
+		 State) ->
+    TLV = #isis_tlv_te_router_id{router_id = A},
+    update_frags(fun isis_protocol:update_tlv/4, TLV, 0, State);
+update_router_id(#zclient_prefix{afi = ipv6, address = A},
+		 State) ->
+    %% Not sure what to do with v6 router-ids just yet..
+    State.
+
+update_frags(Updater, TLV, Node, State) ->
+    F1 = Updater(TLV, Node, level_1, State#state.frags),
+    %% F2 = Updater(TLV, Node, level_2, F1),
+    State#state{frags = F1}.
 
 add_to_list(Item, List) ->
     Replacer = fun(I, _) when I =:= Item ->
@@ -626,4 +676,8 @@ add_to_list(Item, List) ->
 	true -> NewList;
 	_ -> NewList ++ [Item]
     end.
+
+delete_from_list(Item, List) ->
+    lists:filter(fun(I) -> Item =:= I end, List).
+		      
     

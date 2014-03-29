@@ -246,10 +246,12 @@ handle_dis_election(#isis_iih{priority = TheirP, dis = DIS, source_id = SID},
   when TheirP > OurP ->   %% ; TheirP == OurP, TheirSNPA > OurMac
     <<D:6/binary, _:1/binary>> = DIS,
     DIS_Priority = 
-	case D == SID of
+	case D =:= SID of
 	    true -> TheirP;
 	    _ -> State#state.dis_priority
 	end,
+    %%case State#state.dis =:= DIS of
+%%	false -> 
     State#state{dis = DIS, dis_priority = DIS_Priority};
 handle_dis_election(#isis_iih{priority = TheirP, dis = DIS, source_id = SID},
 		    #state{priority = OurP} = State)
@@ -313,7 +315,8 @@ send_iih(SID, State) ->
 		  #isis_tlv_is_neighbors{neighbors = IS_Neighbors},
 		  #isis_tlv_area_address{areas = Areas},
 		  #isis_tlv_ip_interface_address{addresses = V4Addresses},
-		  #isis_tlv_ipv6_interface_address{addresses = V6Addresses},
+		  %% Turn off ipv6 addresses when working with Titanium :(
+		  %% #isis_tlv_ipv6_interface_address{addresses = V6Addresses},
 		  %% Need to get these from the 'system' eventually...
 		  #isis_tlv_protocols_supported{protocols = [ipv4, ipv6]}
 		 ]},

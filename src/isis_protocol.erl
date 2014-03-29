@@ -17,7 +17,7 @@
 	 package_tlvs/3,
 	 current_timestamp/0, fixup_lifetime/1, filter_lifetime/1,
 	 filter_tlvs/2,
-	 merge_whole_tlv/4, add_whole_tlv/4, create_new_frag/4]).
+	 update_tlv/4, create_new_frag/4]).
 
 %% For debugging...
 -compile(export_all).
@@ -554,22 +554,37 @@ update_tlv(#isis_tlv_extended_reachability{} = TLV,
     merge_array_tlv(TLV, Node, Level, Frags);
 update_tlv(#isis_tlv_dynamic_hostname{} = TLV,
 	  Node, Level, Frags) ->
-    merge_whole_tlv(TLV, Node, Level, Frags);
-update_tlv(#isis_tlv_ipv6_reachability{} = TLV,
+    F = fun(T) -> element(1, T) =/= element(1, TLV) end,
+    merge_whole_tlv(F, TLV, Node, Level, Frags);
+update_tlv(#isis_tlv_ipv6_reachability{prefix = Prefix, mask_len = MaskLen} = TLV,
 	   Node, Level, Frags) ->
-    merge_whole_tlv(TLV, Node, Level, Frags);
+    F = fun(#isis_tlv_ipv6_reachability{prefix = P, mask_len = M})
+	      when P =:= Prefix, M =:= MaskLen ->
+		false;
+	   (_) -> true
+	end,
+    merge_whole_tlv(F, TLV, Node, Level, Frags);
 update_tlv(#isis_tlv_ip_internal_reachability{} = TLV,
 	   Node, Level, Frags) ->
-    %% Merge in the detail records
+    merge_array_tlv(TLV, Node, Level, Frags);
+update_tlv(#isis_tlv_extended_ip_reachability{} = TLV,
+	   Node, Level, Frags) ->
     merge_array_tlv(TLV, Node, Level, Frags);
 %% Default merge..
 update_tlv(TLV, Node, Level, Frags) ->
-    merge_whole_tlv(TLV, Node, Level, Frags).
+    F = fun(T) -> element(1, T) =/= element(1, TLV) end,
+    merge_whole_tlv(F, TLV, Node, Level, Frags).
 
 delete_tlv(#isis_tlv_dynamic_hostname{} = TLV,
 	   Node, Level, Frags) ->
     delete_whole_tlv(fun(T) -> element(1, T) =/= element(1, TLV) end,
 		     Node, Level, Frags);
+delete_tlv(#isis_tlv_extended_reachability{} = TLV,
+	   Node, Level, Frags) ->
+    delete_array_tlv(TLV, Node, Level, Frags);
+delete_tlv(#isis_tlv_extended_ip_reachability{} = TLV,
+	   Node, Level, Frags) ->
+    delete_array_tlv(TLV, Node, Level, Frags);
 delete_tlv(#isis_tlv_ipv6_reachability{prefix = Prefix, mask_len = Mask},
 	   Node, Level, Frags) ->
     Deleter = fun(#isis_tlv_ipv6_reachability{prefix = P, mask_len = M})
@@ -585,45 +600,111 @@ delete_tlv(TLV, Node, Level, Frags) ->
 %%%===================================================================
 %%% TLV merge / split functions
 %%% ===================================================================
+%%% ===================================================================
+%%% delete_whole_tlv - delete a TLV where the matcher function returns
+%%% true
+%%% ===================================================================
 -spec delete_whole_tlv(fun(), integer(), atom(), [lsp_frag()]) -> [lsp_frag()].
 delete_whole_tlv(MatchFun, Node, Level, Frags) ->
     Delete = fun(T) -> MatchFun(T) end,
-    Iterator = fun(#lsp_frag{pseudonode = N, level = L, tlvs = TLVs,
-			     sequence = Seqno} = F)
+    Iterator = fun(#lsp_frag{pseudonode = N, level = L, tlvs = TLVs} = F)
 		    when N =:= Node, L =:= Level ->
 		       NewTLVs = lists:filter(Delete, TLVs),
 		       case length(NewTLVs) =:= length(TLVs) of
 			   false ->
-			       F#lsp_frag{sequence = Seqno+1,
-					  tlvs = lists:filter(Delete, TLVs)};
+			       isis_system:schedule_lsp_refresh(),
+			       F#lsp_frag{updated = true,
+					  size = tlv_size(NewTLVs),
+					  tlvs = NewTLVs};
 			   _ ->
 			       F
 		       end;
 		  (F) -> F
 	       end,
+    NewFrags = lists:map(Iterator, Frags),
+    NewFrags.
+
+%%% ===================================================================
+%%% delete_array_tlv - delete an entry from an arrayed TLV
+%%% ===================================================================
+delete_array_tlv(TLV, Node, Level, Frags) ->
+    TLVType = element(1, TLV),
+    Deleter = fun(T, {_, Size}) when element(1, T) =:= TLVType ->
+		      handle_delete_array_tlv(TLV, T, Size);
+		 (T, Acc) -> {T, Acc}
+	      end,
+    Iterator = fun(#lsp_frag{pseudonode = N, level = L,
+			     tlvs = TLVs, size = OriginalSize} = F)
+		     when N =:= Node, L =:= Level ->
+		       case lists:mapfoldl(Deleter, {false, OriginalSize}, TLVs) of
+			   {NewTLVs, {true, NewSize}} ->
+			       isis_system:schedule_lsp_refresh(),
+			       #lsp_frag{updated = true,
+					 size = NewSize,
+					 tlvs = NewTLVs};
+			   _ -> F
+		       end
+	       end,
     lists:map(Iterator, Frags).
+
+handle_delete_array_tlv(#isis_tlv_extended_reachability{reachability = Deleted},
+			#isis_tlv_extended_reachability{reachability = Existing} = Original,
+			Size) ->
+    NewD = lists:nth(1, Deleted),
+    DeletedN = NewD#isis_tlv_extended_reachability_detail.neighbor,
+    Results = lists:filter(fun(#isis_tlv_extended_reachability_detail{neighbor = N})
+				 when N =:= DeletedN ->
+				   false;
+			      (_) -> true
+			   end,
+			   Existing),
+    case length(Results) =:= length(Existing) of
+	true -> {Original, {false, Size}};
+	_ -> NewTLV = Original#isis_tlv_extended_reachability{reachability = Results},
+	     SizeDiff = tlv_size(Original) - tlv_size(NewTLV),
+	     {NewTLV, {true, Size - SizeDiff}}
+    end;
+handle_delete_array_tlv(#isis_tlv_extended_ip_reachability{reachability = Deleted},
+			#isis_tlv_extended_ip_reachability{reachability = Existing} = Original,
+			Size) ->
+    NewD = lists:nth(1, Deleted),
+    DeletedP = NewD#isis_tlv_extended_ip_reachability_detail.prefix,
+    DeletedM = NewD#isis_tlv_extended_ip_reachability_detail.mask_len,
+    Results = lists:filter(fun(#isis_tlv_extended_ip_reachability_detail{
+				  prefix = P, mask_len = M})
+				 when P =:= DeletedP, M =:= DeletedM ->
+				   false;
+			      (_) -> true
+			   end,
+			   Existing),
+    case length(Results) =:= length(Existing) of
+	true -> {Original, {false, Size}};
+	_ -> NewTLV = Original#isis_tlv_extended_ip_reachability{reachability = Results},
+	     SizeDiff = tlv_size(Original) - tlv_size(NewTLV),
+	     {NewTLV, {true, Size - SizeDiff}}
+    end.
 
 %%% ===================================================================
 %%% Generic merge / split routine for 'tlv as a whole', for example
 %%% hostname, ipv6 reachability (until we do sub-tlv merging)
 %%% ===================================================================
--spec merge_whole_tlv(isis_tlv(), integer(), atom(), [lsp_frag()]) -> [lsp_frag()].
-merge_whole_tlv(TLV, Node, Level, Frags) ->
+-spec merge_whole_tlv(fun(), isis_tlv(), integer(), atom(), [lsp_frag()]) -> [lsp_frag()].
+merge_whole_tlv(Matcher, TLV, Node, Level, Frags) ->
     F = fun(#lsp_frag{pseudonode = N, level = L} = Frag, {false, _})
-	   when N =:= Node, L =:= Level -> merge_whole_tlv(TLV, Frag);
-	   (Frag, {Found, Replaced}) -> {Frag, {Found, Replaced}}
+	   when N =:= Node, L =:= Level ->
+		merge_whole_tlv(Matcher, TLV, Frag);
+	   (Frag, {Found, Replaced}) ->
+		{Frag, {Found, Replaced}}
 	end,
     case lists:mapfoldl(F, {false, false}, Frags) of
 	{NewFrags, {true, true}} -> NewFrags;
 	{_, {_, _}} -> add_whole_tlv(TLV, Node, Level, Frags)
     end.
 
--spec merge_whole_tlv(isis_tlv(), lsp_frag()) -> lsp_frag().
-merge_whole_tlv(TLV, #lsp_frag{tlvs = TLVs, size = Size,
+-spec merge_whole_tlv(fun(), isis_tlv(), lsp_frag()) -> lsp_frag().
+merge_whole_tlv(Matcher, TLV, #lsp_frag{tlvs = TLVs, size = Size,
 			       sequence = Seqno} = Frag) ->
-    Type = element(1, TLV),
-    F = fun(T) -> element(1, T) =/= Type end,
-    NewTLVs = lists:filter(F, TLVs),
+    NewTLVs = lists:filter(Matcher, TLVs),
     %% If we didn't find a matching TLV type, no-op, otherwise we see
     %% if there's now room to fit the TLV into this fragment.
     case length(NewTLVs) =:= length(TLVs) of
@@ -691,18 +772,20 @@ add_array_tlv(TLV, Node, Level, Frags) ->
 		    lists:mapfoldl(TestAddTLVs, {Size, false}, TLVs),
 		NewFrag = case Added of
 			      true ->
-				  TempF = Frag#lsp_frag{tlvs = NewTLVs,
-							size = NewSize},
-				  %% Refresh LSP here...
-				  TempF;
+				  isis_system:schedule_lsp_refresh(),
+				  Frag#lsp_frag{tlvs = NewTLVs,
+						size = NewSize,
+						updated = true};
 			      _ -> Frag
 			  end,
 		{NewFrag, Added};
 	   (F, Acc) ->
 		{F, Acc}
 	end,
-    {NewFrags, Acc} = lists:mapfoldl(IterateFrags, false, Frags),
-    NewFrags.
+    case lists:mapfoldl(IterateFrags, false, Frags) of
+	{_, false} -> add_whole_tlv(TLV, Node, Level, Frags);
+	{NewFrags, true} -> NewFrags
+    end.
     
 
 %%% ===================================================================
@@ -796,15 +879,18 @@ handle_merge_array_tlv(#isis_tlv_extended_ip_reachability{reachability = Existin
     end.
 
 merge_array_tlv(TLV, Node, Level, Frags) ->
+    io:format("merge_array_tlv: Node ~p Level ~p ~n", [Node, Level]),
     TLVType = element(1, TLV),
     SearchTLVs =
 	fun(T, {Size, Found, Replaced}) when element(1, T) =:= TLVType ->
 		%% Found a matching TLV, see if we can replace the array...
 		TLen = binary_list_size(encode_tlv(TLV)),
+		io:format("merge_array_tlv: found matching TLV, testing..", []),
 		R = handle_merge_array_tlv(T, TLV, Size),
 		io:format("handle_merge_array: ~p~n", [R]),
 		R;
 	   (T, Acc) ->
+		io:format("miss on type: ~p~n", [element(1, T)]),
 		{T, Acc}
 	end,
     SearchFrags =
@@ -817,20 +903,21 @@ merge_array_tlv(TLV, Node, Level, Frags) ->
 		NewFrag = 
 		    case Updated of
 			true ->
-			    TempF = Frag#lsp_frag{tlvs = NewTLVs,
-						  size = NewSize,
-						  updated = true},
 			    isis_system:schedule_lsp_refresh(),
-			    TempF;
+			    Frag#lsp_frag{tlvs = NewTLVs,
+					  size = NewSize,
+					  updated = true};
 			_ -> Frag
 		    end,
 		{NewFrag, Replaced};
 	   (F, Acc) ->
+		io:format("Miss on F: ~p~n", [F]),
 		{F, Acc}
 	end,
     {NewFrags, Acc} = lists:mapfoldl(SearchFrags, false, Frags),
     case Acc of
-	false -> add_array_tlv(TLV, Node, Level, Frags);
+	false -> io:format("Total miss...~n", []),
+		 add_array_tlv(TLV, Node, Level, Frags);
 	_ -> NewFrags
     end.
 			 
@@ -840,8 +927,7 @@ merge_array_tlv(TLV, Node, Level, Frags) ->
 %%% ===================================================================
 -spec add_whole_tlv(isis_tlv(), integer(), atom(), [lsp_frag()]) -> [lsp_frag()].
 add_whole_tlv(TLV, Node, Level, Frags) ->
-    TLVB = encode_tlv(TLV),
-    TLVSize = binary_list_size(TLVB),
+    TLVSize = tlv_size(TLV),
     Add = fun(#lsp_frag{pseudonode = PN, size = Size, level = L,
 			tlvs = TLVs, sequence = Seqno} = Frag, Acc)
 		when Acc =:= false, PN =:= Node, L =:= Level ->

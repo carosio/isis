@@ -116,7 +116,7 @@ up({iih, IIH}, State) ->
 	    _ -> State
 	end,
     %% Update our EIR to include this neighbor
-    %% update_adjacency(add, State),
+    
     {next_state, up, NewState};
 up({timeout}, State) ->
     NewState = start_timer(State),
