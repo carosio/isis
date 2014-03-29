@@ -21,7 +21,7 @@
 	 lookup_lsps/2, store_lsp/2, delete_lsp/2, purge_lsp/2,
 	 summary/2, range/3, extract_links/1,
 	 replace_tlv/3, update_reachability/3,
-	 run_spf/1, flood_lsp/2, bump_lsp/2]).
+	 run_spf/1, flood_lsp/3, bump_lsp/2]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -74,7 +74,9 @@ bump_lsp(Ref, LSP) ->
 purge_lsp(Ref, LSP) ->
     case gen_server:call(Ref, {purge, LSP}) of
 	{ok, PurgedLSP} ->
-	    flood_lsp(Ref, PurgedLSP),
+	    D = isis_system:list_interfaces(),
+	    I = dict:to_list(D),
+	    flood_lsp(Ref, I, PurgedLSP),
 	    ok;
 	Result -> Result
     end.
@@ -212,7 +214,9 @@ bump_an_lsp(Level, L, State) ->
 		 sequence_number = (L#isis_lsp.sequence_number + 1),
 		 remaining_lifetime = 1200,
 		 last_update = isis_protocol:current_timestamp()}),
-    flood_lsp(Level, L).
+    D = isis_system:list_interfaces(),
+    I = dict:to_list(D),
+    flood_lsp(Level, I, L).
 
 purge(LSP, State) ->
     case ets:lookup(State#state.db, LSP) of
@@ -225,18 +229,16 @@ purge(LSP, State) ->
     end.
 	    
 
-flood_lsp(Level, LSP) ->
+flood_lsp(Level, Interfaces, LSP) ->
     case isis_protocol:encode(LSP) of
 	{ok, Packet, Size} ->
-	    D = isis_system:list_interfaces(),
-	    I = dict:to_list(D),
 	    Sender = fun({N, #isis_interface{pid = P}}) ->
 			     case is_pid(P) of
 				 true -> isis_interface:send_pdu(P, Packet, Size, Level);
 				 _ -> ok
 			     end
 		     end,
-	    lists:map(Sender, I),
+	    lists:map(Sender, Interfaces),
 	    ok;
 	_ -> error
     end.

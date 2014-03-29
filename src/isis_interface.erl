@@ -20,7 +20,7 @@
 %% API
 -export([start_link/1, send_pdu/4, stop/1,
 	 get_state/3, get_state/1, set/2,
-	 enable_level/2, disable_level/2]).
+	 enable_level/2, disable_level/2, levels/1]).
 
 %% Debug export
 -export([]).
@@ -83,6 +83,9 @@ enable_level(Pid, Level) ->
 disable_level(Pid, Level) ->
     gen_server:call(Pid, {disable, Level}).
 
+levels(Pid) ->
+    gen_server:call(Pid, {levels}).
+
 %%--------------------------------------------------------------------
 %% @private
 %% @doc
@@ -142,6 +145,16 @@ handle_call({enable, Level}, _From, State) ->
     handle_enable_level(Level, State);
 handle_call({disable, Level}, _From, State) ->
     handle_disable_level(Level, State);
+
+handle_call({levels}, _From, State) ->
+    Levels = 
+	case {State#state.level1, State#state.level2} of
+	    {undef, undef} -> [];
+	    {_, undef} -> [level_2];
+	    {undef, _} -> [level_1];
+	    {_, _} -> [level_1, level_2]
+	end,
+    {reply, Levels, State};
 
 handle_call(_Request, _From, State) ->
     Reply = ok,

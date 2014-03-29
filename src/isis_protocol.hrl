@@ -20,12 +20,25 @@
 -define(DEFAULT_EXPIRY_TIMER, 60).
 -define(DEFAULT_LSP_AGEOUT, 60).
 -define(DEFAULT_SPF_DELAY, 0.01).   %% 100ms
+-define(DEFAULT_AGEOUT_CHECK, 85).
 
 -define(LSP_ENTRY_DETAIL_PER_TLV, 15).   %% 15 LSP_ENTY_DETAIL records per LSP_ENTRY TLV
 -define(LSP_ENTRY_PER_PDU, 6).           %% 6 LSP_ENTRY objects per PDU
 
 %% This isn't very pretty, but it sure calms down dialyzer on fun2ms() stuff...
 -type matchspec_atom() :: '_' | '$1' | '$2' | '$3' | '$4' | '$5' | '$6' | '$7' | '$8' | '$9'.
+
+%%%===================================================================
+%%% Used to create the LSPs we generate
+%%%===================================================================
+-record(lsp_frag, {level :: atom(),        %% Level
+		   pseudonode :: 0..255,   %% Pseudo-node
+		   fragment :: 0..255,     %% Fragment
+		   sequence = 1 :: integer(),  %% Sequence number
+		   updated  = false :: atom(),      %% Do we need to refresh this LSP?
+		   size = ?ISIS_MIN_MSG_SIZE :: integer(),      %% Packet size so far
+		   tlvs = [] :: [isis_tlv()]}).
+-type lsp_frag() :: #lsp_frag{}.
 
 %%%===================================================================
 %%% TLV records
@@ -149,6 +162,10 @@
 	   neighbor :: binary()}).
 -type isis_tlv_restart() :: #isis_tlv_restart{}.
 
+-record (isis_tlv_hardware_fingerprint, {
+	   fingerprint :: binary()}).
+-type isis_tlv_hardware_fingerprint() :: #isis_tlv_hardware_fingerprint{}.
+
 -type isis_tlv() ::
 	isis_tlv_area_address() |
 	isis_tlv_is_reachability() |
@@ -165,6 +182,7 @@
 	isis_tlv_protocols_supported() |
 	isis_tlv_te_router_id() |
 	isis_tlv_restart() |
+	isis_tlv_hardware_fingerprint() |
 	isis_tlv_unknown().
 
 %%%===================================================================

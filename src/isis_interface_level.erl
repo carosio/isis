@@ -35,7 +35,7 @@
 	  ssn_timer = undef :: reference() | undef, %% SSN timer
 	  adjacencies,     %% Dict for SNPA -> FSM pid
 	  priority = 0,    %% 0 - 127 (6 bit) for our priority, highest wins
-	  dis,             %% Current DIS for this interface ( 7 bytes, S-id + pseudonode)
+	  dis = undef,     %% Current DIS for this interface ( 7 bytes, S-id + pseudonode)
 	  dis_priority,    %% Current DIS's priority
 	  are_we_dis = false,  %% True if we're the DIS
 	  dis_continuation = undef,%% Do we have more CSNP's to send?
@@ -104,7 +104,7 @@ init(Args) ->
 %% @end
 %%--------------------------------------------------------------------
 handle_call({send_iih}, _From, State) ->
-    send_iih(State),
+    send_iih(isis_system:system_id(), State),
     {reply,ok, State};
 
 handle_call({get_state, hello_interval}, _From, State) ->
@@ -162,7 +162,7 @@ handle_cast(_Msg, State) ->
 %%--------------------------------------------------------------------
 handle_info({timeout, _Ref, iih}, State) ->
     cancel_timers([State#state.iih_timer]),
-    send_iih(State),
+    send_iih(isis_system:system_id(), State),
     Timer = start_timer(iih, State),
     {noreply, State#state{iih_timer = Timer}};
 
@@ -272,7 +272,7 @@ assume_dis(State) ->
     DIS = <<ID:6/binary, Node:8>>,
     NewState = State#state{dis = DIS, dis_timer = DIS_Timer,
 			   are_we_dis = true},
-    send_iih(NewState),
+    send_iih(ID, NewState),
     NewState.
 
 %%--------------------------------------------------------------------
@@ -283,24 +283,29 @@ assume_dis(State) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
-send_iih(State) ->
+send_iih(SID, _State) when byte_size(SID) =/= 6 ->
+    no_system_id;
+send_iih(SID, State) ->
     IS_Neighbors =
 	lists:map(fun({A, _}) -> A end,
 		  dict:to_list(State#state.adjacencies)),
-    ID = isis_system:system_id(),
     Areas = isis_system:areas(),
-    Circuit = 
+    DIS = case State#state.dis of
+	      undef -> <<SID:6/binary, 0:8>>;
+	      D -> D
+	  end,
+    {Circuit, PDUType} = 
 	case State#state.level of
-	    level_1 -> level_1;
-	    level_2 -> level_1_2
+	    level_1 -> {level_1, level1_iih};
+	    level_2 -> {level_1_2, level2_iih}
 	end,
     IIH = #isis_iih{
-	     pdu_type = level2_iih,
+	     pdu_type = PDUType,
 	     circuit_type = Circuit,
-	     source_id = ID,
+	     source_id = SID,
 	     holding_time = erlang:trunc(State#state.hold_time / 1000),
 	     priority = State#state.priority,
-	     dis = State#state.dis,
+	     dis = DIS,
 	     tlv =
 		 [
 		  #isis_tlv_is_neighbors{neighbors = IS_Neighbors},
@@ -352,6 +357,11 @@ send_csnp(#state{database = DBRef, dis_continuation = DC} = State) ->
 generate_csnp({Status, _}, Chunk_Size, Summary, State) ->
     Sys_ID = isis_system:system_id(),
     Source = <<Sys_ID:6/binary, 0:8>>,
+    PDU_Type =
+	case State#state.level of
+	    level_1 -> level1_csnp;
+	    level_2 -> level2_csnp
+	end,
     {Start, End} = 
 	case length(Summary) of
 	    0 -> {<<255,255,255,255,255,255,255,255>>,
@@ -386,7 +396,7 @@ generate_csnp({Status, _}, Chunk_Size, Summary, State) ->
     DetailPackageFun = fun(F) -> [#isis_tlv_lsp_entry{lsps = F}] end,
     TLVs = isis_protocol:package_tlvs(Details, DetailPackageFun,
 				      ?LSP_ENTRY_DETAIL_PER_TLV),
-    CSNP = #isis_csnp{pdu_type = level2_csnp,
+    CSNP = #isis_csnp{pdu_type = PDU_Type,
 		      source_id = Source,
 		      start_lsp_id = Start,
 		      end_lsp_id = End,
@@ -550,12 +560,17 @@ update_ssn(LSP_Ids, #state{ssn = SSN} = State) ->
 send_psnp(#state{ssn = SSN} = State) ->
     SID = isis_system:system_id(),
     Source = <<SID:6/binary, 0:8>>,
+    PDU_Type =
+	case State#state.level of
+	    level_1 -> level1_psnp;
+	    level_2 -> level2_psnp
+	end,
     TLVs = 
 	lists:map(fun(LSP) -> #isis_tlv_lsp_entry_detail{lsp_id = LSP} end,
 		  SSN),
 
     DetailPackageFun = fun(F) -> [#isis_tlv_lsp_entry{lsps = F}] end,			 
-    TLVPackageFun = fun(F) -> [#isis_psnp{pdu_type = level2_psnp,
+    TLVPackageFun = fun(F) -> [#isis_psnp{pdu_type = PDU_Type,
 					  source_id = Source,
 					  tlv = F}]
 		    end,
@@ -640,11 +655,19 @@ handle_lsp(#isis_lsp{lsp_id = ID, sequence_number = TheirSeq} = LSP, State) ->
     end,
     State.
 
-handle_old_lsp(#isis_lsp{lsp_id = ID} = LSP, State) ->
-    [OurLSP] = isis_lspdb:lookup_lsps([ID], State#state.database),
-    isis_lspdb:store_lsp(State#state.level, OurLSP#isis_lsp{
-					      sequence_number = (LSP#isis_lsp.sequence_number + 1)
-					     }),
+handle_old_lsp(#isis_lsp{lsp_id = ID, tlv = TLVs} = LSP, State) ->
+    case isis_system:check_autoconf_collision(TLVs) of
+	false ->
+	    case isis_lspdb:lookup_lsps([ID], State#state.database) of
+		[OurLSP] ->
+		    isis_lspdb:store_lsp(State#state.level, OurLSP#isis_lsp{
+							      sequence_number = (LSP#isis_lsp.sequence_number + 1)
+							     });
+		_ -> %% Purge
+		    purge
+	    end;
+	_ -> ok
+    end,
     State.
 
 %%--------------------------------------------------------------------

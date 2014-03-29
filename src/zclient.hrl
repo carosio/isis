@@ -26,14 +26,21 @@
 %%%===================================================================
 %%% Structures built from those messages
 %%%===================================================================
--record (zclient_address, {
+-record (zclient_prefix, {
 	   afi :: atom(),
 	   address :: integer(),
 	   mask_length :: integer(),
 	   flags :: integer()
 	  }).
--type zclient_address() :: #zclient_address{}.
+-type zclient_prefix() :: #zclient_prefix{}.
 
+-record (zclient_route, {
+	   prefix :: zclient_prefix(),
+	   nexthop :: integer(),
+	   metric :: integer()
+	  }).
+-type zclient_route() :: #zclient_route{}.
+	   
 -record (zclient_interface, {
 	   name :: string(),
 	   ifindex :: integer(),
@@ -44,7 +51,7 @@
 	   mtu6 :: integer(),
 	   bandwidth :: integer(),
 	   mac :: binary(),
-	   addresses :: [zclient_address()]
+	   addresses = [] :: [zclient_prefix()]
 	  }).
 -type zclient_interface() :: #zclient_interface{}.
 

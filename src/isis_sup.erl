@@ -61,17 +61,17 @@ init([]) ->
     Shutdown = 2000,
     Type = worker,
 
+    Webserver = {ybed_sup, {ybed_sup, start_link, []},
+		 permanent, 10000, supervisor, []},
     ZChild = {zclient, {zclient, start_link, [[{type, isis}]]},
      	      Restart, Shutdown, Type, [zclient]},
     L1DB = {level1_lspdb, {isis_lspdb, start_link, [[{table, level_1}]]},
 	    Restart, Shutdown, Type, [isis_lspdb]},
     L2DB = {level2_lspdb, {isis_lspdb, start_link, [[{table, level_2}]]},
 	    Restart, Shutdown, Type, [isis_lspdb]},
-    %% Move the system-id and area into the app config at somepoint...
-    ISIS = {isis, {isis_system, start_link, [[{system_id, <<255,255,0,0,3,3>>},
-					      {areas, [<<73, 0, 2>>]}]]},
+    ISIS = {isis, {isis_system, start_link, [[{autoconf, <<1,2,3,4,0:(32*8)>>}]]},
 	    Restart, Shutdown, Type, [isis_system, isis_protocol, isis_enum]},
-    {ok, {SupFlags, [ZChild, L1DB, L2DB, ISIS]}}.
+    {ok, {SupFlags, [Webserver, ZChild, L1DB, L2DB, ISIS]}}.
 
 %%%===================================================================
 %%% Internal functions

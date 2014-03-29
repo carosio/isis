@@ -30,7 +30,8 @@
 	  buffer,
 	  %% State for zclient
 	  interfaces :: dict(),          %% Map ifindex->record
-	  router_id :: [zclient_address()],
+	  routes :: dict(),              %% Map prefix -> record
+	  router_id :: [zclient_prefix()],
 	  %% State for listeners
 	  listeners :: dict()
 	 }).
@@ -75,6 +76,7 @@ init([{type, T}]) ->
     State = #state{zsock = ZSock, route_type = T, buffer = <<>>,
 		   zhead = #zclient_header{command = unknown},
 		   interfaces = dict:new(),
+		   routes = dict:new(),
 		   router_id = [],
 		   listeners = dict:new()},
     io:format("State: ~p~n", [State]),
@@ -82,6 +84,7 @@ init([{type, T}]) ->
     send_hello(State),
     request_router_id(State),
     request_interface(State),
+    request_redistribution(static, State),
     {ok, State};
 init(Args) ->
     io:format("Unknown args: ~p~n", [Args]),
@@ -198,6 +201,15 @@ request_interface(State) ->
     send_message(Message, State).
 
 %%--------------------------------------------------------------------
+%% @doc Request redistribution
+%% @end
+%%--------------------------------------------------------------------
+request_redistribution(Route, State) ->
+    R = zclient_enum:to_int(zebra_route, Route),
+    Message = create_header(redistribute_add, <<R:8>>),
+    send_message(Message, State).
+
+%%--------------------------------------------------------------------
 %% @doc Create the basic zclient header for a message
 %% @end
 %%--------------------------------------------------------------------
@@ -276,7 +288,7 @@ handle_zclient_cmd(interface_up,
 handle_zclient_cmd(router_id_update,
 		   <<?ZEBRA_AFI_IPV4:8, Address:32, Mask:8>>,
 		   State) ->
-    A = #zclient_address{afi = ipv4, address = Address,
+    A = #zclient_prefix{afi = ipv4, address = Address,
 			 mask_length = Mask},
     update_router_id(A, State);
 handle_zclient_cmd(interface_address_add,
@@ -285,7 +297,7 @@ handle_zclient_cmd(interface_address_add,
 		   State) ->
     %% IPv4 Address
     I = dict:fetch(Ifindex, State#state.interfaces),
-    A = #zclient_address{afi = ipv4, flags = Flags,
+    A = #zclient_prefix{afi = ipv4, flags = Flags,
 			 address = Address, mask_length = Mask},
     io:format("Adding address ~p to interface ~p~n", [A, I#zclient_interface.name]),
     update_interface_address(add, A, I, State);
@@ -295,10 +307,44 @@ handle_zclient_cmd(interface_address_add,
 		   State) ->
     %% IPv6 address
     I = dict:fetch(Ifindex, State#state.interfaces),
-    A = #zclient_address{afi = ipv6, flags = Flags,
-			 address = Address, mask_length = Mask},
+    A = #zclient_prefix{afi = ipv6, flags = Flags,
+			address = Address, mask_length = Mask},
     io:format("Adding address ~p to interface ~p~n", [A, I#zclient_interface.name]),
     update_interface_address(add, A, I, State);
+handle_zclient_cmd(ipv4_route_add,
+		   <<Type:8, Flags:8, Info:8, Mask:8, R0/binary>>,
+		   State) ->
+    R = read_ipv4_route(Type, Flags, Info, Mask, R0),
+    NewRoutes = dict:store({R#zclient_route.prefix,
+			    R#zclient_route.nexthop},
+			   R, State#state.routes),
+    update_listeners({redistribute_add, R}, State),
+    State#state{routes = NewRoutes};
+handle_zclient_cmd(ipv4_route_delete,
+		   <<Type:8, Flags:8, Info:8, Mask:8, R0/binary>>,
+		   State) ->
+    R = read_ipv4_route(Type, Flags, Info, Mask, R0),
+    NewRoutes = dict:erase({R#zclient_route.prefix,
+			    R#zclient_route.nexthop}, State#state.routes),
+    update_listeners({redistribute_delete, R}, State),
+    State#state{routes = NewRoutes};
+handle_zclient_cmd(ipv6_route_add,
+		   <<Type:8, Flags:8, Info:8, Mask:8, R0/binary>>,
+		   State) ->
+    R = read_ipv6_route(Type, Flags, Info, Mask, R0),
+    NewRoutes = dict:store({R#zclient_route.prefix,
+			    R#zclient_route.nexthop},
+			   R, State#state.routes),
+    update_listeners({redistribute_add, R}, State),
+    State#state{routes = NewRoutes};
+handle_zclient_cmd(ipv6_route_delete,
+		   <<Type:8, Flags:8, Info:8, Mask:8, R0/binary>>,
+		   State) ->
+    R = read_ipv6_route(Type, Flags, Info, Mask, R0),
+    NewRoutes = dict:erase({R#zclient_route.prefix,
+			    R#zclient_route.nexthop}, State#state.routes),
+    update_listeners({redistribute_delete, R}, State),
+    State#state{routes = NewRoutes};
 handle_zclient_cmd(C, M, State) ->
     io:format("Handling unknown command ~p (~p)~n", [C, M]),
     State.
@@ -314,7 +360,11 @@ update_interface_address(AddDel, Address,
     I = Interface#zclient_interface{addresses = L},
     D = dict:store(I#zclient_interface.ifindex, I,
 		   State#state.interfaces),
-    update_listeners({add_address, I#zclient_interface.name, Address},
+    Action = case AddDel of
+		 add -> add_address;
+		 del -> del_address
+	     end,
+    update_listeners({Action, I#zclient_interface.name, Address},
 		     State),
     State#state{interfaces = D}.
 
@@ -346,13 +396,85 @@ add_or_update_address(del, Address, Addresses) ->
 %% AFI and replace with this one.
 %% @end
 %% --------------------------------------------------------------------
-update_router_id(#zclient_address{afi = Afi} = Address, State) ->
-    F = fun(A) when A#zclient_address.afi =:= Afi ->
+update_router_id(#zclient_prefix{afi = Afi} = Address, State) ->
+    F = fun(A) when A#zclient_prefix.afi =:= Afi ->
 		true;
 	   (_) -> false
 	end,
     NR = lists:filter(F, State#state.router_id),
     State#state{router_id = NR ++ [Address]}.
+
+read_ipv4_route(_Type, _Flags, Info, MaskLen, R0) ->
+    <<_:4, MetricFlag:1, DistanceFlag:1, IfindexFlag:1,
+      NexthopFlag:1>> = <<Info:8>>,
+    ASize = erlang:trunc(MaskLen+7/8),
+    <<A:ASize, R1/binary>> = R0,
+    Address = A bsl (32 - ASize),
+    {Nexthop, R2} =
+	case NexthopFlag of
+	    1 -> <<_NextHopNum:8, NexthopT:32, R2T/binary>> = R1,
+		 {NexthopT, R2T};
+	    _ -> {0, R1}
+	end,
+    {Ifindex, R3} =
+	case IfindexFlag of
+	    1 -> <<_ifindexnum:8, IfindexT:32, R3T/binary>> = R2,
+		 {IfindexT, R3T};
+	    _ -> {0, R2}
+	end,
+    {Distance, R4} = 
+	case DistanceFlag of
+	    1 -> <<DistanceT:8, R4T/binary>> = R3,
+		 {DistanceT, R4T};
+	    _ -> {0, R3}
+	end,
+    {Metric, _R5} =
+	case MetricFlag of
+	    1 -> <<MetricT:32, R5T/binary>> = R4,
+		 {MetricT, R5T};
+	    _ -> {0, R4}
+	end,
+    io:format("Handling ipv4_route: ~p/~p ~p ~p ~p ~p~n",
+	      [Address, MaskLen, Nexthop, Ifindex, Distance, Metric]),
+    P = #zclient_prefix{afi = ipv4, address = Address, mask_length = MaskLen},
+    R = #zclient_route{prefix = P, nexthop = Nexthop, metric = Metric},
+    R.
+
+read_ipv6_route(_Type, _Flags, Info, MaskLen, R0) ->
+    <<_:4, MetricFlag:1, DistanceFlag:1, IfindexFlag:1,
+      NexthopFlag:1>> = <<Info:8>>,
+    ASize = erlang:trunc(MaskLen+7/8),
+    <<A:ASize, R1/binary>> = R0,
+    Address = A bsl (128 - ASize),
+    {Nexthop, R2} =
+	case NexthopFlag of
+	    1 -> <<_NextHopNum:8, NexthopT:128, R2T/binary>> = R1,
+		 {NexthopT, R2T};
+	    _ -> {0, R1}
+	end,
+    {Ifindex, R3} =
+	case IfindexFlag of
+	    1 -> <<_ifindexnum:8, IfindexT:32, R3T/binary>> = R2,
+		 {IfindexT, R3T};
+	    _ -> {0, R2}
+	end,
+    {Distance, R4} = 
+	case DistanceFlag of
+	    1 -> <<DistanceT:8, R4T/binary>> = R3,
+		 {DistanceT, R4T};
+	    _ -> {0, R3}
+	end,
+    {Metric, _R5} =
+	case MetricFlag of
+	    1 -> <<MetricT:32, R5T/binary>> = R4,
+		 {MetricT, R5T};
+	    _ -> {0, R4}
+	end,
+    io:format("Handling ipv6_route: ~p/~p ~p ~p ~p ~p~n",
+	      [Address, MaskLen, Nexthop, Ifindex, Distance, Metric]),
+    P = #zclient_prefix{afi = ipv6, address = Address, mask_length = MaskLen},
+    R = #zclient_route{prefix = P, nexthop = Nexthop, metric = Metric},
+    R.
 
 remove_client(Pid, #state{listeners = Clients} = State) ->
     NewClients =
