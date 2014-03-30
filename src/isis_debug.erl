@@ -149,6 +149,11 @@ inject_some_lsps(Level, Count, Seq) ->
     %% Now inject into the database
     Injector = 	fun(L) -> isis_lspdb:store_lsp(Level, L) end,
     lists:map(Injector, LSPs),
+    ChainTLV = #isis_tlv_extended_reachability{
+		  reachability = [#isis_tlv_extended_reachability_detail{
+				     neighbor = <<1:16, 0, 0, 0, 0, 0>>,
+				     metric = 10, sub_tlv=[]}]},
+    isis_system:update_tlv(ChainTLV, 0, Level),
     ok.
 
 purge_injected_lsps(Level, Count) ->
@@ -156,6 +161,11 @@ purge_injected_lsps(Level, Count) ->
     LSPIDs = lists:map(IDCreator, lists:seq(1, Count)),
     Purge = fun(LSPID) -> isis_lspdb:purge_lsp(Level, LSPID) end,
     lists:map(Purge, LSPIDs),
+    ChainTLV = #isis_tlv_extended_reachability{
+		  reachability = [#isis_tlv_extended_reachability_detail{
+				     neighbor = <<1:16, 0, 0, 0, 0, 0>>,
+				     metric = 10, sub_tlv=[]}]},
+    isis_system:delete_tlv(ChainTLV, 0, Level),
     ok.
 
 debug_socket(Ifindex) ->
