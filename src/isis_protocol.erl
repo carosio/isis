@@ -456,7 +456,6 @@ encode_tlv_extended_reachability(
      sub_tlv = SubTLVs}) ->
     SubTLVB = encode_tlvs(SubTLVs, fun encode_subtlv_eis_detail/1),
     SubTLV_Len = binary_list_size(SubTLVB),
-    io:format("Encoded: ~p ~p ~p~n", [Neighbor_Id, Metric, SubTLVB]),
     [<<Neighbor_Id:7/binary, Metric:24, SubTLV_Len:8>> | SubTLVB].
 
 -spec encode_tlv_lsp_entry(isis_tlv_lsp_entry_detail()) -> binary().
@@ -639,11 +638,12 @@ delete_array_tlv(TLV, Node, Level, Frags) ->
 		       case lists:mapfoldl(Deleter, {false, OriginalSize}, TLVs) of
 			   {NewTLVs, {true, NewSize}} ->
 			       isis_system:schedule_lsp_refresh(),
-			       #lsp_frag{updated = true,
-					 size = NewSize,
-					 tlvs = NewTLVs};
+			       F#lsp_frag{updated = true,
+					  size = NewSize,
+					  tlvs = NewTLVs};
 			   _ -> F
-		       end
+		       end;
+		  (F) -> F
 	       end,
     lists:map(Iterator, Frags).
 
@@ -802,12 +802,10 @@ handle_merge_array_tlv(#isis_tlv_extended_reachability{reachability = Existing} 
   when length(New) =:= 1 ->
     %% There is just one detail entry....
     NewD = lists:nth(1, New),
-    io:format("Existing: ~p~nNewD: ~p~n", [Existing, NewD]),
     ExistingSize = tlv_size(ET),
     NewNeighbor = NewD#isis_tlv_extended_reachability_detail.neighbor,
     Updater = fun(#isis_tlv_extended_reachability_detail{neighbor = N}, _Acc)
 		    when N =:= NewNeighbor ->
-		      io:format("Found: NewD: ~p~n", [NewD]),
 		      {NewD, true};
 		 (D, Acc) -> {D, Acc}
 	end,
@@ -821,8 +819,6 @@ handle_merge_array_tlv(#isis_tlv_extended_reachability{reachability = Existing} 
 	    NewSize = tlv_size(FinalTLV),
 	    %% If the new detail entry pushes us over the LSP size, just
 	    %% remove the old entry.
-	    io:format("CurrentSize: ~p~nExistingSize: ~p~nNewSize: ~p~n",
-		      [CurrentSize, ExistingSize, NewSize]),
 	    case (CurrentSize - ExistingSize + NewSize) >= 1492 of
 		true ->
 		    AfterDelete = lists:filter(Deleter, Existing),
@@ -842,13 +838,11 @@ handle_merge_array_tlv(#isis_tlv_extended_ip_reachability{reachability = Existin
   when length(New) =:= 1 ->
     %% There is just one detail entry....
     NewD = lists:nth(1, New),
-    io:format("Existing: ~p~nNewD: ~p~n", [Existing, NewD]),
     ExistingSize = tlv_size(ET),
     NewPrefix = NewD#isis_tlv_extended_ip_reachability_detail.prefix,
     NewMask = NewD#isis_tlv_extended_ip_reachability_detail.mask_len,
     Updater = fun(#isis_tlv_extended_ip_reachability_detail{prefix = P, mask_len = M}, _Acc)
 		    when P =:= NewPrefix, M =:= NewMask ->
-		      io:format("Found: NewD: ~p~n", [NewD]),
 		      {NewD, true};
 		 (D, Acc) -> {D, Acc}
 	end,
@@ -862,8 +856,6 @@ handle_merge_array_tlv(#isis_tlv_extended_ip_reachability{reachability = Existin
 	    NewSize = tlv_size(FinalTLV),
 	    %% If the new detail entry pushes us over the LSP size, just
 	    %% remove the old entry.
-	    io:format("CurrentSize: ~p~nExistingSize: ~p~nNewSize: ~p~n",
-		      [CurrentSize, ExistingSize, NewSize]),
 	    case (CurrentSize - ExistingSize + NewSize) >= 1492 of
 		true ->
 		    AfterDelete = lists:filter(Deleter, Existing),
@@ -879,25 +871,20 @@ handle_merge_array_tlv(#isis_tlv_extended_ip_reachability{reachability = Existin
     end.
 
 merge_array_tlv(TLV, Node, Level, Frags) ->
-    io:format("merge_array_tlv: Node ~p Level ~p ~n", [Node, Level]),
     TLVType = element(1, TLV),
     SearchTLVs =
 	fun(T, {Size, Found, Replaced}) when element(1, T) =:= TLVType ->
 		%% Found a matching TLV, see if we can replace the array...
 		TLen = binary_list_size(encode_tlv(TLV)),
-		io:format("merge_array_tlv: found matching TLV, testing..", []),
 		R = handle_merge_array_tlv(T, TLV, Size),
-		io:format("handle_merge_array: ~p~n", [R]),
 		R;
 	   (T, Acc) ->
-		io:format("miss on type: ~p~n", [element(1, T)]),
 		{T, Acc}
 	end,
     SearchFrags =
 	fun(#lsp_frag{pseudonode = PN, level = L,
 		      tlvs = TLVs, size = Size} = Frag, Acc)
 	      when Acc =:= false, PN =:= Node, L =:= Level ->
-		io:format("Found frag: ~p~n", [Frag]),
 		{NewTLVs, {NewSize, Replaced, Updated}} = 
 		    lists:mapfoldl(SearchTLVs, {Size, false, false}, TLVs),
 		NewFrag = 
@@ -911,13 +898,11 @@ merge_array_tlv(TLV, Node, Level, Frags) ->
 		    end,
 		{NewFrag, Replaced};
 	   (F, Acc) ->
-		io:format("Miss on F: ~p~n", [F]),
 		{F, Acc}
 	end,
     {NewFrags, Acc} = lists:mapfoldl(SearchFrags, false, Frags),
     case Acc of
-	false -> io:format("Total miss...~n", []),
-		 add_array_tlv(TLV, Node, Level, Frags);
+	false -> add_array_tlv(TLV, Node, Level, Frags);
 	_ -> NewFrags
     end.
 			 

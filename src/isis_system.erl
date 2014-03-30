@@ -491,9 +491,7 @@ create_initial_frags(State) ->
 		      {Level, isis_protocol:update_tlv(TLV, 0, Level, Frags)}
 	      end,
     {_, F} = lists:foldl(Creator, {level_1, []}, FingerPrintTLVs),
-    io:format("Created: F: ~p~n", [F]),
     {_, F1} = lists:foldl(Creator, {level_2, F}, FingerPrintTLVs),
-    io:format("Created: F1: ~p~n", [F1]),
     NewState = State#state{frags = F1},
     NewState.
 
@@ -636,12 +634,13 @@ delete_redistribute(#zclient_route{prefix = #zclient_prefix{afi = ipv4, address 
 							    mask_length = Mask},
 				   metric = Metric}, State) ->
     TLV = 
-     	#isis_tlv_extended_ip_reachability_detail{
-     	   prefix = Address,
-     	   mask_len = Mask,
-     	   metric = Metric,
-     	   up = true,
-     	   sub_tlv = []},
+     	#isis_tlv_extended_ip_reachability{
+	   reachability = [#isis_tlv_extended_ip_reachability_detail{
+			      prefix = Address,
+			      mask_len = Mask,
+			      metric = Metric,
+			      up = true,
+			      sub_tlv = []}]},
     update_frags(fun isis_protocol:delete_tlv/4, TLV, 0, State);
 delete_redistribute(#zclient_route{prefix = #zclient_prefix{afi = ipv6, address = Address,
 							    mask_length = Mask},

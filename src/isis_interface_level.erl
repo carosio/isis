@@ -250,8 +250,14 @@ handle_dis_election(#isis_iih{priority = TheirP, dis = DIS, source_id = SID},
 	    true -> TheirP;
 	    _ -> State#state.dis_priority
 	end,
-    %%case State#state.dis =:= DIS of
-%%	false -> 
+    case State#state.dis =:= DIS of
+	false -> 
+	    TLV = #isis_tlv_extended_reachability{
+		     reachability = [#isis_tlv_extended_reachability_detail{
+					neighbor = DIS, metric = 10, sub_tlv = []}]},
+	    isis_system:update_tlv(TLV, 0, State#state.level);
+	_ -> ok
+    end,
     State#state{dis = DIS, dis_priority = DIS_Priority};
 handle_dis_election(#isis_iih{priority = TheirP, dis = DIS, source_id = SID},
 		    #state{priority = OurP} = State)
@@ -266,6 +272,7 @@ handle_dis_election(#isis_iih{priority = TheirP, dis = DIS, source_id = SID},
 
 assume_dis(State) ->
     %% Get pseudo-node here, create LSP etc..
+    io:format("Assuming DIS~n", []),
     Node = 2,
 
     DIS_Timer = start_timer(dis, State),

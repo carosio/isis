@@ -264,7 +264,6 @@ handle_zclient_cmd(interface_add,
 	   mtu6 = Mtu6, bandwidth = Bandwidth,
 	   mac = Mac, addresses = []
 	  },
-    io:format("Adding ~p (~p)~n", [Name, Ifindex]),
     update_listeners({add_interface, I}, State),
     NewInterfaces = dict:store(Ifindex, I, State#state.interfaces),
     State#state{interfaces = NewInterfaces};
