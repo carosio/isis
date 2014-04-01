@@ -26,9 +26,13 @@
 	 %% Query
 	 areas/0, lsps/0, system_id/0,
 	 %% Misc APIs - check autoconf collision etc
-	 check_autoconf_collision/1, schedule_lsp_refresh/0,
+	 check_autoconf_collision/1, schedule_lsp_refresh/0, process_spf/1,
 	 %% TLV Update routines
-	 update_tlv/3]).
+	 update_tlv/3, delete_tlv/3,
+	 %% System Name handling
+	 add_name/2, delete_name/1, lookup_name/1,
+	 %% Handle System ID mapping
+	 add_sid_addresses/2, delete_sid_addresses/2]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -43,8 +47,10 @@
 		areas = [],
 		frags = [] :: [#lsp_frag{}],
 		interfaces :: dict(),   %% Our 'state' per interface
+		system_ids :: dict(),   %% SID -> Neighbor address
 		refresh_timer = undef,
-		periodic_refresh}).
+		periodic_refresh,
+		names}).
 
 %%%===================================================================
 %%% API
@@ -108,6 +114,9 @@ schedule_lsp_refresh() ->
 update_tlv(TLV, Node, Level) ->
     gen_server:cast(?MODULE, {update_tlv, TLV, Node, Level}).
 
+delete_tlv(TLV, Node, Level) ->
+    gen_server:cast(?MODULE, {delete_tlv, TLV, Node, Level}).
+
 %% Return the areas we're in
 areas() ->
     gen_server:call(?MODULE, {areas}).
@@ -119,6 +128,27 @@ lsps() ->
 set_hostname(Name) ->
     gen_server:call(?MODULE, {hostname, Name}).
 
+process_spf(SPF) ->
+    gen_server:cast(?MODULE, {process_spf, SPF}).
+
+add_sid_addresses(_, []) ->
+    ok;
+add_sid_addresses(SID, Addresses) ->
+    gen_server:cast(?MODULE, {add_sid, SID, Addresses}).
+
+delete_sid_addresses(_, []) ->
+    ok;
+delete_sid_addresses(SID, Addresses) ->
+    gen_server:cast(?MODULE, {delete_sid, SID, Addresses}).
+
+add_name(SID, Name) ->
+    gen_server:cast(?MODULE, {add_name, SID, Name}).
+delete_name(SID) ->
+    gen_server:cast(?MODULE, {delete_name, SID}).
+lookup_name(SID) ->
+    Names = ets:lookup(isis_names, SID),
+    Name = lists:nth(1, Names),
+    Name#isis_name.name.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -133,14 +163,16 @@ set_hostname(Name) ->
 %%--------------------------------------------------------------------
 init(Args) ->
     process_flag(trap_exit, true),
-    State = #state{interfaces = dict:new()},
+    State = #state{interfaces = dict:new(), system_ids = dict:new()},
     StartState = create_initial_frags(extract_args(Args, State)),
     StartState2 = refresh_lsps(StartState),
     zclient:subscribe(self()),
     %% Periodically check if any of our LSPs need refreshing due to ageout
     Timer = erlang:start_timer(isis_protocol:jitter(?DEFAULT_AGEOUT_CHECK, 10) * 1000,
 			       self(), lsp_ageout),
-    {ok, StartState2#state{periodic_refresh = Timer}}.
+    Names = ets:new(isis_names, [named_table, ordered_set,
+				 {keypos, #isis_name.system_id}]),
+    {ok, StartState2#state{periodic_refresh = Timer, names = Names}}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -288,6 +320,52 @@ handle_cast({update_tlv, TLV, Node, Level},
 	    #state{frags = Frags} = State) ->
     NewFrags = isis_protocol:update_tlv(TLV, Node, Level, Frags),
     {noreply, State#state{frags = NewFrags}};
+handle_cast({delete_tlv, TLV, Node, Level},
+	    #state{frags = Frags} = State) ->
+    NewFrags = isis_protocol:delete_tlv(TLV, Node, Level, Frags),
+    {noreply, State#state{frags = NewFrags}};
+handle_cast({add_sid, SID, Addresses}, #state{system_ids = IDs} = State) ->
+    D1 = case dict:find(SID, IDs) of
+	     error -> dict:store(SID, Addresses, IDs);
+	     {ok, As} ->
+		 S1 = sets:from_list(Addresses),
+		 S2 = sets:from_list(As),
+		 NewAs = sets:to_list(sets:union([S1, S2])),
+		 dict:store(SID, NewAs, IDs)
+	 end,
+    {noreply, State#state{system_ids = D1}};
+handle_cast({delete_sid, SID, Addresses}, State) ->
+    D1 = case dict:find(SID, State#state.system_ids) of
+	     error -> State#state.system_ids;
+	     {ok, As} ->
+		 S1 = sets:from_list(As),
+		 S2 = sets:from_list(Addresses),
+		 NewAs = sets:to_list(sets:subtract(S1, S2)),
+		 dict:store(SID, NewAs, State#state.system_ids)
+	 end,
+    {noreply, State#state{system_ids = D1}};
+handle_cast({process_spf, SPF}, State) ->
+    Table = 
+	lists:filtermap(fun({<<SysID:6/binary, _:8>>, Metric, As}) ->
+				case length(As) of
+				    0 -> false;
+				    _ ->
+					case dict:find(SysID, State#state.system_ids) of
+					    {ok, NH} -> {true, {lookup_name(SysID), NH, Metric, As}};
+					    _ -> false
+					end
+				end
+			end, SPF),
+    %% io:format("SPF: ~p~nTable: ~p~n", [SPF, Table]),
+    {noreply, State};
+handle_cast({add_name, SID, Name}, State) ->
+    N = #isis_name{system_id = SID, name = Name},
+    ets:insert(State#state.names, N),
+    {noreply, State};
+handle_cast({delete_name, SID}, State) ->
+    N = #isis_name{system_id = SID},
+    ets:delete(State#state.names, N),
+    {noreply, State};
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
@@ -395,7 +473,7 @@ do_enable_level(_I, _Level) ->
 refresh_lsps([#lsp_frag{updated = true} = Frag | T], State) ->
     create_lsp_from_frag(Frag, State),
     refresh_lsps(T, State);
-refresh_lsps([H | T], State) ->
+refresh_lsps([_H | T], State) ->
     refresh_lsps(T, State);
 refresh_lsps([], State) ->
     NewFrags = lists:map(fun(F) -> F#lsp_frag{updated = false} end,
@@ -449,7 +527,7 @@ lsp_ageout_check(#state{frags = Frags} = State) ->
 create_lsp_from_frag(_, #state{system_id = SID}) when SID =:= undefined ->
     no_system_id;
 create_lsp_from_frag(#lsp_frag{level = Level} = Frag,
-		     #state{system_id = SID} = State)->
+		     State)->
     PDUType = case Level of
 		  level_1 -> level1_lsp;
 		  level_2 -> level2_lsp
@@ -655,7 +733,7 @@ update_router_id(#zclient_prefix{afi = ipv4, address = A},
 		 State) ->
     TLV = #isis_tlv_te_router_id{router_id = A},
     update_frags(fun isis_protocol:update_tlv/4, TLV, 0, State);
-update_router_id(#zclient_prefix{afi = ipv6, address = A},
+update_router_id(#zclient_prefix{afi = ipv6, address = _A},
 		 State) ->
     %% Not sure what to do with v6 router-ids just yet..
     State.

@@ -27,6 +27,8 @@
 	  level,         %% Our 'level'
 	  neighbor,      %% Neighbor's SNPA (ie. whom we're adjacent with)
 	  lan_id,        %% Neighbor LAN ID
+	  ip_addresses = [],  %% IP address of the neighbor
+          ipv6_addresses = [], %% IPv6 address of the neighbor
 	  interface,     %% PID handling the interface
 	  level_pid,     %% PID handling the level
 	  snpa,          %% Our SNPA
@@ -115,9 +117,9 @@ up({iih, IIH}, State) ->
 	    true -> start_timer(State);
 	    _ -> State
 	end,
-    %% Update our EIR to include this neighbor
-    
-    {next_state, up, NewState};
+    {NextState, NewState2} =
+	verify_interface_addresses(IIH, NewState),
+    {next_state, NextState, NewState2};
 up({timeout}, State) ->
     NewState = start_timer(State),
     {next_state, down, NewState};
@@ -286,3 +288,25 @@ update_adjacency(del, State) ->
 	    isis_lspdb:update_reachability({del, ER}, State#state.level, LSP);
 	_ -> ugh
     end.
+
+%% Ultimatley, this should verify that we share a subnet with the neighbor, or
+%% we'll have no nexthops for routes!
+verify_interface_addresses(IIH, #state{ip_addresses = IPAddresses,
+				       ipv6_addresses = IPv6Addresses} = State) ->
+    V4 = isis_protocol:filter_tlvs(isis_tlv_ip_interface_address, IIH#isis_iih.tlv),
+    V4Addresses =
+	lists:flatten(
+	  lists:map(fun(#isis_tlv_ip_interface_address{addresses = A}) -> A end, V4)),
+    V41 = sets:from_list(IPAddresses),
+    V42 = sets:from_list(V4Addresses),
+    V4Remove = sets:to_list(sets:subtract(V41, V42)),
+    V4Add = sets:to_list(sets:subtract(V42, V41)),
+    isis_system:add_sid_addresses(IIH#isis_iih.source_id, V4Add),
+    isis_system:delete_sid_addresses(IIH#isis_iih.source_id, V4Remove),
+
+    V6 = isis_protocol:filter_tlvs(isis_tlv_ipv6_interface_address, IIH#isis_iih.tlv),
+    V6Addresses =
+	lists:flatten(
+	  lists:map(fun(#isis_tlv_ipv6_interface_address{addresses = A}) -> A end, V6)),
+    {up, State#state{ip_addresses = V4Addresses,
+		     ipv6_addresses = V6Addresses}}.

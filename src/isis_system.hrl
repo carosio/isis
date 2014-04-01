@@ -10,7 +10,8 @@
 -record (isis_address, {
 	   afi :: atom(),
 	   address :: integer(),
-	   mask :: integer()
+	   mask :: integer(),
+	   metric :: integer()
 	  }).
 -type isis_address() :: #isis_address{}.
 
@@ -26,3 +27,9 @@
 	   mtu6 :: integer()
 	  }).
 -type isis_interface() :: #isis_interface{}.
+
+-record (isis_name, {
+	   system_id :: binary(),
+	   name :: string()
+	  }).
+-type isis_name() :: #isis_name{}.

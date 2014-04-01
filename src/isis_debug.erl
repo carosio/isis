@@ -103,7 +103,9 @@ invalid_lsp() ->
 %% a list of 'Count' numbers, and then turn each one into an LSP that
 %% has 'reachability' to the previous and next LSP. ie. a long chain.
 %% We give them a hostname as well. Then we inject into the Database..
-inject_some_lsps(Level, Count, Seq) ->
+inject_some_lsps(Level, Count, Seq)
+  when Count < 50 ->
+    isis_system:add_sid_addresses(<<1:16, 0, 0, 0, 0>>, [3232298895]),
     Numbers = lists:seq(1, Count),
     PDU = case Level of
 	      level_1 -> level1_lsp;
@@ -115,6 +117,8 @@ inject_some_lsps(Level, Count, Seq) ->
 		NextNeighborID = <<(N+1):16, 0, 0, 0, 0, 0>>,
 		LSPID = <<NeighborID/binary, 0>>,
 		Hostname = string:concat("injected", integer_to_list(N)),
+		PrefixBin = <<1:8, N:8, 0:16>>,
+		<<Prefix:32>> = PrefixBin,
 		L = #isis_lsp{
 		       lsp_id = LSPID,
 		       last_update = isis_protocol:current_timestamp(),
@@ -137,7 +141,14 @@ inject_some_lsps(Level, Count, Seq) ->
 						   metric = N,
 						   sub_tlv = []
 						  }
-						]}
+						]},
+			      #isis_tlv_extended_ip_reachability{
+				 reachability = [#isis_tlv_extended_ip_reachability_detail{
+						    prefix = Prefix,
+						    mask_len = 24,
+						    metric = 1,
+						    up = true,
+						    sub_tlv = []}]}
 			     ]
 		      },
 		CSum = isis_protocol:checksum(L),
@@ -154,7 +165,10 @@ inject_some_lsps(Level, Count, Seq) ->
 				     neighbor = <<1:16, 0, 0, 0, 0, 0>>,
 				     metric = 10, sub_tlv=[]}]},
     isis_system:update_tlv(ChainTLV, 0, Level),
-    ok.
+    ok;
+inject_some_lsps(_, _, _) ->
+    error.
+
 
 purge_injected_lsps(Level, Count) ->
     IDCreator = fun(N) -> <<N:16, 0, 0, 0, 0, 0, 0>> end,
@@ -166,6 +180,7 @@ purge_injected_lsps(Level, Count) ->
 				     neighbor = <<1:16, 0, 0, 0, 0, 0>>,
 				     metric = 10, sub_tlv=[]}]},
     isis_system:delete_tlv(ChainTLV, 0, Level),
+    isis_system:delete_sid_address(<<1:16, 0, 0, 0, 0>>, [3232298895]),
     ok.
 
 debug_socket(Ifindex) ->

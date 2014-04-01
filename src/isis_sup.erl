@@ -63,6 +63,8 @@ init([]) ->
 
     Webserver = {ybed_sup, {ybed_sup, start_link, []},
 		 permanent, 10000, supervisor, []},
+    SPFSummary = {spf_summary, {spf_summary, start_link, []},
+		  permanent, 10000, worker, []},
     ZChild = {zclient, {zclient, start_link, [[{type, isis}]]},
      	      Restart, Shutdown, Type, [zclient]},
     L1DB = {level1_lspdb, {isis_lspdb, start_link, [[{table, level_1}]]},
@@ -71,7 +73,7 @@ init([]) ->
 	    Restart, Shutdown, Type, [isis_lspdb]},
     ISIS = {isis, {isis_system, start_link, [[{autoconf, <<1,2,3,4,0:(32*8)>>}]]},
 	    Restart, Shutdown, Type, [isis_system, isis_protocol, isis_enum]},
-    {ok, {SupFlags, [Webserver, ZChild, L1DB, L2DB, ISIS]}}.
+    {ok, {SupFlags, [Webserver, SPFSummary, ZChild, L1DB, L2DB, ISIS]}}.
 
 %%%===================================================================
 %%% Internal functions
