@@ -73,7 +73,11 @@ init([]) ->
 	    Restart, Shutdown, Type, [isis_lspdb]},
     ISIS = {isis, {isis_system, start_link, [[{autoconf, <<1,2,3,4,0:(32*8)>>}]]},
 	    Restart, Shutdown, Type, [isis_system, isis_protocol, isis_enum]},
-    {ok, {SupFlags, [Webserver, SPFSummary, ZChild, L1DB, L2DB, ISIS]}}.
+    ISISRib = {isis_rib, {isis_rib, start_link, []},
+	       permanent, 10000, worker, []},
+    Demo = {demo, {demo, start_link, []},
+	    permanent, 1000, worker, []},
+    {ok, {SupFlags, [Webserver, SPFSummary, ZChild, L1DB, L2DB, ISIS, ISISRib, Demo]}}.
 
 %%%===================================================================
 %%% Internal functions

@@ -12,13 +12,17 @@
 -module(spf_feed).
 
 -include ("../deps/yaws/include/yaws_api.hrl").
+-include ("isis_system.hrl").
 
 -export([out/1, handle_message/1, terminate/2]).
 
 -export([handle_call/3, handle_info/2, handle_cast/2, code_change/3]).
 
+-record(link, {source,
+	       target,
+	       value}).
+
 out(A) ->
-    
   case get_upgrade_header(A#arg.headers) of
     undefined ->
 	  
@@ -27,14 +31,15 @@ out(A) ->
           {keepalive,         true},
           {keepalive_timeout, 10000}
          ],
-      {websocket, www_nmea, Opts};
+      {websocket, spf_feed, Opts};
     Any ->
       error_logger:error_msg("Got ~p from the upgrade header!", [Any])
   end.
 
 handle_message({text, <<"start">>}) ->
     spf_summary:subscribe(self()),
-    noreply;
+    M = generate_update(0, level_1, []),
+    {reply, {text, list_to_binary(M)}};
 
 handle_message({close, Status, _Reason}) ->
     {close, Status};
@@ -47,9 +52,12 @@ terminate(_Reason, _State) ->
     spf_summary:unsubscribe(self()),
     ok.
 
-%% handle_info({nmea_summary, Message}, _State) ->
-%%     Json = json2:encode({struct, Message}),
-%%     {reply, {text, list_to_binary(Json)}};
+ handle_info({spf_summary, {Time, level_1, SPF}}, State) ->
+    Json = generate_update(Time, level_1, SPF),
+    {reply, {text, list_to_binary(Json)}, State};
+ handle_info({spf_summary, {_, level_2, _}}, State) ->
+    {noreply, State};
+
 
 %% Gen Server functions
 handle_info(Info, State) ->
@@ -84,3 +92,38 @@ get_upgrade_header(#headers{other=L}) ->
                    (_, Acc) ->
                         Acc
                 end, undefined, L).
+
+generate_update(Time, Level, SPF) ->
+    SPFLinks = isis_lspdb:links(isis_lspdb:get_db(Level)),
+    Links = lists:map(fun({{<<A:7/binary>>,
+			   <<B:7/binary>>}, Weight}) ->
+			      L = #link{source = isis_system:lookup_name(A),
+					target = isis_system:lookup_name(B),
+					value = Weight},
+			      {struct, lists:zip(record_info(fields, link),
+						 tl(tuple_to_list(L)))}
+		      end, dict:to_list(SPFLinks)),
+
+    SendRoute = 
+	fun(#isis_address{afi = AFI, address = Address, mask = Mask},
+	    NHs, Metric, Nodes) ->
+		NH = lists:nth(1, NHs),
+		AStr = isis_system:address_to_string(AFI, Address),
+		NHStr = isis_system:address_to_string(AFI, NH),
+		NodesStrList = lists:map(fun(N) -> isis_system:lookup_name(N) end, Nodes),
+		NodesStr = string:join(NodesStrList, ", "),
+		{true, {struct, [{"afi", atom_to_list(AFI)},
+				 {"address", AStr},
+				 {"mask", Mask},
+				 {"nexthop", NHStr},
+				 {"nodepath", NodesStr}]}};
+	   (_, _, _, _) -> false
+	end,
+    UpdateRib =
+	fun({_RouteNode, _NexthopNode, NextHops, Metric,
+	     Routes, Nodes}) ->
+		lists:filtermap(fun(R) -> SendRoute(R, NextHops, Metric, Nodes) end,
+				Routes)
+	end,
+    Rs = lists:map(UpdateRib, SPF),
+    json2:encode({struct, [{"Time", Time}, {"links", {array, Links}}, {"rib", {array, Rs}}]}).

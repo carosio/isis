@@ -22,7 +22,8 @@
 	 lookup_lsps_by_node/2,
 	 summary/2, range/3,
 	 replace_tlv/3, update_reachability/3,
-	 flood_lsp/3, bump_lsp/2]).
+	 flood_lsp/3, bump_lsp/2,
+	 links/1]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -226,7 +227,9 @@ flood_lsp(Level, Interfaces, LSP) ->
 	    ok;
 	_ -> error
     end.
-		     
+
+links(DB) ->
+    populate_links(DB).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -346,9 +349,7 @@ handle_info({timeout, _Ref, {run_spf, _Type}}, State) ->
     erlang:cancel_timer(State#state.spf_timer),
     %% Dijkestra...
     {Time, SPF} = timer:tc(fun() -> do_spf(State) end),
-    io:format("SPF run for ~p took ~p microseconds~n",
-	      [State#state.level, Time]),
-    isis_system:process_spf(SPF),
+    isis_system:process_spf({State#state.level, Time, SPF}),
     {noreply, State#state{spf_timer = undef}};
 handle_info(_Info, State) ->
     {noreply, State}.
@@ -605,7 +606,7 @@ do_spf(State) ->
 		graph:add_edge(G, From, To, Metric),
 		G
 	end,
-    Edges = populate_links(State),
+    Edges = populate_links(State#state.db),
     Graph = graph:empty(directed),
     dict:fold(Build_Graph, Graph, Edges),
     DResult = dijkstra:run(Graph, SysID),
@@ -613,10 +614,11 @@ do_spf(State) ->
 	fun({Node, {Metric, Nodes}}) when length(Nodes) >= 2 ->
 		Prefixes = lookup_prefixes(Node, State),
 		Nexthop = get_nexthop(lists:nth(2, Nodes)),
-		{true, {Nexthop, Metric, Prefixes}};
-	   ({_, {_, _}}) -> false;
-	   ({_, unreachable}) -> false
+		{true, {Node, Nexthop, Metric, Prefixes, Nodes}};
+	   ({_, {_, _}}) -> true;
+	   ({_, unreachable}) -> true
 	end,
+    graph:del_graph(Graph),
     RoutingTable = lists:filtermap(RoutingTableF, DResult),
     RoutingTable.
 
@@ -683,13 +685,13 @@ extract_reachability(D, From, TLV) ->
     D2 = populate_dict(D1, From, Normals),
     D2.
 
-populate_links(State) ->    
+populate_links(DB) ->    
     Reachability =
 	fun(L, Acc) ->
 		<<Sys:7/binary, _/binary>> = L#isis_lsp.lsp_id,
 		extract_reachability(Acc, Sys, L#isis_lsp.tlv)
 	end,
-    Edges = ets:foldl(Reachability, dict:new(), State#state.db),
+    Edges = ets:foldl(Reachability, dict:new(), DB),
     Edges.
 
 extract_ip_addresses(#isis_tlv_ip_internal_reachability{ip_reachability = R}, Ts) ->

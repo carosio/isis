@@ -163,7 +163,7 @@ inject_some_lsps(Level, Count, Seq)
     ChainTLV = #isis_tlv_extended_reachability{
 		  reachability = [#isis_tlv_extended_reachability_detail{
 				     neighbor = <<1:16, 0, 0, 0, 0, 0>>,
-				     metric = 10, sub_tlv=[]}]},
+				     metric = 16819, sub_tlv=[]}]},
     isis_system:update_tlv(ChainTLV, 0, Level),
     ok;
 inject_some_lsps(_, _, _) ->
@@ -180,32 +180,8 @@ purge_injected_lsps(Level, Count) ->
 				     neighbor = <<1:16, 0, 0, 0, 0, 0>>,
 				     metric = 10, sub_tlv=[]}]},
     isis_system:delete_tlv(ChainTLV, 0, Level),
-    isis_system:delete_sid_address(<<1:16, 0, 0, 0, 0>>, [3232298895]),
+    isis_system:delete_sid_addresses(<<1:16, 0, 0, 0, 0>>, [3232298895]),
     ok.
-
-debug_socket(Ifindex) ->
-    {ok, Ref} = inert:start(),
-    {ok, S} = procket:open(0, [{progname, "sudo /usr/local/bin/procket"},
-			       {family, packet},
-			       {type, raw},
-			       {protocol, ?ETH_P_802_2}]),
-    Family = procket:family(packet),
-    LL = <<Family:16/native, ?ETH_P_802_2:16/native, Ifindex:32/native,
-	   0:16, 0:8, 0:8, 0:8/unit:8>>,
-    io:format("LL size: ~p (~p)~n", [byte_size(LL), LL]),
-    ok = procket:bind(S, LL),
-    %% run_socket(Ref, S).
-    erlang:open_port({fd, S, S}, [binary, stream]).
-
-run_socket(Ref, S) ->
-    inert:poll(Ref, S, [{mode, read}]),
-    case procket:recvfrom(S, 2048) of
-	{ok, <<_R:17/binary, PDU/binary>>} ->
-	    io:format("Received: ~p~n", [isis_protocol:decode(PDU)]),
-	    
-	    run_socket(Ref, S);
-	_ -> error
-    end.
 
 %%%===================================================================
 %%% Internal functions

@@ -1,0 +1,251 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01//EN">
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Test Representation of Nodes & Links</title>
+    <script type="text/javascript" src="d3/d3.js"></script>
+</head>
+<style>
+
+path.link {
+  fill: none;
+  stroke: #666;
+  stroke-width: 1.5px;
+}
+
+circle {
+  stroke: #fff;
+  stroke-width: 1.5px;
+}
+
+text {
+  fill: #000;
+  font: 12px sans-serif;
+  pointer-events: none;
+}
+
+.routingtable {
+  margin-top: 10px;
+  height: 200px;
+}
+
+</style>
+<body>
+<div class="intro">
+<B>IS-IS autoconfiguration demo</B>
+Behind the scences, our IS-IS implementation is running - with a 'demo' process which is injecting LSPs directly into the LSP Database. This causes SPF to run - the results of which are pushed into the routing table as well as being pushed to a distribution layer.<br>
+For this demo, the distribution layer summarises the output and sends it via a websocket to this page, where is is displayed using the sublime <a href="http://d3js.org">d3</a>.<br>
+Lans are shown in blue, nodes in red.<br>
+Until we get the first 'live' SPF, we don't see the routing table - as we're showing the actual results of the SPF run<br>
+<br>
+</div>
+<div id="spftime">SPF has not run yet</div>
+<div id="routingtable" class="routingtable">ip routes appear here</div>
+<script type="text/javascript" charset="utf-8">
+
+var ws;
+var nodes = [];
+var links = [];
+var oldLinks = {};
+
+function connectToSPFFeed() {
+    if ("WebSocket" in window) {
+	// make sure yaws is listening on the URL
+	ws = new WebSocket("ws://" + document.location.host + "/spf"); 
+	ws.onopen = function() {
+            ws.send("start");
+	};
+	ws.onmessage = function (evt) { 
+	    var received_msg = evt.data;
+	    NewState = JSON.parse(received_msg);
+	    if (NewState["Time"] > 0) {
+		document.getElementById('spftime').innerHTML =
+		    "The last SPF run took " + NewState["Time"] + " &micro;seconds"
+            }
+            Rib = "";
+            for(var i = 0; i < NewState.rib.length; i++) {
+              Rib += NewState.rib[i][0].address + "/" + NewState.rib[i][0].mask + " -> "
+		+ NewState.rib[i][0].nexthop + " ("
+		+ NewState.rib[i][0].nodepath + ")<BR>";
+            }
+	    document.getElementById('routingtable').innerHTML = Rib;
+
+	    // Work out the changes to Nodes
+	    nodeLookup = {}
+            for (var i = 0, len = nodes.length; i < len; i++) {
+              nodes[i].updated = false;
+              nodeLookup[nodes[i].id] = nodes[i];
+            }
+            NewState.links.forEach(function(link) {
+              if (!nodeLookup[link.source]) {
+                nodes.push({id: link.source, colour: (link.source.slice(-1) * 10)});
+                nodeLookup[link.source] = nodes[nodes.length-1];
+              }
+              nodeLookup[link.source].updated = true;
+              if (!nodeLookup[link.target]) {
+                nodes.push({id: link.target, colour: (link.target.slice(-1) * 10)});
+                nodeLookup[link.target] = nodes[nodes.length-1];
+              }
+              nodeLookup[link.target].updated = true;
+            });
+            i = 0;
+            while(i < nodes.length) {
+		if (nodes[i].updated === false) {
+		    nodes.splice(i, 1);
+                } else {
+		    i++;
+                }
+            }
+
+	    // Now see if we can diff the link changes...
+	    linkLookup = {}
+            for (var i = 0, len = links.length; i < len; i++) {
+              links[i].updated = false;
+            }
+	    NewState.links.forEach(function(link) {
+              found = false;
+	      // Ugh, linear searching for now...
+              for (var i = 0, len = links.length; i < len && found === false; i++) {
+                if(links[i].source === link.source.id &&
+		   links[i].target == link.target.id) {
+		    links[i].updated = true;
+                    found = true;
+		    console.log("Found ", links[i]);
+                }
+              }
+              if (found === false) {
+                  links.push({source: nodeLookup[link.source],
+			      target: nodeLookup[link.target],
+			      updated: true});
+              }
+            });
+            i = 0;
+            while(i < links.length) {
+		if (links[i].updated === false) {
+                    links.splice(i, 1);
+		} else {
+                    i++;
+		}
+	    }
+	    // Do it!
+	    start();
+	};
+	
+	ws.onclose = function() {
+	    setTimeout(function() { connectToSPFFeed()}, 1000);
+	};
+	
+	ws.onerror = function() {
+	    document.writeln("ERROR");
+	};
+    }
+    return false;
+}
+
+connectToSPFFeed();
+
+// get the data
+//function process() {
+
+// Compute the distinct nodes from the links.
+//});
+
+var width = 960,
+    height = 500;
+
+var color = d3.scale.linear()
+    .domain([0, 1, 255])
+    .range(["red", "blue", "green"]);
+
+var force = d3.layout.force()
+    .nodes(nodes)
+    .links(links)
+    .charge(-600)
+    .linkDistance(120)
+    .size([width, height])
+    .on("tick", tick);
+ 
+var svg = d3.select("body").append("svg")
+    .attr("width", width)
+    .attr("height", height);
+ 
+svg.append("svg:defs").selectAll("marker")
+    .data(["end"])      // Different link/path types can be defined here
+  .enter().append("svg:marker")    // This section adds in the arrows
+    .attr("id", String)
+    .attr("viewBox", "0 -5 10 10")
+    .attr("refX", 15)
+    .attr("refY", -1.5)
+    .attr("markerWidth", 6)
+    .attr("markerHeight", 6)
+    .attr("orient", "auto")
+  .append("svg:path")
+    .attr("d", "M0,-5L10,0L0,5");
+
+var path = svg.append("svg:g").selectAll("path")
+    .data(force.links())
+  .enter().append("svg:path")
+    .attr("class", "link")
+    .attr("marker-end", "url(#end)");
+
+var node = svg.selectAll(".node"),
+    label = svg.selectAll(".text");
+
+function start() {
+  path = path.data(force.links(), function(d) { return d.source.id + "-" + d.target.id; });
+  path.enter().append("svg:path")
+    .attr("class", "link")
+    .attr("marker-end", "url(#end)");
+  path.exit().remove();
+
+  node = node.data(force.nodes(), function(d) { return d.id;});
+  node.enter().append("g").attr("class", "node").call(force.drag)
+	.append("circle").attr("r", 5).style("fill", function(d){ return color(d.colour)});
+  node.exit().remove();
+
+  label = label.data(force.nodes(), function(d) { return d.id;});
+  label.enter().append("text").attr("x", 12).attr("dy", ".35em").text(function(d) {return d.id;});
+  label.exit().remove();
+
+ 
+  force.start();
+}
+
+function tick() {
+/*
+  path.attr("d", function(d) {
+      var dx = d.target.x - d.source.x,
+          dy = d.target.y - d.source.y,
+          dr = Math.sqrt(dx * dx + dy * dy);
+      return "M" + 
+          d.source.x + "," + 
+          d.source.y + "A" + 
+          dr + "," + dr + " 0 0,1 " + 
+          d.target.x + "," + 
+          d.target.y;
+  });
+*/
+    path.attr("d", function(d) {
+        var dx = d.target.x - d.source.x,
+            dy = d.target.y - d.source.y,
+            dr = Math.sqrt(dx * dx + dy * dy);
+        return "M" + 
+            d.source.x + "," + 
+            d.source.y + " " + 
+            d.target.x + "," + 
+            d.target.y;
+    });
+
+
+   node.attr("transform", function(d) { 
+      return 'translate(' + [d.x, d.y] + ')'; 
+   });    
+
+  label.attr("transform", function(d) {
+      return 'translate(' + [d.x, d.y] + ')';
+  });
+ 
+}
+</script>
+</body>
+</html>

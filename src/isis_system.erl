@@ -32,7 +32,9 @@
 	 %% System Name handling
 	 add_name/2, delete_name/1, lookup_name/1,
 	 %% Handle System ID mapping
-	 add_sid_addresses/2, delete_sid_addresses/2]).
+	 add_sid_addresses/2, delete_sid_addresses/2,
+	 %% Misc
+	 address_to_string/2]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -145,10 +147,27 @@ add_name(SID, Name) ->
     gen_server:cast(?MODULE, {add_name, SID, Name}).
 delete_name(SID) ->
     gen_server:cast(?MODULE, {delete_name, SID}).
-lookup_name(SID) ->
+lookup_name(<<SID:6/binary, PN:8>>) ->
     Names = ets:lookup(isis_names, SID),
-    Name = lists:nth(1, Names),
-    Name#isis_name.name.
+    case length(Names) >= 1 of
+	true ->
+	    Name = lists:nth(1, Names),
+	    lists:flatten(io_lib:format("~s-~2.16.0B",
+			  [Name#isis_name.name, PN]));
+	_ ->
+	    lists:flatten(io_lib:format("~4.16.0B.~4.16.0B.~4.16.0B-~2.16.0B",
+					[X || <<X:16>> <= SID] ++ [PN]))
+    end;
+lookup_name(<<SID:6/binary>>) ->
+    Names = ets:lookup(isis_names, SID),
+    case length(Names) >= 1 of
+	true ->
+	    Name = lists:nth(1, Names),
+	    Name#isis_name.name;
+	_ ->
+	    lists:flatten(io_lib:format("~4.16.0B.~4.16.0B.~4.16.0B",
+					[X || <<X:16>> <= SID]))
+    end.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -344,19 +363,25 @@ handle_cast({delete_sid, SID, Addresses}, State) ->
 		 dict:store(SID, NewAs, State#state.system_ids)
 	 end,
     {noreply, State#state{system_ids = D1}};
-handle_cast({process_spf, SPF}, State) ->
+handle_cast({process_spf, {Level, Time, SPF}}, State) ->
     Table = 
-	lists:filtermap(fun({<<SysID:6/binary, _:8>>, Metric, As}) ->
-				case length(As) of
-				    0 -> false;
-				    _ ->
-					case dict:find(SysID, State#state.system_ids) of
-					    {ok, NH} -> {true, {lookup_name(SysID), NH, Metric, As}};
-					    _ -> false
-					end
-				end
-			end, SPF),
-    %% io:format("SPF: ~p~nTable: ~p~n", [SPF, Table]),
+	lists:filtermap(
+	  fun({<<Node:7/binary>>, <<NHID:6/binary, _:8>> = FullNH, Metric, As, Nodes})
+	     when is_list(As) ->
+		  case length(As) of
+		      0 -> false;
+		      _ ->
+			  case dict:find(NHID, State#state.system_ids) of
+			      {ok, NH} -> {true, {
+					     lookup_name(Node),
+					     lookup_name(FullNH),
+					     NH, Metric, As, Nodes}};
+			      _ -> false
+			  end
+		  end;
+	     (_) -> false
+	  end, SPF),
+    spf_summary:notify_subscribers({Time, Level, Table}),
     {noreply, State};
 handle_cast({add_name, SID, Name}, State) ->
     N = #isis_name{system_id = SID, name = Name},
@@ -757,4 +782,12 @@ add_to_list(Item, List) ->
 delete_from_list(Item, List) ->
     lists:filter(fun(I) -> Item =:= I end, List).
 		      
-    
+address_to_string(ipv4, Address) ->
+    inet_parse:ntoa(
+      erlang:list_to_tuple([X || <<X:8>> <= <<Address:32>>]));
+address_to_string(ipv6, Address) when is_binary(Address) ->
+    inet_parse:ntoa(
+      erlang:list_to_tuple([X || <<X:8>> <= Address]));
+address_to_string(ipv6, Address) when is_integer(Address) ->
+    inet_parse:ntoa(
+      erlang:list_to_tuple([X || <<X:8>> <= <<Address:128>>])).

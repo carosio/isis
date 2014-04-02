@@ -15,7 +15,11 @@
 -include ("zclient.hrl").
 
 %% API
--export([start_link/1, subscribe/1, unsubscribe/1]).
+-export([start_link/1,
+	 %% Subscription to updates...
+	 subscribe/1, unsubscribe/1,
+	 %% Sending information to the RIB
+	 add/1, delete/1]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -58,6 +62,16 @@ subscribe(Pid) ->
 
 unsubscribe(Pid) ->
     gen_server:call(?MODULE, {unsubscribe, Pid}).
+
+add(#zclient_route{} = Route) ->
+    gen_server:call(?MODULE, {send_route, Route});
+add(_) ->
+    unknown.
+
+delete(#zclient_prefix{} = Prefix) ->
+    gen_server:call(?MODULE, {delete_route, Prefix});
+delete(_) ->
+    unknown.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -113,6 +127,12 @@ handle_call({subscribe, Pid}, _From, #state{listeners = Clients} = State) ->
 handle_call({unsubscribe, Pid}, _From, State) ->
     NewState = remove_client(Pid, State),
     {reply, ok, NewState};
+handle_call({send_route, Route}, _From, State) ->
+    send_route(Route, State),
+    {reply, ok, State};
+handle_call({delete_route, Prefix}, _From, State) ->
+    delete_route(Prefix, State),
+    {reply, ok, State};
 handle_call(_Request, _From, State) ->
     Reply = ok,
     {reply, Reply, State}.
@@ -313,6 +333,7 @@ handle_zclient_cmd(interface_address_add,
 handle_zclient_cmd(ipv4_route_add,
 		   <<Type:8, Flags:8, Info:8, Mask:8, R0/binary>>,
 		   State) ->
+    io:format("Type: ~p, Flags: ~p, Info: ~p~n", [Type, Flags, Info]),
     R = read_ipv4_route(Type, Flags, Info, Mask, R0),
     NewRoutes = dict:store({R#zclient_route.prefix,
 			    R#zclient_route.nexthop},
@@ -510,3 +531,68 @@ send_current_state(Pid, #state{router_id = RouterIDs,
 	end,
     lists:map(F, I).
 				  
+send_route(#zclient_route{prefix =
+			      #zclient_prefix{afi = AFI, address = Address,
+					      mask_length = Mask},
+			  nexthop = NH, metric = Metric},
+	   State) ->
+    Type = zclient_enum:to_int(zebra_route, isis),
+    Unicast = zclient_enum:to_int(safi, unicast),
+    NexthopType = zclient_enum:to_int(nexthop, ipv4),
+    %% <<0:4, 1:1, 1:1, 0:1>>
+    ASize = erlang:trunc(Mask+7/8),
+    A = 
+	case AFI of
+	    ipv4 -> Address bsr (32 - ASize);
+	    ipv6 -> 
+		case is_binary(Address) of
+		    true -> <<I:128>> = Address,
+			    I bsr (128 - ASize);
+		    _ -> Address bsr (128 - ASize)
+		end
+	end,
+    RouteMessage = 
+	<<Type:8,
+	  0:8, %% 'Flags'
+	  0:4, %% unsed
+	  1:1, %% Metric present
+	  1:1, %% Distance present
+	  0:1, %% Ifindex present
+	  1:1, %% Nexthop present
+	  Unicast:16,
+	  Mask:8,
+	  A:ASize,
+	  1:8, %% Nexthop count..
+	  NexthopType:8,
+	  NH:32,
+	  115:8, %% Distance..
+	  Metric:32>>,
+    MessageType
+	= case AFI of
+	      ipv4 -> ipv4_route_add;
+	      ipv6 -> ipv6_route_add
+	  end,
+    Message = create_header(MessageType, RouteMessage),
+    send_message(Message, State).
+
+delete_route(#zclient_prefix{afi = AFI, address = Address,
+			     mask_length = Mask},
+	     State) ->
+    Type = zclient_enum:to_int(zebra_route, isis),
+    Unicast = zclient_enum:to_int(safi, unicast),
+    ASize = erlang:trunc(Mask+7/8),
+    A = Address bsr (32 - ASize),
+    RouteMessage = 
+	<<Type:8,
+	  0:8, %% 'Flags'
+	  0:8, %% unsed
+	  Unicast:16,
+	  Mask:8,
+	  A:ASize>>,
+    MessageType
+	= case AFI of
+	      ipv4 -> ipv4_route_delete;
+	      ipv6 -> ipv6_route_delete
+	  end,
+    Message = create_header(MessageType, RouteMessage),
+    send_message(Message, State).

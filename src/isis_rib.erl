@@ -3,20 +3,22 @@
 %%% @copyright (C) 2014, Rick Payne
 %%% @doc
 %%%
-%%% Subscription engine for distributing the results of an SPF run to
-%%% the various subscribers (RIB feed, web feed etc)
+%%% ISIS Rib - processes the results of the SPF calculations into
+%%% something we can feed to the RIB, taking into account our previous
+%%% state (ie. send only the difference).
 %%%
 %%% @end
-%%% Created : 31 Mar 2014 by Rick Payne <rickp@rossfell.co.uk>
+%%% Created :  1 Apr 2014 by Rick Payne <rickp@rossfell.co.uk>
 %%%-------------------------------------------------------------------
--module(spf_summary).
+-module(isis_rib).
 
 -behaviour(gen_server).
 
+-include("zclient.hrl").
+-include("isis_system.hrl").
+
 %% API
--export([start_link/0,
-	 subscribe/1, unsubscribe/1,
-	 notify_subscribers/1]).
+-export([start_link/0]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -25,20 +27,12 @@
 -define(SERVER, ?MODULE).
 
 -record(state, {
-	 subscribers
+	  rib
 	 }).
 
 %%%===================================================================
 %%% API
 %%%===================================================================
-subscribe(Pid) ->
-    gen_server:call(?MODULE, {subscribe, Pid}).
-
-unsubscribe(Pid) ->
-    gen_server:call(?MODULE, {unsubscribe, Pid}).
-
-notify_subscribers(Summary) ->
-    gen_server:call(?MODULE, {notify, Summary}).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -66,8 +60,8 @@ start_link() ->
 %% @end
 %%--------------------------------------------------------------------
 init([]) ->
-    process_flag(trap_exit, true),
-    {ok, #state{subscribers = dict:new()}}.
+    spf_summary:subscribe(self()),
+    {ok, #state{}}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -83,20 +77,6 @@ init([]) ->
 %%                                   {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_call({subscribe, Pid}, _From, #state{subscribers = Subscribers} = State) ->
-    %% Monitor the subscribing process, so we know if they die
-    erlang:monitor(process, Pid),
-    NewDict = dict:store(Pid, [], Subscribers),
-    {reply, ok, State#state{subscribers = NewDict}};
-
-handle_call({unsubscribe, Pid}, _From, State) ->
-    NewState = remove_subscriber(Pid, State),
-    {reply, ok, NewState};
-
-handle_call({notify, Summary}, _From, #state{subscribers = Subscribers} = State) ->
-    notify_subscribers(Summary, Subscribers),
-    {reply, ok, State};
-
 handle_call(_Request, _From, State) ->
     Reply = ok,
     {reply, Reply, State}.
@@ -124,6 +104,9 @@ handle_cast(_Msg, State) ->
 %%                                   {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
+handle_info({spf_summary, {Time, Level, SPF}}, State) ->
+    process_spf(SPF, State),
+    {noreply, State};
 handle_info(_Info, State) ->
     {noreply, State}.
 
@@ -155,18 +138,21 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
-remove_subscriber(Pid, #state{subscribers = Subscribers} = State) ->
-    NewSubscribers =
-	case dict:find(Pid, Subscribers) of
-	    {ok, _Value} ->
-		dict:erase(Pid, Subscribers);
-	    error ->Subscribers
+process_spf(SPF, _State) ->
+    SendRoute = 
+	fun(#isis_address{afi = AFI, address = Address, mask = Mask}, NHs, Metric) ->
+		%% FIX to handle multiple nexthops..
+		NH = lists:nth(1, NHs),
+		P = #zclient_prefix{afi = AFI, address = Address, mask_length = Mask},
+		R = #zclient_route{prefix = P, nexthop = NH, metric = Metric}
+		%% Don't mess with the table for now...
+		%% zclient:add(R)
 	end,
-    State#state{subscribers = NewSubscribers}.
-
-notify_subscribers(Message, Subscribers) ->
-    Pids = dict:fetch_keys(Subscribers),
-    lists:foreach(
-      fun(Pid) ->
-	      Pid ! {spf_summary, Message} end, Pids),
+    UpdateRib =
+	fun({_RouteNode, _NexthopNode, NextHops, Metric,
+	     Routes, _Nodes}) ->
+		lists:map(fun(R) -> SendRoute(R, NextHops, Metric) end,
+			  Routes)
+	end,
+    lists:map(UpdateRib, SPF),
     ok.

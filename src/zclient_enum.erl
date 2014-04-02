@@ -50,3 +50,18 @@
 
 -enum({afi, [{ipv4, 2},
 	     {ipv6, 10}]}).
+
+-enum({safi, [{unicast, 1},
+	      {multicast, 2},
+	      {reserved, 3},
+	      {mpls_vpn, 4}]}).
+
+-enum({nexthop, [{ifindex, 1},
+		 {ifname, 2},
+		 {ipv4, 3},
+		 {ipv4_ifindex, 4},
+		 {ipv4_ifname, 5},
+		 {ipv6, 6},
+		 {ipv6_ifindex, 7},
+		 {ipv6_ifname, 8},
+		 {blackhole, 9}]}).
