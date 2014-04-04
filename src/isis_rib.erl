@@ -61,7 +61,9 @@ start_link() ->
 %%--------------------------------------------------------------------
 init([]) ->
     spf_summary:subscribe(self()),
-    {ok, #state{}}.
+    Table = ets:new(isis_rib, [ordered_set,
+			       {keypos, #zclient_route.prefix}]),
+    {ok, #state{rib = Table}}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -105,8 +107,8 @@ handle_cast(_Msg, State) ->
 %% @end
 %%--------------------------------------------------------------------
 handle_info({spf_summary, {Time, Level, SPF}}, State) ->
-    process_spf(SPF, State),
-    {noreply, State};
+    NewState = process_spf(SPF, State),
+    {noreply, NewState};
 handle_info(_Info, State) ->
     {noreply, State}.
 
@@ -138,21 +140,43 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
-process_spf(SPF, _State) ->
+extract_prefixes(State) ->
+    F = ets:fun2ms(fun(#zclient_route{prefix = P}) ->
+			   P
+		   end),
+    ets:select(State#state.rib, F).
+
+process_spf(SPF, State) ->
     SendRoute = 
-	fun(#isis_address{afi = AFI, address = Address, mask = Mask}, NHs, Metric) ->
+	fun(#isis_address{afi = AFI, address = Address, mask = Mask},
+	    NHs, Metric, Added) ->
 		%% FIX to handle multiple nexthops..
 		NH = lists:nth(1, NHs),
 		P = #zclient_prefix{afi = AFI, address = Address, mask_length = Mask},
-		R = #zclient_route{prefix = P, nexthop = NH, metric = Metric}
-		%% Don't mess with the table for now...
-		%% zclient:add(R)
+		R = #zclient_route{prefix = P, nexthop = NH, metric = Metric},
+		case ets:lookup(State#state.rib, R) of
+		    [] ->
+			%% No prior route, so install into the RIB
+			zclient:add(R);
+		    [C] ->
+			case C =:= R of
+			    true ->
+				%% Prior route matches this one, no-op...
+				Added;
+			    _ ->
+				%% Prior route is different
+				zclient:add(R)
+			end
+		end,
+		sets:add_element(P, Added)
 	end,
     UpdateRib =
 	fun({_RouteNode, _NexthopNode, NextHops, Metric,
-	     Routes, _Nodes}) ->
-		lists:map(fun(R) -> SendRoute(R, NextHops, Metric) end,
-			  Routes)
+	     Routes, _Nodes}, AddSet) ->
+		lists:foldl(fun(R, AddSet2) -> SendRoute(R, NextHops, Metric, AddSet2) end,
+			    AddSet, Routes)
 	end,
-    lists:map(UpdateRib, SPF),
-    ok.
+    Installed = lists:foldl(UpdateRib, sets:new(), SPF),
+    Present = extract_prefixes(State),
+    Delete = sets:subtract(Present, Installed),
+    lists:map(fun(P) -> zclient:delete(P) end, sets:to_list(Delete)).
