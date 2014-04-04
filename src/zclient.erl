@@ -330,6 +330,26 @@ handle_zclient_cmd(interface_address_add,
 			address = Address, mask_length = Mask},
     io:format("Adding address ~p to interface ~p~n", [A, I#zclient_interface.name]),
     update_interface_address(add, A, I, State);
+handle_zclient_cmd(interface_address_delete,
+		   <<Ifindex:32, Flags:8, ?ZEBRA_AFI_IPV4:8,
+		     Address:32, Mask:8, _Broadcast:32>>,
+		   State) ->
+    %% IPv4 Address
+    I = dict:fetch(Ifindex, State#state.interfaces),
+    A = #zclient_prefix{afi = ipv4, flags = Flags,
+			 address = Address, mask_length = Mask},
+    io:format("Deleting address ~p to interface ~p~n", [A, I#zclient_interface.name]),
+    update_interface_address(del, A, I, State);
+handle_zclient_cmd(interface_address_delete,
+		   <<Ifindex:32, Flags:8, ?ZEBRA_AFI_IPV6:8,
+		     Address:128, Mask:8, _Broadcast:128>>,
+		   State) ->
+    %% IPv6 address
+    I = dict:fetch(Ifindex, State#state.interfaces),
+    A = #zclient_prefix{afi = ipv6, flags = Flags,
+			address = Address, mask_length = Mask},
+    io:format("Deleting address ~p to interface ~p~n", [A, I#zclient_interface.name]),
+    update_interface_address(del, A, I, State);
 handle_zclient_cmd(ipv4_route_add,
 		   <<Type:8, Flags:8, Info:8, Mask:8, R0/binary>>,
 		   State) ->
