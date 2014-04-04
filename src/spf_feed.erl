@@ -28,8 +28,9 @@ out(A) ->
 	  
 	  {content, "text/plain", "You are not a websocket, Go away!"};
           "websocket" ->      Opts = [
-          {keepalive,         true},
-          {keepalive_timeout, 10000}
+				      {keepalive,         true},
+				      {keepalive_timeout, 10000},
+				      {drop_on_timeout,   true}
          ],
       {websocket, spf_feed, Opts};
     Any ->
