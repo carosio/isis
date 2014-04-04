@@ -112,7 +112,6 @@ handle_cast(_Msg, State) ->
 %% @end
 %%--------------------------------------------------------------------
 handle_info({timeout, _Ref, ping}, State) ->
-    io:format("Demo... timer fired...~n", []),
     NewState = next_demo(State),
     Timer = erlang:start_timer(isis_protocol:jitter(20 * 1000, 50),
 			       self(), ping),
