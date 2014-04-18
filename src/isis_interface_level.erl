@@ -15,7 +15,8 @@
 -include("isis_protocol.hrl").
 
 %% API
--export([start_link/1, get_state/2, set/2]).
+-export([start_link/1, get_state/2, set/2,
+	 update_adjacency/3]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -36,7 +37,8 @@
 	  authentication_key = <<>>,
 	  iih_timer = undef :: reference() | undef, %% iih timer for this level
 	  ssn_timer = undef :: reference() | undef, %% SSN timer
-	  adjacencies,     %% Dict for SNPA -> FSM pid
+	  adj_handlers,     %% Dict for SNPA -> FSM pid
+	  up_adjacencies,  %% Dict for Pid -> SID (populated by adj fsm when adj is up)
 	  priority = 64,   %% 0 - 127 (6 bit) for our priority, highest wins
 	  dis = undef,     %% Current DIS for this interface ( 7 bytes, S-id + pseudonode)
 	  dis_priority,    %% Current DIS's priority
@@ -58,6 +60,9 @@ get_state(Pid, Item) ->
 
 set(Pid, Values) ->
     gen_server:call(Pid, {set, Values}).
+
+update_adjacency(Pid, Direction, Neighbor) ->
+    gen_server:cast(Pid, {update_adjacency, Direction, self(), Neighbor}).
 
 stop(Pid) ->
     gen_server:cast(Pid, stop).
@@ -90,7 +95,8 @@ start_link(Args) ->
 init(Args) ->
     process_flag(trap_exit, true),
     State = parse_args(Args, #state{
-			       adjacencies = dict:new()
+				adj_handlers = dict:new(),
+				up_adjacencies = dict:new()
 			       }),
     gen_server:cast(self(), {set_database}),
     {ok, State}.
@@ -136,14 +142,14 @@ handle_call(_Request, _From, State) ->
 %%                                  {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_cast(stop, #state{adjacencies = Adjs,
+handle_cast(stop, #state{adj_handlers = Adjs,
 			 iih_timer = IIHTimerRef,
 			 ssn_timer = SSNTimerRef,
 			 dis_timer = DISTimerRef} = State) ->
     %% Cancel our timer
     cancel_timers([IIHTimerRef, SSNTimerRef, DISTimerRef]),
     %% Notify our adjacencies
-    dict:map(fun(_From, {_SysID, Pid}) -> gen_fsm:send_event(Pid, stop) end,
+    dict:map(fun(_From, Pid) -> gen_fsm:send_event(Pid, stop) end,
 	     Adjs),
     {stop, normal, State};
 
@@ -161,6 +167,32 @@ handle_cast({set_database}, State) ->
     Timer = start_timer(iih, State),
     {noreply, State#state{database = DB, iih_timer = Timer}};
 
+handle_cast({update_adjacency, up, Pid, Sid}, State) ->
+    D = dict:store(Pid, Sid, State#state.up_adjacencies),
+    case State#state.are_we_dis of
+	true ->
+	    TLV = #isis_tlv_extended_reachability{
+		     reachability = [#isis_tlv_extended_reachability_detail{
+					neighbor = <<Sid:6/binary, 0:8>>,
+					metric = 0,
+					sub_tlv = []}]},
+	    isis_system:update_tlv(TLV, State#state.pseudonode, State#state.level);
+	_ -> ok
+    end,
+    {noreply, State#state{up_adjacencies = D}};
+handle_cast({update_adjacency, down, Pid, Sid}, State) ->
+    D = dict:erase(Pid, State#state.up_adjacencies),
+    case State#state.are_we_dis of
+	true ->
+	    TLV = #isis_tlv_extended_reachability{
+		     reachability = [#isis_tlv_extended_reachability_detail{
+					neighbor = <<Sid:6/binary, 0:8>>,
+					metric = 0,
+					sub_tlv = []}]},
+	    isis_system:delete_tlv(TLV, State#state.pseudonode, State#state.level);
+	_ -> ok
+    end,
+    {noreply, State#state{up_adjacencies = D}};
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
@@ -222,10 +254,10 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
-handle_iih(From, IIH, #state{adjacencies = Adjs} = State) ->
+handle_iih(From, IIH, #state{adj_handlers = Adjs} = State) ->
     NewAdjs = 
 	case dict:find(From, Adjs) of
-	    {ok, {_SysID, Pid}} ->
+	    {ok, Pid} ->
 		gen_fsm:send_event(Pid, {iih, IIH}),
 		Adjs;
 	    _ ->
@@ -235,11 +267,9 @@ handle_iih(From, IIH, #state{adjacencies = Adjs} = State) ->
 							  {level_pid, self()}]),
 		erlang:monitor(process, NewPid),
 		gen_fsm:send_event(NewPid, {iih, IIH}),
-		dict:store(From,
-			   {IIH#isis_iih.source_id, NewPid},
-			   Adjs)
+		dict:store(From, NewPid, Adjs)
 	end,
-    AdjState = State#state{adjacencies = NewAdjs},
+    AdjState = State#state{adj_handlers = NewAdjs},
     DISState = handle_dis_election(From, IIH, AdjState),
     DISState.
 
@@ -286,8 +316,8 @@ handle_dis_election(_From,
   when Us =:= false ->
     <<D:6/binary, D1:1/binary>> = DIS,
     NewState = 
-	case dict:find(D, State#state.adjacencies) of
-	    {ok, {_, _}} -> State;
+	case dict:find(D, State#state.adj_handlers) of
+	    {ok, _} -> State;
 	    _ -> assume_dis(State)
 	end,
     NewState;
@@ -325,7 +355,7 @@ assume_dis(State) ->
     %% Remove our relationship with the old DIS, and link DIS to new node
     isis_system:delete_tlv(OldDISReach, 0, State#state.level),
     isis_system:update_tlv(NewDISReach, Node, State#state.level),
-    dict:map(fun(_, {AdjID, _}) -> 
+    dict:map(fun(_, AdjID) -> 
 		     isis_system:update_tlv(
 		       #isis_tlv_extended_reachability{
 			  reachability = [#isis_tlv_extended_reachability_detail{
@@ -333,7 +363,7 @@ assume_dis(State) ->
 					     metric = 0,
 					     sub_tlv = []}]},
 		       Node, State#state.level)
-	     end, State#state.adjacencies),
+	     end, State#state.up_adjacencies),
     isis_system:schedule_lsp_refresh(),
     send_iih(ID, NewState),
     NewState.
@@ -367,7 +397,7 @@ send_iih(SID, _State) when byte_size(SID) =/= 6 ->
 send_iih(SID, State) ->
     IS_Neighbors =
 	lists:map(fun({A, _}) -> A end,
-		  dict:to_list(State#state.adjacencies)),
+		  dict:to_list(State#state.adj_handlers)),
     Areas = isis_system:areas(),
     V4Addresses = isis_interface:get_addresses(State#state.interface_ref, ipv4),
     V6Addresses = isis_interface:get_addresses(State#state.interface_ref, ipv6),
