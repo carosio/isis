@@ -61,8 +61,6 @@ init([]) ->
     Shutdown = 2000,
     Type = worker,
 
-    Webserver = {ybed_sup, {ybed_sup, start_link, []},
-		 permanent, 10000, supervisor, []},
     SPFSummary = {spf_summary, {spf_summary, start_link, []},
 		  permanent, 10000, worker, []},
     ZChild = {zclient, {zclient, start_link, [[{type, isis}]]},
@@ -75,9 +73,13 @@ init([]) ->
 	    Restart, Shutdown, Type, [isis_system, isis_protocol, isis_enum]},
     ISISRib = {isis_rib, {isis_rib, start_link, []},
 	       permanent, 10000, worker, []},
-    Demo = {demo, {demo, start_link, []},
-	    permanent, 1000, worker, []},
-    {ok, {SupFlags, [Webserver, SPFSummary, ZChild, L1DB, L2DB, ISIS, ISISRib, Demo]}}.
+    %% Demo = {demo, {demo, start_link, []},
+    %% 	    permanent, 1000, worker, []},
+    %% Webserver = {ybed_sup, {ybed_sup, start_link, []},
+    %% 		 permanent, 10000, supervisor, []},
+    {ok, {SupFlags, [SPFSummary, ZChild, L1DB, L2DB, ISIS, ISISRib
+		     %%, Demo, Webserver
+		    ]}}.
 
 %%%===================================================================
 %%% Internal functions

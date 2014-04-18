@@ -173,7 +173,7 @@ inject_some_lsps(_, _, _) ->
 purge_injected_lsps(Level, Count) ->
     IDCreator = fun(N) -> <<N:16, 0, 0, 0, 0, 0, 0>> end,
     LSPIDs = lists:map(IDCreator, lists:seq(1, Count)),
-    Purge = fun(LSPID) -> isis_lspdb:purge_lsp(Level, LSPID) end,
+    Purge = fun(LSPID) -> isis_system:purge_lsp(Level, LSPID) end,
     lists:map(Purge, LSPIDs),
     ChainTLV = #isis_tlv_extended_reachability{
 		  reachability = [#isis_tlv_extended_reachability_detail{

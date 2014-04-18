@@ -21,6 +21,7 @@
 %% API
 -export([start_link/1, send_pdu/4, stop/1,
 	 get_state/3, get_state/1, set/2,
+	 set_level/3,
 	 enable_level/2, disable_level/2, levels/1,
 	 get_addresses/2]).
 
@@ -78,6 +79,9 @@ get_state(Pid) ->
 
 set(Pid, Values) ->
     gen_server:call(Pid, {set, Values}).
+
+set_level(Pid, Level, Values) ->
+    gen_server:cast(Pid, {set, Level, Values}).
 
 enable_level(Pid, Level) ->
     gen_server:call(Pid, {enable, Level}).
@@ -198,6 +202,13 @@ handle_cast(stop, #state{port = Port,
 	true -> gen_server:cast(Level2, stop)
     end,
     {stop, normal, State};
+
+handle_cast({set, level_1, Values}, State) ->
+    isis_interface_level:set(State#state.level1, Values),
+    {noreply, State};
+handle_cast({set, level_2, Values}, State) ->
+    isis_interface_level:set(State#state.level2, Values),
+    {noreply,  State};
 
 handle_cast(_Msg, State) ->
     {noreply, State}.

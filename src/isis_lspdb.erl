@@ -18,11 +18,11 @@
 
 %% API
 -export([start_link/1, get_db/1,
-	 lookup_lsps/2, store_lsp/2, delete_lsp/2, purge_lsp/2,
+	 lookup_lsps/2, store_lsp/2, delete_lsp/2,
 	 lookup_lsps_by_node/2,
 	 summary/2, range/3,
 	 replace_tlv/3, update_reachability/3,
-	 flood_lsp/3, bump_lsp/2,
+	 flood_lsp/3,
 	 links/1]).
 
 %% gen_server callbacks
@@ -63,27 +63,6 @@ store_lsp(Ref, LSP) ->
 %%--------------------------------------------------------------------
 delete_lsp(Ref, LSP) ->
     gen_server:call(Ref, {delete, LSP}).
-
-bump_lsp(Ref, LSP) ->
-    gen_server:cast(Ref, {bump, Ref, LSP}).
-
-%%--------------------------------------------------------------------
-%% @doc
-%%
-%% Purge an LSP
-%%
-%% @end
-%%--------------------------------------------------------------------
-purge_lsp(Ref, LSP) ->
-    case gen_server:call(Ref, {purge, LSP}) of
-	{ok, PurgedLSP} ->
-	    D = isis_system:list_interfaces(),
-	    I = dict:to_list(D),
-	    flood_lsp(Ref, I, PurgedLSP),
-	    ok;
-	Result -> Result
-    end.
-	     
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -154,7 +133,6 @@ replace_tlv(Level, TLV, LSP) ->
 	[L] -> NewTLV = replace_tlv(L#isis_lsp.tlv, TLV),
 	       NewLSP = L#isis_lsp{tlv = NewTLV},
 	       CSum = isis_protocol:checksum(NewLSP),
-	       bump_lsp(Level, NewLSP#isis_lsp{checksum = CSum}),
 	       ok;
 	_ -> error
     end.
@@ -178,11 +156,9 @@ update_reachability({AddDel, ER}, Level, #isis_lsp{tlv = TLVs} = LSP) ->
 	   (A, B) -> {A, B}
 	end,
     {NewTLVs, Flood} = lists:mapfoldl(Worker, false, TLVs),
-    io:format("Was: ~p~nNow: ~p~n", [TLVs, NewTLVs]),
     case Flood of
 	true ->
-	    NewLSP = LSP#isis_lsp{tlv = NewTLVs},
-	    bump_lsp(Level, NewLSP);
+	    NewLSP = LSP#isis_lsp{tlv = NewTLVs};
 	_ -> ok
     end.
 

@@ -15,7 +15,7 @@
 -include("isis_protocol.hrl").
 
 %% API
--export([start_link/1, get_state/2]).
+-export([start_link/1, get_state/2, set/2]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -31,17 +31,20 @@
 	  database = undef, %% The LSPDB reference
 	  hello_interval = (?DEFAULT_HOLD_TIME / 3),
 	  hold_time = ?DEFAULT_HOLD_TIME,
+	  metric = ?DEFAULT_METRIC,
+	  authentication_type = none :: none | text | md5,
+	  authentication_key = <<>>,
 	  iih_timer = undef :: reference() | undef, %% iih timer for this level
 	  ssn_timer = undef :: reference() | undef, %% SSN timer
 	  adjacencies,     %% Dict for SNPA -> FSM pid
-	  priority = 0,    %% 0 - 127 (6 bit) for our priority, highest wins
+	  priority = 64,   %% 0 - 127 (6 bit) for our priority, highest wins
 	  dis = undef,     %% Current DIS for this interface ( 7 bytes, S-id + pseudonode)
 	  dis_priority,    %% Current DIS's priority
 	  are_we_dis = false,  %% True if we're the DIS
+	  pseudonode = 0,  %% Allocated pseudonode if we're DIS
 	  dis_continuation = undef,%% Do we have more CSNP's to send?
 	  dis_timer = undef :: reference() | undef, %% If we're DIS, we use this timer to announce CSNPs
 	  ssn = [] :: [binary()]  %% list of pending
-
 	 }).
 
 %%%===================================================================
@@ -52,6 +55,9 @@ handle_pdu(Pid, From, PDU) ->
 
 get_state(Pid, Item) ->
     gen_server:call(Pid, {get_state, Item}).
+
+set(Pid, Values) ->
+    gen_server:call(Pid, {set, Values}).
 
 stop(Pid) ->
     gen_server:cast(Pid, stop).
@@ -112,6 +118,10 @@ handle_call({get_state, hello_interval}, _From, State) ->
 handle_call({get_state, hold_time}, _From, State) ->
     {reply, State#state.hold_time, State};
 
+handle_call({set, Values}, _From, State) ->
+    NewState = set_values(Values, State),
+    {reply, ok, NewState};
+
 handle_call(_Request, _From, State) ->
     Reply = ok,
     {reply, Reply, State}.
@@ -133,12 +143,16 @@ handle_cast(stop, #state{adjacencies = Adjs,
     %% Cancel our timer
     cancel_timers([IIHTimerRef, SSNTimerRef, DISTimerRef]),
     %% Notify our adjacencies
-    dict:map(fun(_Key, Pid) -> gen_fsm:send_event(Pid, stop) end,
+    dict:map(fun(_From, {_SysID, Pid}) -> gen_fsm:send_event(Pid, stop) end,
 	     Adjs),
     {stop, normal, State};
 
 handle_cast({received, From, PDU}, State) ->
-    NewState = process_pdu(From, PDU, State),
+    NewState = 
+	case verify_authentication(PDU, State) of
+	    valid -> process_pdu(From, PDU, State);
+	    _ -> State
+	end,
     {noreply, NewState};
 
 
@@ -211,7 +225,7 @@ code_change(_OldVsn, State, _Extra) ->
 handle_iih(From, IIH, #state{adjacencies = Adjs} = State) ->
     NewAdjs = 
 	case dict:find(From, Adjs) of
-	    {ok, Pid} ->
+	    {ok, {_SysID, Pid}} ->
 		gen_fsm:send_event(Pid, {iih, IIH}),
 		Adjs;
 	    _ ->
@@ -221,10 +235,12 @@ handle_iih(From, IIH, #state{adjacencies = Adjs} = State) ->
 							  {level_pid, self()}]),
 		erlang:monitor(process, NewPid),
 		gen_fsm:send_event(NewPid, {iih, IIH}),
-		dict:store(From, NewPid, Adjs)
+		dict:store(From,
+			   {IIH#isis_iih.source_id, NewPid},
+			   Adjs)
 	end,
     AdjState = State#state{adjacencies = NewAdjs},
-    DISState = handle_dis_election(IIH, AdjState),
+    DISState = handle_dis_election(From, IIH, AdjState),
     DISState.
 
 %%--------------------------------------------------------------------
@@ -240,10 +256,11 @@ handle_iih(From, IIH, #state{adjacencies = Adjs} = State) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec handle_dis_election(isis_iih(), tuple()) -> tuple().
-handle_dis_election(#isis_iih{priority = TheirP, dis = DIS, source_id = SID},
-		    #state{priority = OurP} = State)
-  when TheirP > OurP ->   %% ; TheirP == OurP, TheirSNPA > OurMac
+-spec handle_dis_election(binary(), isis_iih(), tuple()) -> tuple().
+handle_dis_election(From, 
+		    #isis_iih{priority = TheirP, dis = DIS, source_id = SID},
+		    #state{priority = OurP, snpa = OurSNPA} = State)
+  when TheirP > OurP; TheirP == OurP, From > OurSNPA ->
     <<D:6/binary, _:1/binary>> = DIS,
     DIS_Priority = 
 	case D =:= SID of
@@ -251,38 +268,91 @@ handle_dis_election(#isis_iih{priority = TheirP, dis = DIS, source_id = SID},
 	    _ -> State#state.dis_priority
 	end,
     case State#state.dis =:= DIS of
-	false -> 
+	false ->
+	    relinquish_dis(State),
 	    TLV = #isis_tlv_extended_reachability{
 		     reachability = [#isis_tlv_extended_reachability_detail{
-					neighbor = DIS, metric = 10, sub_tlv = []}]},
+					neighbor = DIS,
+					metric = State#state.metric,
+					sub_tlv = []}]},
 	    isis_system:update_tlv(TLV, 0, State#state.level);
-	_ -> ok
+	_ ->
+	    ok
     end,
-    State#state{dis = DIS, dis_priority = DIS_Priority};
-handle_dis_election(#isis_iih{priority = TheirP, dis = DIS, source_id = SID},
-		    #state{priority = OurP} = State)
-  when TheirP < OurP ->
+    State#state{dis = DIS, dis_priority = DIS_Priority, are_we_dis = false};
+handle_dis_election(_From,
+		    #isis_iih{priority = TheirP, dis = DIS, source_id = SID},
+		    #state{priority = OurP, are_we_dis = Us} = State)
+  when Us =:= false ->
     <<D:6/binary, D1:1/binary>> = DIS,
     NewState = 
 	case dict:find(D, State#state.adjacencies) of
-	    {ok, _} -> State;
+	    {ok, {_, _}} -> State;
 	    _ -> assume_dis(State)
 	end,
-    NewState.
+    NewState;
+handle_dis_election(_From,
+		    #isis_iih{priority = TheirP, dis = DIS, source_id = SID},
+		    #state{priority = OurP, are_we_dis = Us} = State) ->
+    State.
 
 assume_dis(State) ->
     %% Get pseudo-node here, create LSP etc..
-    io:format("Assuming DIS~n", []),
-    Node = 2,
-
+    Node = isis_system:allocate_pseudonode(self(), State#state.level),
     DIS_Timer = start_timer(dis, State),
-
     ID = isis_system:system_id(),
+    SysID = <<ID:6/binary, 0:8>>,
     DIS = <<ID:6/binary, Node:8>>,
     NewState = State#state{dis = DIS, dis_timer = DIS_Timer,
-			   are_we_dis = true},
+			   are_we_dis = true, pseudonode = Node},
+    OldDISReach = #isis_tlv_extended_reachability{
+		     reachability = [#isis_tlv_extended_reachability_detail{
+					neighbor = State#state.dis,
+					metric = 0,
+					sub_tlv = []}]},
+    NewDISReach = #isis_tlv_extended_reachability{
+		     reachability = [#isis_tlv_extended_reachability_detail{
+					neighbor = SysID,
+					metric = 0,
+					sub_tlv = []}]},
+    SysReach = #isis_tlv_extended_reachability{
+		  reachability = [#isis_tlv_extended_reachability_detail{
+				     neighbor = DIS,
+				     metric = State#state.metric,
+				     sub_tlv = []}]},
+    %% Add our relationship to the DIS to our LSP
+    isis_system:update_tlv(SysReach, 0, State#state.level),
+    %% Remove our relationship with the old DIS, and link DIS to new node
+    isis_system:delete_tlv(OldDISReach, 0, State#state.level),
+    isis_system:update_tlv(NewDISReach, Node, State#state.level),
+    dict:map(fun(_, {AdjID, _}) -> 
+		     isis_system:update_tlv(
+		       #isis_tlv_extended_reachability{
+			  reachability = [#isis_tlv_extended_reachability_detail{
+					     neighbor = <<AdjID:6/binary, 0:8>>,
+					     metric = 0,
+					     sub_tlv = []}]},
+		       Node, State#state.level)
+	     end, State#state.adjacencies),
+    isis_system:schedule_lsp_refresh(),
     send_iih(ID, NewState),
     NewState.
+
+relinquish_dis(#state{are_we_dis = true,
+		      dis = DIS,
+		      pseudonode = Node} = State) ->
+    %% Unlink our LSP from our DIS LSP...
+    TLV = #isis_tlv_extended_reachability{
+	     reachability = [#isis_tlv_extended_reachability_detail{
+				neighbor = DIS,
+				metric = State#state.metric,
+				sub_tlv = []}]},
+    isis_system:delete_tlv(TLV, 0, State#state.level),
+    %% We're no longer DIS, so release pseudonode
+    isis_system:deallocate_pseudonode(Node, State#state.level),
+    ok;
+relinquish_dis(_) ->
+    ok.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -310,6 +380,17 @@ send_iih(SID, State) ->
 	    level_1 -> {level_1, level1_iih};
 	    level_2 -> {level_1_2, level2_iih}
 	end,
+    BaseTLVs = [
+		#isis_tlv_is_neighbors{neighbors = IS_Neighbors},
+		#isis_tlv_area_address{areas = Areas},
+		#isis_tlv_ip_interface_address{addresses = V4Addresses},
+		%% Turn off ipv6 addresses when working with Titanium :(
+		%% #isis_tlv_ipv6_interface_address{addresses = V6Addresses},
+		%% Need to get these from the 'system' eventually...
+		#isis_tlv_protocols_supported{protocols = [ipv4, ipv6]}
+	       ],
+
+    TLVs = authentication_tlv(State) ++ BaseTLVs,
     IIH = #isis_iih{
 	     pdu_type = PDUType,
 	     circuit_type = Circuit,
@@ -317,16 +398,8 @@ send_iih(SID, State) ->
 	     holding_time = erlang:trunc(State#state.hold_time / 1000),
 	     priority = State#state.priority,
 	     dis = DIS,
-	     tlv =
-		 [
-		  #isis_tlv_is_neighbors{neighbors = IS_Neighbors},
-		  #isis_tlv_area_address{areas = Areas},
-		  #isis_tlv_ip_interface_address{addresses = V4Addresses},
-		  %% Turn off ipv6 addresses when working with Titanium :(
-		  %% #isis_tlv_ipv6_interface_address{addresses = V6Addresses},
-		  %% Need to get these from the 'system' eventually...
-		  #isis_tlv_protocols_supported{protocols = [ipv4, ipv6]}
-		 ]},
+	     tlv = TLVs
+	},
     {ok, PDU, PDU_Size} = isis_protocol:encode(IIH),
     send_pdu(PDU, PDU_Size, State).
 
@@ -405,7 +478,8 @@ generate_csnp({Status, _}, Chunk_Size, Summary, State) ->
 							   lifetime = Lifetime}
 			end, Summary),
     DetailPackageFun = fun(F) -> [#isis_tlv_lsp_entry{lsps = F}] end,
-    TLVs = isis_protocol:package_tlvs(Details, DetailPackageFun,
+    TLVs = authentication_tlv(State)
+	++ isis_protocol:package_tlvs(Details, DetailPackageFun,
 				      ?LSP_ENTRY_DETAIL_PER_TLV),
     CSNP = #isis_csnp{pdu_type = PDU_Type,
 		      source_id = Source,
@@ -531,11 +605,14 @@ announce_lsps(IDs, State) ->
 %%--------------------------------------------------------------------
 -spec send_lsps([isis_lsp()], tuple()) -> ok.
 send_lsps(LSPs, State) ->
-    lists:map(fun(L) -> case isis_protocol:encode(L) of
-			    {ok, Bin, Len} -> send_pdu(Bin, Len, State);
-			    _ -> io:format("Failed to encode LSP ~p~n",
-					   [L#isis_lsp.lsp_id])
-			end
+    %% AuthTLV = authentication_tlv(State),
+    lists:map(fun(#isis_lsp{} = L) ->
+		      %% NewTLVs = AuthTLV ++ TLVs,
+		      case isis_protocol:encode(L) of
+			  {ok, Bin, Len} -> send_pdu(Bin, Len, State);
+			  _ -> io:format("Failed to encode LSP ~p~n",
+					 [L#isis_lsp.lsp_id])
+		      end
 	      end, LSPs),
     ok.
 
@@ -576,6 +653,7 @@ send_psnp(#state{ssn = SSN} = State) ->
 	    level_1 -> level1_psnp;
 	    level_2 -> level2_psnp
 	end,
+    AuthTLV = authentication_tlv(State),
     TLVs = 
 	lists:map(fun(LSP) -> #isis_tlv_lsp_entry_detail{lsp_id = LSP} end,
 		  SSN),
@@ -583,7 +661,7 @@ send_psnp(#state{ssn = SSN} = State) ->
     DetailPackageFun = fun(F) -> [#isis_tlv_lsp_entry{lsps = F}] end,			 
     TLVPackageFun = fun(F) -> [#isis_psnp{pdu_type = PDU_Type,
 					  source_id = Source,
-					  tlv = F}]
+					  tlv = AuthTLV ++ F}]
 		    end,
 
     %% Now we have the detail entries we need to bundle up as many
@@ -593,7 +671,6 @@ send_psnp(#state{ssn = SSN} = State) ->
 					      ?LSP_ENTRY_DETAIL_PER_TLV),
     List_of_PDUs = isis_protocol:package_tlvs(List_of_TLVs, TLVPackageFun,
 					      ?LSP_ENTRY_PER_PDU),
-    %%% ....
     lists:map(fun(F) ->
 		      case isis_protocol:encode(F) of
 			  {ok, Bin, Len} -> send_pdu(Bin, Len, State);
@@ -666,14 +743,18 @@ handle_lsp(#isis_lsp{lsp_id = ID, sequence_number = TheirSeq} = LSP, State) ->
     end,
     State.
 
-handle_old_lsp(#isis_lsp{lsp_id = ID, tlv = TLVs} = LSP, State) ->
+handle_old_lsp(#isis_lsp{lsp_id = ID, tlv = TLVs,
+			 sequence_number = SeqNo} = LSP, State) ->
     case isis_system:check_autoconf_collision(TLVs) of
 	false ->
 	    case isis_lspdb:lookup_lsps([ID], State#state.database) of
-		[OurLSP] ->
-		    isis_lspdb:store_lsp(State#state.level, OurLSP#isis_lsp{
-							      sequence_number = (LSP#isis_lsp.sequence_number + 1)
-							     });
+		[#isis_lsp{sequence_number = SN}] ->
+		    case SeqNo > SN of
+			true ->
+			    <<_:6/binary, Node:8, Frag:8>> = ID,
+			    isis_system:bump_lsp(State#state.level, Node, Frag, SeqNo);
+			_ -> ok
+		    end;
 		_ -> %% Purge
 		    purge
 	    end;
@@ -726,6 +807,49 @@ handle_csnp(#isis_csnp{start_lsp_id = Start,
 %% @private
 %% @doc
 %%
+%% For now, we're just authenticating the IIH messages. Its trivial to
+%% change the following to authenticate all messages.
+%%
+%% @end
+%%--------------------------------------------------------------------
+verify_authentication(#isis_iih{tlv = TLVs} = PDU, State) ->
+    verify_authentication(TLVs, PDU, State);
+verify_authentication(#isis_lsp{}, _State) ->
+    valid;
+verify_authentication(#isis_csnp{}, _State) ->
+    valid;
+verify_authentication(#isis_psnp{}, _State) ->
+    valid.
+
+verify_authentication(_, _, #state{authentication_type = none}) ->
+    valid;
+verify_authentication(TLVs, PDU, #state{authentication_type = text,
+					authentication_key = Key}) ->
+   case isis_protocol:filter_tlvs(isis_tlv_authentication, TLVs) of
+       [#isis_tlv_authentication{
+	  type = text, signature = Key}] -> valid;
+       [] -> missing_auth;
+       _ -> invalid
+   end;
+verify_authentication(_, _, _) ->
+    error.
+
+authentication_tlv(State) ->    
+    case State#state.authentication_type of
+	none -> [];
+	text -> [#isis_tlv_authentication{
+		    type = text,
+		    signature = State#state.authentication_key}];
+	md5 -> [#isis_tlv_authentication{
+		   type = md5,
+		   %% Signature needs to be calculated later
+		   signature = <<0:(16*8)>>}]
+    end.
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%%
 %% Pass the PDU to be sent up to the interface, as that has the socket
 %% and ability to send the frame.
 %%
@@ -742,4 +866,17 @@ parse_args([{snpa, M} | T], State) ->
 parse_args([{interface, I} | T], State) ->
     parse_args(T, State#state{interface_ref = I});
 parse_args([], State) ->
+    State.
+
+set_values([{encryption, Type, Key} | Vs], State) ->
+    set_values(Vs, State#state{
+		     authentication_type = Type,
+		     authentication_key = Key});
+set_values([{metric, M} | Vs], State) ->
+    set_values(Vs, State#state{metric = M});
+set_values([{priority, P} | Vs], State) ->
+    set_values(Vs, State#state{priority = P});
+set_values([_ | Vs], State) ->
+    set_values(Vs, State);
+set_values([], State) ->
     State.

@@ -22,6 +22,9 @@
 -define(DEFAULT_LSP_AGEOUT, 60).
 -define(DEFAULT_SPF_DELAY, 0.01).   %% 100ms
 -define(DEFAULT_AGEOUT_CHECK, 85).
+-define(DEFAULT_METRIC, 100).
+-define(DEFAULT_AUTOCONF_METRIC, 1000000).
+-define(DEFAULT_PRIORITY, 64).
 
 -define(LSP_ENTRY_DETAIL_PER_TLV, 15).   %% 15 LSP_ENTY_DETAIL records per LSP_ENTRY TLV
 -define(LSP_ENTRY_PER_PDU, 6).           %% 6 LSP_ENTRY objects per PDU
@@ -34,7 +37,7 @@
 %%%===================================================================
 -record(lsp_frag, {level :: atom(),        %% Level
 		   pseudonode :: 0..255,   %% Pseudo-node
-		   fragment :: 0..255,     %% Fragment
+		   fragment = 0 :: 0..255, %% Fragment
 		   sequence = 1 :: integer(),  %% Sequence number
 		   updated  = false :: atom(),      %% Do we need to refresh this LSP?
 		   size = ?ISIS_MIN_MSG_SIZE :: integer(),      %% Packet size so far
@@ -83,6 +86,11 @@
 -record (isis_tlv_lsp_entry, {
 	   lsps :: [isis_tlv_lsp_entry_detail()]}).
 -type isis_tlv_lsp_entry() :: #isis_tlv_lsp_entry{}.
+
+-record (isis_tlv_authentication, {
+	   type :: atom(),
+	   signature :: binary()}).
+-type isis_tlv_authentication() :: #isis_tlv_authentication{}.
 
 -record (isis_tlv_dynamic_hostname, {
 	   hostname :: nonempty_string()}).
@@ -173,6 +181,7 @@
 	isis_tlv_is_neighbors() |
 	isis_tlv_padding() |
 	isis_tlv_lsp_entry() |
+	isis_tlv_authentication() |
 	isis_tlv_dynamic_hostname() |
 	isis_tlv_ip_interface_address() |
 	isis_tlv_ipv6_interface_address() |

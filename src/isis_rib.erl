@@ -16,6 +16,7 @@
 
 -include("zclient.hrl").
 -include("isis_system.hrl").
+-include_lib("stdlib/include/ms_transform.hrl").
 
 %% API
 -export([start_link/0]).
@@ -157,6 +158,7 @@ process_spf(SPF, State) ->
 		case ets:lookup(State#state.rib, R) of
 		    [] ->
 			%% No prior route, so install into the RIB
+			ets:insert(State#state.rib, R),
 			zclient:add(R);
 		    [C] ->
 			case C =:= R of
@@ -165,6 +167,7 @@ process_spf(SPF, State) ->
 				Added;
 			    _ ->
 				%% Prior route is different
+				ets:insert(State#state.rib, R),
 				zclient:add(R)
 			end
 		end,
@@ -177,6 +180,7 @@ process_spf(SPF, State) ->
 			    AddSet, Routes)
 	end,
     Installed = lists:foldl(UpdateRib, sets:new(), SPF),
-    Present = extract_prefixes(State),
+    Present = sets:from_list(extract_prefixes(State)),
     Delete = sets:subtract(Present, Installed),
-    lists:map(fun(P) -> zclient:delete(P) end, sets:to_list(Delete)).
+    lists:map(fun(P) -> zclient:delete(P) end, sets:to_list(Delete)),
+    State.

@@ -273,6 +273,9 @@ decode_tlv(padding, _Type, Value) ->
 decode_tlv(lsp_entry, _Type, Value) ->
     LSPs = decode_tlv_lsp_entry(Value, []),
     #isis_tlv_lsp_entry{lsps = LSPs};
+decode_tlv(authentication, _Type, <<AuthType:8, Rest/binary>>) ->
+    AT = isis_enum:to_atom(authentication_type, AuthType),
+    #isis_tlv_authentication{type = AT, signature = Rest};
 decode_tlv(dynamic_hostname, _Type, Value) ->
     #isis_tlv_dynamic_hostname{hostname = binary:bin_to_list(Value)};
 decode_tlv(ip_internal_reachability, _Type, Value) ->
@@ -481,6 +484,9 @@ encode_tlv(#isis_tlv_padding{size = Size}) ->
 encode_tlv(#isis_tlv_lsp_entry{lsps = LSPS}) ->
     LSPb = lists:map(fun encode_tlv_lsp_entry/1, LSPS),
     encode_tlv_list(lsp_entry, tlv, LSPb);
+encode_tlv(#isis_tlv_authentication{type = AT, signature = Sig}) ->
+    AuthType = isis_enum:to_int(authentication_type, AT),
+    encode_tlv(authentication, tlv, <<AuthType:8, Sig/binary>>);
 encode_tlv(#isis_tlv_ip_internal_reachability{ip_reachability = IP_Reachability}) ->
     IP_Rb = lists:map(fun encode_tlv_ip_internal_reachability/1, IP_Reachability),
     encode_tlv_list(ip_internal_reachability, tlv, IP_Rb);
@@ -548,6 +554,14 @@ encode_tlv_list(Type, Enum, Values) ->
 encode_tlvs(TLVs, Encoder) ->
     lists:map(Encoder, TLVs).
 
+%%%===================================================================
+%%% TLV sizing
+%%% ===================================================================
+
+
+%%%===================================================================
+%%% TLV updating
+%%% ===================================================================
 update_tlv(#isis_tlv_extended_reachability{} = TLV, 
 	   Node, Level, Frags) ->
     merge_array_tlv(TLV, Node, Level, Frags);
@@ -714,7 +728,8 @@ merge_whole_tlv(Matcher, TLV, #lsp_frag{tlvs = TLVs, size = Size,
 	     case (Size + TLVSize) < 1492 of
 		 true -> {Frag#lsp_frag{tlvs = NewTLVs ++ [TLV],
 					size = Size + TLVSize,
-					sequence = Seqno + 1},
+					sequence = Seqno + 1,
+					updated = true},
 			  {true, true}};
 		 false -> {Frag, {true, false}}
 	     end
@@ -952,7 +967,8 @@ create_new_frag(TLV, Node, Level, Frags) ->
 		     pseudonode = Node,
 		     fragment = FragNo,
 		     tlvs = [TLV],
-		     size = ?ISIS_MIN_MSG_SIZE + TLVSize},
+		     size = ?ISIS_MIN_MSG_SIZE + TLVSize,
+		     updated = true},
     Frags ++ [Frag].
 
 %%%===================================================================

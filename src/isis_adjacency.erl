@@ -26,7 +26,8 @@
 -record(state, {
 	  level,         %% Our 'level'
 	  neighbor,      %% Neighbor's SNPA (ie. whom we're adjacent with)
-	  lan_id,        %% Neighbor LAN ID
+	  neighbor_id,   %% Neighbor ID
+	  lan_id,        %% Who the negihbor believes is DIS
 	  ip_addresses = [],  %% IP address of the neighbor
           ipv6_addresses = [], %% IPv6 address of the neighbor
 	  interface,     %% PID handling the interface
@@ -103,7 +104,8 @@ init({iih, IIH}, State) ->
 	    true -> up;
 	    _ -> init
 	end,
-    NewState = start_timer(State#state{lan_id = IIH#isis_iih.dis}),
+    NewState = start_timer(State#state{lan_id = IIH#isis_iih.dis,
+				       neighbor_id = IIH#isis_iih.source_id}),
     {next_state, NextState, NewState};
 init({timeout}, State) ->
     {next_state, init, State};
@@ -269,25 +271,27 @@ seen_ourselves_tlv(_, _) ->
     [].
 
 -spec update_adjacency(add | del, tuple()) -> atom().
-update_adjacency(add, State) ->
-    LSPID = <<(isis_system:system_id()):6/binary, 0:16>>,
-    case isis_lspdb:lookup_lsps([LSPID], isis_lspdb:get_db(State#state.level)) of
-	[LSP] ->
-	    ER = #isis_tlv_extended_reachability_detail{
-		    neighbor = State#state.lan_id,
-		    metric = 10
-		   },
-	    isis_lspdb:update_reachability({add, ER}, State#state.level, LSP);
-	_ -> ugh
-    end;
-update_adjacency(del, State) ->
-    LSPID = <<(isis_system:system_id()):6/binary, 0:16>>,
-    case isis_lspdb:lookup_lsps([LSPID], isis_lspdb:get_db(State#state.level)) of
-	[LSP] ->
-	    ER = #isis_tlv_extended_reachability_detail{neighbor = State#state.neighbor},
-	    isis_lspdb:update_reachability({del, ER}, State#state.level, LSP);
-	_ -> ugh
-    end.
+%% update_adjacency(add, State) ->
+%%     LSPID = <<(isis_system:system_id()):6/binary, 0:16>>,
+%%     case isis_lspdb:lookup_lsps([LSPID], isis_lspdb:get_db(State#state.level)) of
+%% 	[LSP] ->
+%% 	    ER = #isis_tlv_extended_reachability_detail{
+%% 		    neighbor = State#state.lan_id,
+%% 		    metric = 10
+%% 		   },
+%% 	    isis_lspdb:update_reachability({add, ER}, State#state.level, LSP);
+%% 	_ -> ugh
+%%     end;
+%% update_adjacency(del, State) ->
+%%     LSPID = <<(isis_system:system_id()):6/binary, 0:16>>,
+%%     case isis_lspdb:lookup_lsps([LSPID], isis_lspdb:get_db(State#state.level)) of
+%% 	[LSP] ->
+%% 	    ER = #isis_tlv_extended_reachability_detail{neighbor = State#state.neighbor},
+%% 	    isis_lspdb:update_reachability({del, ER}, State#state.level, LSP);
+%% 	_ -> ugh
+%%     end.
+update_adjacency(_, _) ->
+    ok.
 
 %% Ultimatley, this should verify that we share a subnet with the neighbor, or
 %% we'll have no nexthops for routes!

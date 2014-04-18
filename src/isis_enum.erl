@@ -127,6 +127,10 @@
 	{external, 1}
        ]}).
 
+-enum({authentication_type,
+       [{text, 1},
+	{md5, 17}]}).
+
 -enum({boolean,
        [{false, 0},
 	{true, 1}

@@ -17,8 +17,8 @@
 %% API
 -export([start_link/1,
 	 %% Interface configuration (add/del/set/list)
-	 add_interface/1, del_interface/1, list_interfaces/0, set_interface/2,
-	 get_interface/1,
+	 add_interface/1, del_interface/1, list_interfaces/0,
+	 set_interface/2, set_interface/3, get_interface/1,
 	 %% Enable / disable level on an interface
 	 enable_level/2, disable_level/2,
 	 %% TLV setting code:
@@ -27,12 +27,15 @@
 	 areas/0, lsps/0, system_id/0,
 	 %% Misc APIs - check autoconf collision etc
 	 check_autoconf_collision/1, schedule_lsp_refresh/0, process_spf/1,
+	 bump_lsp/4,
 	 %% TLV Update routines
 	 update_tlv/3, delete_tlv/3,
 	 %% System Name handling
 	 add_name/2, delete_name/1, lookup_name/1,
 	 %% Handle System ID mapping
 	 add_sid_addresses/2, delete_sid_addresses/2,
+	 %% pseudonodes
+	 allocate_pseudonode/2, deallocate_pseudonode/2,
 	 %% Misc
 	 address_to_string/2]).
 
@@ -48,6 +51,7 @@
 		fingerprint = <<>> :: binary(),     %% For autoconfig collisions
 		areas = [],
 		frags = [] :: [#lsp_frag{}],
+		pseudonodes :: dict(),  %% PID -> Pseudonode mapping
 		interfaces :: dict(),   %% Our 'state' per interface
 		system_ids :: dict(),   %% SID -> Neighbor address
 		refresh_timer = undef,
@@ -91,6 +95,9 @@ del_interface(Name) ->
 set_interface(Name, Values) ->
     gen_server:call(?MODULE, {set_interface, Name, Values}).
 
+set_interface(Name, Level, Values) ->
+    gen_server:call(?MODULE, {set_interface, Name, Level, Values}).
+
 list_interfaces() ->
     gen_server:call(?MODULE, {list_interfaces}).
 
@@ -114,6 +121,9 @@ schedule_lsp_refresh() ->
     gen_server:cast(?MODULE, {schedule_lsp_refresh}).
 
 update_tlv(TLV, Node, Level) ->
+    %% io:format("Updating TLVs for node ~p ~p~n~p~n~p~n",
+    %% 	      [Node, Level, TLV,
+    %% 	      element(2, process_info(self(), backtrace))]),
     gen_server:cast(?MODULE, {update_tlv, TLV, Node, Level}).
 
 delete_tlv(TLV, Node, Level) ->
@@ -169,6 +179,15 @@ lookup_name(<<SID:6/binary>>) ->
 					[X || <<X:16>> <= SID]))
     end.
 
+allocate_pseudonode(Pid, Level) ->
+    gen_server:call(?MODULE, {allocate_pseudonode, Pid, Level}).
+
+deallocate_pseudonode(Node, Level) ->
+    gen_server:call(?MODULE, {deallocate_pseudonode, Node, Level}).
+
+bump_lsp(Level, Node, Frag, SeqNo) ->
+    gen_server:cast(?MODULE, {bump, Level, Node, Frag, SeqNo}).
+
 %%--------------------------------------------------------------------
 %% @private
 %% @doc
@@ -182,7 +201,8 @@ lookup_name(<<SID:6/binary>>) ->
 %%--------------------------------------------------------------------
 init(Args) ->
     process_flag(trap_exit, true),
-    State = #state{interfaces = dict:new(), system_ids = dict:new()},
+    State = #state{interfaces = dict:new(), system_ids = dict:new(),
+		   pseudonodes = dict:new()},
     StartState = create_initial_frags(extract_args(Args, State)),
     StartState2 = refresh_lsps(StartState),
     zclient:subscribe(self()),
@@ -268,6 +288,18 @@ handle_call({set_interface, Name, Values}, _From,
     end,
     {reply, ok, State};
 
+handle_call({set_interface, Name, Level, Values}, _From,
+	    #state{interfaces = Interfaces} = State) ->
+    case dict:find(Name, Interfaces) of
+	{ok, Interface} ->
+	    case is_pid(Interface#isis_interface.pid) of
+		true -> isis_interface:set_level(
+			  Interface#isis_interface.pid, Level, Values);
+		_ -> ok
+	    end
+    end,
+    {reply, ok, State};
+
 handle_call({list_interfaces}, _From,
 	    #state{interfaces = Interfaces} = State) ->
     Reply = Interfaces,
@@ -311,6 +343,14 @@ handle_call({lsps}, _From, #state{frags = Frags} = State) ->
 
 handle_call({hostname, Name}, _From, State) ->
     {reply, ok, set_tlv_hostname(Name, State)};
+
+handle_call({allocate_pseudonode, Pid, Level}, _From, State) ->
+    {PN, NewState} = allocate_pseudonode(Pid, Level, State),
+    {reply, PN, NewState};
+
+handle_call({deallocate_pseudonode, Node, Level}, _From, State) ->
+    {Reply, NewState} = deallocate_pseudonode(Node, Level, State),
+    {reply, Reply, NewState};
 
 handle_call(_Request, _From, State) ->
     Reply = ok,
@@ -391,6 +431,9 @@ handle_cast({delete_name, SID}, State) ->
     N = #isis_name{system_id = SID},
     ets:delete(State#state.names, N),
     {noreply, State};
+handle_cast({bump, Level, Node, Frag, SeqNo}, State) ->
+    NewState = do_bump_lsp(Level, Node, Frag, SeqNo, State),
+    {noreply, NewState};
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
@@ -501,6 +544,7 @@ refresh_lsps([#lsp_frag{updated = true} = Frag | T], State) ->
 refresh_lsps([_H | T], State) ->
     refresh_lsps(T, State);
 refresh_lsps([], State) ->
+    %% No more frags, reset the update flag on whole list...
     NewFrags = lists:map(fun(F) -> F#lsp_frag{updated = false} end,
 			 State#state.frags),
     State#state{frags = NewFrags}.
@@ -551,7 +595,7 @@ lsp_ageout_check(#state{frags = Frags} = State) ->
 %%% ===================================================================
 create_lsp_from_frag(_, #state{system_id = SID}) when SID =:= undefined ->
     no_system_id;
-create_lsp_from_frag(#lsp_frag{level = Level} = Frag,
+create_lsp_from_frag(#lsp_frag{level = Level, sequence = SN} = Frag,
 		     State)->
     PDUType = case Level of
 		  level_1 -> level1_lsp;
@@ -560,7 +604,10 @@ create_lsp_from_frag(#lsp_frag{level = Level} = Frag,
     LSP_Id = generate_lspid_from_frag(Frag, State),
     SeqNo = case isis_lspdb:lookup_lsps([LSP_Id],
 					isis_lspdb:get_db(Level)) of
-		[OldLSP] -> OldLSP#isis_lsp.sequence_number + 1;
+		[OldLSP] -> case OldLSP#isis_lsp.sequence_number < SN of
+				true -> SN;
+				_ -> OldLSP#isis_lsp.sequence_number + 1
+			    end;
 		_ -> 1
 	    end,
     LSP = #isis_lsp{lsp_id = LSP_Id, remaining_lifetime = 1200,
@@ -570,7 +617,8 @@ create_lsp_from_frag(#lsp_frag{level = Level} = Frag,
 		    pdu_type = PDUType,
 		    tlv = Frag#lsp_frag.tlvs},
     CSum = isis_protocol:checksum(LSP),
-    isis_lspdb:store_lsp(Level, LSP#isis_lsp{checksum = CSum}).
+    isis_lspdb:store_lsp(Level, LSP#isis_lsp{checksum = CSum}),
+    isis_lspdb:flood_lsp(Level, dict:to_list(State#state.interfaces), LSP).
 
 generate_lspid_from_frag(#lsp_frag{pseudonode = PN, fragment = FragNo},
 			 #state{system_id = SID}) ->
@@ -598,11 +646,83 @@ create_initial_frags(State) ->
     NewState = State#state{frags = F1},
     NewState.
 
+create_frag(PN, Level) ->
+    #lsp_frag{level = Level,
+	      pseudonode = PN}.
+
 set_tlv_hostname(Name, State) ->
     TLV = #isis_tlv_dynamic_hostname{hostname = Name},
     L1Frags = isis_protocol:update_tlv(TLV, 0, level_1, State#state.frags),
     L2Frags = isis_protocol:update_tlv(TLV, 0, level_2, L1Frags),
     State#state{frags = L2Frags}.
+
+allocate_pseudonode(Pid, Level, #state{frags = Frags} = State) ->
+    F = fun(#lsp_frag{pseudonode = PN, level = L})
+	      when Level =:= L ->
+		{true, PN};
+	   (_) -> false
+	end,
+    S1 = sets:from_list(lists:filtermap(F, Frags)),
+    S2 = sets:from_list(lists:seq(1, 255)),
+    L = sets:to_list(sets:subtract(S2, S1)),
+    NewPN = lists:nth(1, lists:sort(L)),
+    NewDict = dict:store(Pid, {Level, NewPN}, State#state.pseudonodes),
+    NewFrag = create_frag(NewPN, Level),
+    {NewPN, State#state{pseudonodes = NewDict,
+			frags = [NewFrag] ++ State#state.frags}}.
+
+deallocate_pseudonode(Node, Level, State) ->
+    %% Purge any remaining pseudonode fragments...
+    F = fun(#lsp_frag{pseudonode = PN, level = L} = Frag)
+	    when L =:= Level, PN =:= Node ->
+		LSP_Id = generate_lspid_from_frag(Frag, State),
+		purge_lsp(Level, LSP_Id, State),
+		false;
+	   (_) -> true
+	end,
+    NewFrags = lists:filter(F, State#state.frags),
+    %% Now remove this reference from the pseudonode dict
+    G = fun(_, {L, PN}) when L =:= Level, PN =:= Node -> false;
+	   (_, _) -> false
+	end,
+    NewDict = dict:filter(G, State#state.pseudonodes),
+    {ok, State#state{frags = NewFrags, pseudonodes = NewDict}}.
+
+%%--------------------------------------------------------------------
+%% @doc
+%%
+%% Purge an LSP
+%%
+%% @end
+%%--------------------------------------------------------------------
+purge_lsp(Ref, LSP, State) ->
+    case gen_server:call(Ref, {purge, LSP}) of
+	{ok, PurgedLSP} ->
+	    I = dict:to_list(State#state.interfaces),
+	    isis_lspdb:flood_lsp(Ref, I, PurgedLSP),
+	    ok;
+	Result -> Result
+    end.
+
+%%--------------------------------------------------------------------
+%% @doc
+%%
+%% Bump the sequence number on a Frag and flood
+%%
+%% @end
+%%--------------------------------------------------------------------
+do_bump_lsp(Level, Node, Frag, SeqNo, State) ->
+    DoBump = fun(#lsp_frag{level = L, pseudonode = N,
+			   fragment = F} = LspFrag)
+		   when L =:= Level, N =:= Node, F =:= Frag ->
+		     io:format("Setting to ~p~n", [SeqNo+1]),
+		     LspFrag#lsp_frag{sequence = (SeqNo + 1),
+				      updated = true};
+		(F) -> F
+	     end,
+    NewFrags = lists:map(DoBump, State#state.frags),
+    schedule_lsp_refresh(),
+    State#state{frags = NewFrags}.
 
 %%%===================================================================
 %%% ZAPI callbacks - handle messages from Zebra/Quagga
@@ -649,7 +769,13 @@ autoconf_interface(#isis_interface{mac = Mac, name = Name} = I,
 	end,
     %% Enable interface and level1...
     State2 = do_enable_interface(I, State1),
-    do_enable_level(dict:fetch(Name, State2#state.interfaces), level_1),
+    Interface = dict:fetch(Name, State2#state.interfaces),
+    do_enable_level(Interface, level_1),
+    isis_interface:set_level(Interface#isis_interface.pid, level_1,
+			     [{encryption, text, <<"isis-autoconf">>},
+			      {metric, ?DEFAULT_AUTOCONF_METRIC},
+			      %%{priority, ?DEFAULT_PRIORITY}]),
+			      {priority, 4}]),
     State2;
 autoconf_interface(_I, State) ->
     State.
