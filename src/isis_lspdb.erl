@@ -1,6 +1,6 @@
 %%%-------------------------------------------------------------------
 %%% @author Rick Payne <rickp@rossfell.co.uk>
-%%% @copyright (C) 2014, Rick Payne
+%%% @copyright (C) 2014, Alistair Woodman, California USA <awoodman@netdef.org>
 %%% @doc
 %%% LSPDB - maintains the linkstate database for LSP fragments for
 %%% a given isis_system.

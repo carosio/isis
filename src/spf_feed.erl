@@ -1,6 +1,6 @@
 %%%-------------------------------------------------------------------
 %%% @author Rick Payne <rickp@rossfell.co.uk>
-%%% @copyright (C) 2014, Rick Payne
+%%% @copyright (C) 2014, Alistair Woodman, California USA <awoodman@netdef.org>
 %%% @doc
 %%%
 %%% spf_feed provides a feed of the output of the SPF run so we can

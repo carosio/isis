@@ -1,6 +1,6 @@
 %%%-------------------------------------------------------------------
 %%% @author Rick Payne <rickp@rossfell.co.uk>
-%%% @copyright (C) 2014, Rick Payne
+%%% @copyright (C) 2014, Alistair Woodman, California USA <awoodman@netdef.org>
 %%% @doc
 %%%
 %%% A supervisor to marshall the separate processes for an interface

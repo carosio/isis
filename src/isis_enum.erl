@@ -1,6 +1,6 @@
 %%%-------------------------------------------------------------------
 %%% @author Rick Payne <rickp@rossfell.co.uk>
-%%% @copyright (C) 2014, Rick Payne
+%%% @copyright (C) 2014, Alistair Woodman, California USA <awoodman@netdef.org>
 %%% @doc
 %%% Define the TLVs used for our IS-IS implementation.
 %%% Note, these are parse-transformed to provide a set of functions isis_tlv:to_atom
