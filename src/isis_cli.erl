@@ -37,8 +37,8 @@ show_isis() ->
     ok.
 
 show_database() ->
-    do_show_database(level1),
-    do_show_database(level2).
+    do_show_database(level_1),
+    do_show_database(level_2).
 show_database(Level) ->
     do_show_database(Level).
 
@@ -90,4 +90,17 @@ show_interfaces() ->
 %%% Internal functions
 %%%===================================================================
 do_show_database(Level) ->
+    DB = isis_lspdb:get_db(Level),
+    LSPs = ets:tab2list(DB),
+    io:format("~s LSP Database~n", [erlang:atom_to_list(Level)]),
+    lists:map(fun pp_lsp/1, LSPs),
+    io:format("~n", []),
     ok.
+
+pp_lsp(LSP) ->
+    <<ID:6/binary, PN:8, Frag:8>> = LSP#isis_lsp.lsp_id,
+    Now = isis_protocol:current_timestamp(),
+    RL = LSP#isis_lsp.remaining_lifetime - (Now - LSP#isis_lsp.last_update),
+    io:format("   ~16s.~2.16.0B-~2.16.0B  0x~8.16.0B ~6.10B~n",
+	      [isis_system:lookup_name(ID), PN, Frag,
+	       LSP#isis_lsp.sequence_number, RL]).

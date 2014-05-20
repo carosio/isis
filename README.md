@@ -56,3 +56,13 @@ Interface "lo"
     ::1/128
 ok
 
+To examine the LSP database:
+
+(isis@127.0.0.1)2> isis_cli:show_database().
+level_1 LSP Database
+ autoconf-C2996E2.00-00  0x00000004    123
+         ti-4.2.1.00-00  0x00000290   1182
+         ti-4.2.1.01-00  0x0000001F    692
+level_2 LSP Database
+ autoconf-C2996E2.00-00  0x00000003   1148
+
