@@ -1,21 +1,58 @@
 IS-IS implementation
 ====================
 
-Main components:
+Pre-requisites:
+  Erlang R16 (preferable B03-1 or later)
+    (http://www.erlang.org)
+  Rebar
+    (https://github.com/basho/rebar)
 
-isis_system - the root process of an IS-IS system. This holds various
-bits of configuration state (such as the system id), along with the
-details of any pseudo-nodes allocated. It also holds the set of
-interfaces, where each interface is a process that deals with the I/O
-on that interface.
+To build:
+  Compile rebar as described and put the binary somewhere in your path
 
-isis_interface - A gen_server process that holds all the state for an
-interface, including mundane things like the name, MAC/SNPA, MTU and
-timers as well as adjacencies formed.
+  Download the erlang-isis code
+  make deps
+  make compile
+  rebar generate
 
-isis_adjacency - A gen_fsm to run the 3-way handshake for an adjacency
-over is owning interface.
+You should end up with an application directory in rel/isis from which
+you can start the application:
 
-isis_lspdb - The LSP database. Run as a gen_server, Learnt LSPs are
-installed into the ETS table owned by this process. Lookups are done
-direct (ie, without using gen_server:call()).
+You will want to put 'deps/procket/priv/procket' into
+/usr/local/bin. Ensure that you can start this using 'sudo'. Then you
+can start the application:
+
+  cd rel/isis
+  bin/isis start
+
+Once running, you can attach to it:
+
+  bin/isis attach
+
+Use Control-D to detach.
+
+To examine interfaces, for example:
+
+(isis@127.0.0.1)1> isis_cli:show_interfaces().
+Interface "eth0"
+  Mac: 00:0C:29:96:E2:79 MTU: 1500/1500 Metric: 10
+  Enabled: true
+  Addresses:
+    172.16.3.224/24
+    FE80::20C:29FF:FE96:E279/64
+Interface "eth1"
+  Mac: 00:0C:29:96:E2:83 MTU: 1500/1500 Metric: 10
+  Enabled: true
+  Addresses:
+    192.168.247.152/24
+    2001:8B0:A:A:B46B:A129:73FC:66D2/64
+    2001:8B0:A:A:20C:29FF:FE96:E283/64
+    FE80::20C:29FF:FE96:E283/64
+Interface "lo"
+  Mac: unspecified MTU: 65536/65536 Metric: 10
+  Enabled: false
+  Addresses:
+    127.0.0.1/8
+    ::1/128
+ok
+

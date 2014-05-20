@@ -123,6 +123,12 @@ handle_call({get_state, hello_interval}, _From, State) ->
     {reply, State#state.hello_interval, State};
 handle_call({get_state, hold_time}, _From, State) ->
     {reply, State#state.hold_time, State};
+handle_call({get_state, metric}, _From, State) ->
+    {reply, State#state.metric, State};
+handle_call({get_state, authentication}, _From, State) ->
+    {reply, State#state.authentication_type, State};
+handle_call({get_state, up_adjacencies}, _From, State) ->
+    {reply, State#state.up_adjacencies, State};
 
 handle_call({set, Values}, _From, State) ->
     NewState = set_values(Values, State),
@@ -311,10 +317,10 @@ handle_dis_election(From,
     end,
     State#state{dis = DIS, dis_priority = DIS_Priority, are_we_dis = false};
 handle_dis_election(_From,
-		    #isis_iih{priority = TheirP, dis = DIS, source_id = SID},
-		    #state{priority = OurP, are_we_dis = Us} = State)
+		    #isis_iih{priority = _TheirP, dis = DIS, source_id = _SID},
+		    #state{priority = _OurP, are_we_dis = Us} = State)
   when Us =:= false ->
-    <<D:6/binary, D1:1/binary>> = DIS,
+    <<D:6/binary, _D1:1/binary>> = DIS,
     NewState = 
 	case dict:find(D, State#state.adj_handlers) of
 	    {ok, _} -> State;
@@ -322,8 +328,8 @@ handle_dis_election(_From,
 	end,
     NewState;
 handle_dis_election(_From,
-		    #isis_iih{priority = TheirP, dis = DIS, source_id = SID},
-		    #state{priority = OurP, are_we_dis = Us} = State) ->
+		    #isis_iih{priority = _TheirP, dis = _DIS, source_id = _SID},
+		    #state{priority = _OurP, are_we_dis = _Us} = State) ->
     State.
 
 assume_dis(State) ->
@@ -416,6 +422,7 @@ send_iih(SID, State) ->
 		#isis_tlv_ip_interface_address{addresses = V4Addresses},
 		%% Turn off ipv6 addresses when working with Titanium :(
 		%% #isis_tlv_ipv6_interface_address{addresses = V6Addresses},
+
 		%% Need to get these from the 'system' eventually...
 		#isis_tlv_protocols_supported{protocols = [ipv4, ipv6]}
 	       ],
@@ -774,7 +781,7 @@ handle_lsp(#isis_lsp{lsp_id = ID, sequence_number = TheirSeq} = LSP, State) ->
     State.
 
 handle_old_lsp(#isis_lsp{lsp_id = ID, tlv = TLVs,
-			 sequence_number = SeqNo} = LSP, State) ->
+			 sequence_number = SeqNo}, State) ->
     case isis_system:check_autoconf_collision(TLVs) of
 	false ->
 	    case isis_lspdb:lookup_lsps([ID], State#state.database) of
@@ -853,7 +860,7 @@ verify_authentication(#isis_psnp{}, _State) ->
 
 verify_authentication(_, _, #state{authentication_type = none}) ->
     valid;
-verify_authentication(TLVs, PDU, #state{authentication_type = text,
+verify_authentication(TLVs, _PDU, #state{authentication_type = text,
 					authentication_key = Key}) ->
    case isis_protocol:filter_tlvs(isis_tlv_authentication, TLVs) of
        [#isis_tlv_authentication{

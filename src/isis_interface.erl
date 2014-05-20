@@ -141,6 +141,12 @@ handle_call({get_state, _, mac}, _From, State) ->
     {reply, State#state.mac, State};
 handle_call({get_state, _, mtu}, _From, State) ->
     {reply, State#state.mtu, State};
+handle_call({get_state, level1, Item}, _From,
+	    #state{level1 = L1Pid} = State) when is_pid(L1Pid) ->
+    {reply, isis_interface_level:get_state(L1Pid, Item), State};
+handle_call({get_state, level2, Item}, _From,
+	    #state{level2 = L2Pid} = State) when is_pid(L2Pid) ->
+    {reply, isis_interface_level:get_state(L2Pid, Item), State};
 
 handle_call({get_state}, _From, State) ->
     {reply, State, State};
@@ -383,7 +389,9 @@ create_port(Name) ->
 			   [{progname, "sudo /usr/local/bin/procket"},
 			    {family, packet},
 			    {type, raw},
-			    {protocol, ?ETH_P_802_2}]),
+			    {protocol, ?ETH_P_802_2},
+			    {interface, Name},
+			    {isis}]),
     {Ifindex, Mac, MTU} = interface_details(S, Name),
     LL = create_sockaddr_ll(Ifindex),
     ok = procket:bind(S, LL),
@@ -446,9 +454,9 @@ interface_details(Socket, Name) ->
 	    <<_:18/binary, Mac:6/binary, _/binary>> = Mac_Response,
 	    <<_:16/binary, MTU:16/native, _/binary>> = MTU_Response,
 	    %% Req2 = <<N/binary, 0:(8*(16 - byte_size(N))), I:16/native,
-	    %%  	     16#01, 16#80, 16#c2, 0, 0, 16#14, 0:128>>,
+	    %%   	     16#01, 16#80, 16#c2, 0, 0, 16#14, 0:128>>,
 	    %% Req3 = <<N/binary, 0:(8*(16 - byte_size(N))), I:16/native,
-	    %%  	     16#01, 16#80, 16#c2, 0, 0, 16#15, 0:128>>,
+	    %% 	     16#01, 16#80, 16#c2, 0, 0, 16#15, 0:128>>,
 	    %% {ok, _} = procket:ioctl(Socket, ?SIOCADDMULTI, Req2),
 	    %% {ok, _} = procket:ioctl(Socket, ?SIOCADDMULTI, Req3),
 	    {I, Mac, MTU}

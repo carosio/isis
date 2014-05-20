@@ -93,7 +93,6 @@ init([{type, T}]) ->
 		   routes = dict:new(),
 		   router_id = [],
 		   listeners = dict:new()},
-    io:format("State: ~p~n", [State]),
     %% Request services
     send_hello(State),
     request_router_id(State),
