@@ -324,7 +324,7 @@ handle_info({timeout, _Ref, {run_spf, _Type}}, State) ->
     %% Ignoring type for now...
     erlang:cancel_timer(State#state.spf_timer),
     %% Dijkestra...
-    {Time, SPF} = timer:tc(fun() -> do_spf(State) end),
+    {Time, SPF} = timer:tc(fun() -> do_spf(isis_system:system_id(), State) end),
     isis_system:process_spf({State#state.level, Time, SPF}),
     {noreply, State#state{spf_timer = undef}};
 handle_info(_Info, State) ->
@@ -573,8 +573,10 @@ update_eir(del,
     Flood = length(New) =/= length(R),
     {Flood, New}.
 
-do_spf(State) ->	    
-    SysID = <<(isis_system:system_id())/binary, 0:8>>,
+do_spf(undefined, _State) ->
+    [];
+do_spf(SID, State) ->
+    SysID = <<SID:6/binary, 0:8>>,
     Build_Graph =
 	fun({From, To}, Metric, G) ->
 		graph:add_vertex(G, From),

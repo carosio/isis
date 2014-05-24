@@ -23,6 +23,10 @@
 	 enable_level/2, disable_level/2,
 	 %% TLV setting code:
 	 set_hostname/1,
+	 %% Add/Remove areas
+	 add_area/1, del_area/1,
+	 %% System ID
+	 set_system_id/1,
 	 %% Query
 	 areas/0, lsps/0, system_id/0, autoconf_status/0,
 	 %% Misc APIs - check autoconf collision etc
@@ -113,6 +117,9 @@ disable_level(Interface, Level) ->
 system_id() ->
     gen_server:call(?MODULE, {system_id}).
 
+set_system_id(Id) ->
+    gen_server:call(?MODULE, {set_system_id, Id}).
+
 autoconf_status() ->
     gen_server:call(?MODULE, {autoconf_status}).
 
@@ -135,6 +142,12 @@ delete_tlv(TLV, Node, Level) ->
 %% Return the areas we're in
 areas() ->
     gen_server:call(?MODULE, {areas}).
+
+add_area(Area) ->
+    gen_server:call(?MODULE, {add_area, Area}).
+
+del_area(Area) ->
+    gen_server:call(?MODULE, {del_area, Area}).
 
 %% Return the list of LSPs that we originate
 lsps() ->
@@ -320,6 +333,25 @@ handle_call({get_interface, Name}, _From,
 handle_call({system_id}, _From,
 	    #state{system_id = ID} = State) ->
     {reply, ID, State};
+handle_call({set_system_id, undefined}, _From, State) ->
+    NewState = purge_all_lsps(State),
+    {reply, ok, NewState#state{system_id = undefined,
+			       system_id_set = false}};
+handle_call({set_system_id, Id}, _From, State)
+  when is_binary(Id), byte_size(Id) =:= 6 ->
+    NewState = 
+	case State#state.system_id =:= Id of
+	    true -> State;
+	    false ->
+		case State#state.system_id_set of
+		    true -> purge_all_lsps(State);
+		    false -> State
+		end
+	end,
+    {reply, ok, NewState#state{system_id = Id,
+			       system_id_set = true}};
+handle_call({set_system_id, _}, _From, State) ->
+    {reply, invalid_sid, State};
 
 handle_call({autoconf_status}, _From,
 	    #state{autoconf = A, system_id_set = B} = State) ->
@@ -344,6 +376,13 @@ handle_call({autoconf_collision, TLVs}, _From,
 
 handle_call({areas}, _From, #state{areas = Areas} = State) ->
     {reply, Areas, State};
+
+handle_call({add_area, A}, _From, #state{areas = Areas} = State) ->
+    NewAreas = lists:sort(lists:delete(A, Areas) ++ [A]),
+    {reply, ok, State#state{areas = NewAreas}};
+
+handle_call({del_area, A}, _From, #state{areas = Areas} = State) ->
+    {reply, ok, State#state{areas = lists:delete(A, Areas)}};
 
 handle_call({lsps}, _From, #state{frags = Frags} = State) ->
     {reply, Frags, State};
@@ -571,6 +610,8 @@ force_refresh_lsp(State) ->
 %%% lsp_ageout_check - for each fragment, lookup the resulting LSP in
 %%% the database and check the ageout - refresh if required.
 %%% ===================================================================
+lsp_ageout_check(#state{system_id_set = false}) ->
+    no_system_id;
 lsp_ageout_check(#state{frags = Frags} = State) ->
     LSP_Gen = fun(#lsp_frag{level = level_1} = Frag, {L1, L2}) ->
 		      {Frag, {L1 ++ [generate_lspid_from_frag(Frag, State)], L2}};
@@ -680,20 +721,49 @@ allocate_pseudonode(Pid, Level, #state{frags = Frags} = State) ->
 
 deallocate_pseudonode(Node, Level, State) ->
     %% Purge any remaining pseudonode fragments...
-    F = fun(#lsp_frag{pseudonode = PN, level = L} = Frag)
+    MatchFun =
+	fun(PN, L)
 	    when L =:= Level, PN =:= Node ->
-		LSP_Id = generate_lspid_from_frag(Frag, State),
-		purge_lsp(Level, LSP_Id, State),
-		false;
-	   (_) -> true
+		true;
+	   (_, _) -> false
 	end,
-    NewFrags = lists:filter(F, State#state.frags),
+    NewFrags = purge_lsps(MatchFun, State),
     %% Now remove this reference from the pseudonode dict
     G = fun(_, {L, PN}) when L =:= Level, PN =:= Node -> false;
 	   (_, _) -> false
 	end,
     NewDict = dict:filter(G, State#state.pseudonodes),
     {ok, State#state{frags = NewFrags, pseudonodes = NewDict}}.
+
+%%--------------------------------------------------------------------
+%% @doc
+%%
+%% Purge all self-generated LSPs for which the provided MatchFun
+%% matches.
+%%
+%% @end
+%%--------------------------------------------------------------------
+purge_lsps(MatchFun, State) ->
+    F = fun(#lsp_frag{pseudonode = PN, level = L} = Frag) ->
+		case MatchFun(PN, L) of
+		    true -> LSP_Id = generate_lspid_from_frag(Frag, State),
+			    purge_lsp(L, LSP_Id, State),
+			    false;
+		    _ -> true
+		end
+	end,
+    lists:filter(F, State#state.frags).
+
+%%--------------------------------------------------------------------
+%% @doc
+%%
+%% Purge all self-generated LSPs
+%%
+%% @end
+%%--------------------------------------------------------------------
+purge_all_lsps(State) ->
+    NewFrags = purge_lsps(fun(_, _) -> true end, State),
+    State#state{frags = NewFrags}.
 
 %%--------------------------------------------------------------------
 %% @doc

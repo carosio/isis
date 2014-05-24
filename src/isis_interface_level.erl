@@ -399,7 +399,7 @@ relinquish_dis(_) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
-send_iih(SID, _State) when byte_size(SID) =/= 6 ->
+send_iih(SID, _State) when SID =:= undefined; byte_size(SID) =/= 6 ->
     no_system_id;
 send_iih(SID, State) ->
     IS_Neighbors =
@@ -488,11 +488,15 @@ send_csnp(#state{database = DBRef, dis_continuation = DC} = State) ->
 	       _ -> {continue, DC}
 	   end,
     {Summary, Continue} = isis_lspdb:summary(Args, DBRef),
-    generate_csnp(Args, 90, Summary, State),
     NextDC = 
-	case Continue of
-	    '$end_of_table' -> undef;
-	    _ -> Continue
+	case generate_csnp(isis_system:system_id(),
+			   Args, 90, Summary, State) of
+	    ok ->
+		case Continue of
+		    '$end_of_table' -> undef;
+		    _ -> Continue
+		end;
+	    _ -> undef
 	end,
     State#state{dis_continuation = NextDC}.
 
@@ -507,9 +511,9 @@ send_csnp(#state{database = DBRef, dis_continuation = DC} = State) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
-
-generate_csnp({Status, _}, Chunk_Size, Summary, State) ->
-    Sys_ID = isis_system:system_id(),
+generate_csnp(undefined, _, _, _, _) ->
+    no_system_id;
+generate_csnp(Sys_ID, {Status, _}, Chunk_Size, Summary, State) ->
     Source = <<Sys_ID:6/binary, 0:8>>,
     PDU_Type =
 	case State#state.level of
