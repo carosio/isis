@@ -24,7 +24,7 @@
 	 %% TLV setting code:
 	 set_hostname/1,
 	 %% Query
-	 areas/0, lsps/0, system_id/0,
+	 areas/0, lsps/0, system_id/0, autoconf_status/0,
 	 %% Misc APIs - check autoconf collision etc
 	 check_autoconf_collision/1, schedule_lsp_refresh/0, process_spf/1,
 	 bump_lsp/4,
@@ -112,6 +112,9 @@ disable_level(Interface, Level) ->
 
 system_id() ->
     gen_server:call(?MODULE, {system_id}).
+
+autoconf_status() ->
+    gen_server:call(?MODULE, {autoconf_status}).
 
 %% We've received an LSP with our system-id - so check fingerprint
 check_autoconf_collision(TLVs) ->
@@ -317,6 +320,10 @@ handle_call({get_interface, Name}, _From,
 handle_call({system_id}, _From,
 	    #state{system_id = ID} = State) ->
     {reply, ID, State};
+
+handle_call({autoconf_status}, _From,
+	    #state{autoconf = A, system_id_set = B} = State) ->
+    {reply, {A, B}, State};
 
 handle_call({autoconf_collision, TLVs}, _From,
 	    #state{fingerprint = FP} = State) ->

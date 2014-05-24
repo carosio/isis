@@ -30,6 +30,9 @@
 %%%===================================================================
 show_isis() ->
     io:format("ISIS system-id ~s~n", [pp_binary(isis_system:system_id(), ".")]),
+    {Autoconf_Enabled, System_ID_Set} = isis_system:autoconf_status(),
+    io:format("Autoconfiguration: ~s (system id set: ~s)~n",
+	      [Autoconf_Enabled, System_ID_Set]),
     io:format("Areas: ~n", []),
     lists:map(
       fun(F) -> io:format("  ~s~n", [pp_binary(F, ".")]) end,
