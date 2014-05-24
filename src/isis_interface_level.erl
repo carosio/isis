@@ -35,6 +35,7 @@
 	  metric = ?DEFAULT_METRIC,
 	  authentication_type = none :: none | text | md5,
 	  authentication_key = <<>>,
+	  padding = true :: true | false,  %% To pad or not...
 	  iih_timer = undef :: reference() | undef, %% iih timer for this level
 	  ssn_timer = undef :: reference() | undef, %% SSN timer
 	  adj_handlers,     %% Dict for SNPA -> FSM pid
@@ -437,8 +438,36 @@ send_iih(SID, State) ->
 	     dis = DIS,
 	     tlv = TLVs
 	},
-    {ok, PDU, PDU_Size} = isis_protocol:encode(IIH),
-    send_pdu(PDU, PDU_Size, State).
+    {ok, _, PDU_Size} = isis_protocol:encode(IIH),
+    PadTLVs = generate_padding(isis_interface:get_state(State#state.interface_ref, undef, mtu) - PDU_Size -3,
+			       State),
+    ActualIIH = IIH#isis_iih{tlv = TLVs ++ PadTLVs},
+    {ok, SendPDU, SendPDU_Size} = isis_protocol:encode(ActualIIH),
+    io:format("PDU_Size: ~p, MTU Size: ~p~n",
+	      [SendPDU_Size,
+	       isis_interface:get_state(State#state.interface_ref, undef, mtu)]),
+    send_pdu(SendPDU, SendPDU_Size, State).
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% 
+%% Given a size, generate the appropriate number of padding TLVs to
+%% fill that space IF padding is enabled. If padding is disabled, then
+%% ignore (return an empty list).
+%%
+%% @end
+%%--------------------------------------------------------------------
+generate_padding(_Size, #state{padding = false}) ->
+    [];
+generate_padding(Size, State) ->
+    generate_padding(Size, State, []).
+
+generate_padding(Size, State, Acc) when Size > 257 ->
+    generate_padding(Size - 257, State,
+		     Acc ++ [#isis_tlv_padding{size = 255}]);
+generate_padding(Size, _State, Acc) ->
+    Acc ++ [#isis_tlv_padding{size = (Size - 2)}].
 
 %%--------------------------------------------------------------------
 %% @private
