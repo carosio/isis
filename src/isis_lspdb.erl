@@ -604,7 +604,6 @@ lookup_prefixes(Node, State) ->
 			     isis_protocol:filter_tlvs(
 			       [isis_tlv_ip_internal_reachability,
 				isis_tlv_extended_ip_reachability,
-				isis_tlv_ipv6_interface_address,
 				isis_tlv_ipv6_reachability],
 			       L#isis_lsp.tlv)
 				   ++ Ts
