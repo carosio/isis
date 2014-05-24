@@ -417,17 +417,24 @@ send_iih(SID, State) ->
 	    level_1 -> {level_1, level1_iih};
 	    level_2 -> {level_1_2, level2_iih}
 	end,
-    BaseTLVs = [
-		#isis_tlv_is_neighbors{neighbors = IS_Neighbors},
-		#isis_tlv_area_address{areas = Areas},
-		#isis_tlv_ip_interface_address{addresses = V4Addresses},
-		%% Turn off ipv6 addresses when working with Titanium :(
-		%% #isis_tlv_ipv6_interface_address{addresses = V6Addresses},
-
-		%% Need to get these from the 'system' eventually...
-		#isis_tlv_protocols_supported{protocols = [ipv4, ipv6]}
-	       ],
-
+    ISNeighborsTLV = case length(IS_Neighbors) of
+			 0 -> [];
+			 _ -> [#isis_tlv_is_neighbors{neighbors = IS_Neighbors}]
+		     end,
+    IPv4TLV = case length(V4Addresses) of
+		  0 -> [];
+		  _ -> [#isis_tlv_ip_interface_address{addresses = V4Addresses}]
+	      end,
+    AreasTLV = case length(Areas) of
+		   0 -> [];
+		   _ -> [#isis_tlv_area_address{areas = Areas}]
+	       end,
+    IPv6TLV = case length(V6Addresses) of
+		  0 -> [];
+		  _ -> [#isis_tlv_ipv6_interface_address{addresses = V6Addresses}]
+	      end,
+    BaseTLVs = ISNeighborsTLV 	++ AreasTLV ++ IPv4TLV ++ IPv6TLV ++
+	[#isis_tlv_protocols_supported{protocols = [ipv4, ipv6]}],
     TLVs = authentication_tlv(State) ++ BaseTLVs,
     IIH = #isis_iih{
 	     pdu_type = PDUType,
@@ -443,9 +450,6 @@ send_iih(SID, State) ->
 			       State),
     ActualIIH = IIH#isis_iih{tlv = TLVs ++ PadTLVs},
     {ok, SendPDU, SendPDU_Size} = isis_protocol:encode(ActualIIH),
-    io:format("PDU_Size: ~p, MTU Size: ~p~n",
-	      [SendPDU_Size,
-	       isis_interface:get_state(State#state.interface_ref, undef, mtu)]),
     send_pdu(SendPDU, SendPDU_Size, State).
 
 %%--------------------------------------------------------------------
