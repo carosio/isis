@@ -108,17 +108,33 @@ list_interfaces() ->
 get_interface(Name) ->
     gen_server:call(?MODULE, {get_interface, Name}).
 
-enable_level(Interface, Level) ->
-    gen_server:call(?MODULE, {enable_level, Interface, Level}).
+enable_level(Interface, level_1) ->
+    gen_server:call(?MODULE, {enable_level, Interface, level_1});
+enable_level(Interface, level_2) ->
+    gen_server:call(?MODULE, {enable_level, Interface, level_2});
+enable_level(_, _) ->
+    io:format("Invalid level, should be either level_1 or level_2~n", []),
+    bad_level.
 
-disable_level(Interface, Level) ->
-    gen_server:call(?MODULE, {disable_level, Interface, Level}).
+
+disable_level(Interface, level_1) ->
+    gen_server:call(?MODULE, {disable_level, Interface, level_1});
+disable_level(Interface, level_2) ->
+    gen_server:call(?MODULE, {disable_level, Interface, level_2});
+disable_level(_, _) ->
+    io:format("Invalid level, should be either level_1 or level_2~n", []),
+    bad_level.
+
 
 system_id() ->
     gen_server:call(?MODULE, {system_id}).
 
-set_system_id(Id) ->
-    gen_server:call(?MODULE, {set_system_id, Id}).
+set_system_id(Id) when is_binary(Id), byte_size(Id) =:= 6->
+    gen_server:call(?MODULE, {set_system_id, Id});
+set_system_id(_) ->
+    io:format("System ID should be a 6 byte binary~n", []),
+    bad_systemid.
+
 
 autoconf_status() ->
     gen_server:call(?MODULE, {autoconf_status}).
