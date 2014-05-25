@@ -29,7 +29,11 @@
 %%% API
 %%%===================================================================
 show_isis() ->
-    io:format("ISIS system-id ~s~n", [pp_binary(isis_system:system_id(), ".")]),
+    io:format("ISIS system-id ~s~n",
+	      [case isis_system:system_id() of
+		   undefined -> "undefined";
+		   S -> pp_binary(S, ".")
+	       end]),
     {Autoconf_Enabled, System_ID_Set} = isis_system:autoconf_status(),
     io:format("Autoconfiguration: ~s (system id set: ~s)~n",
 	      [Autoconf_Enabled, System_ID_Set]),
