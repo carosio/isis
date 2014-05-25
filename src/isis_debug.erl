@@ -105,7 +105,7 @@ invalid_lsp() ->
 %% We give them a hostname as well. Then we inject into the Database..
 inject_some_lsps(Level, Count, Seq)
   when Count < 50 ->
-    isis_system:add_sid_addresses(<<1:16, 0, 0, 0, 0>>, [3232298895]),
+    isis_system:add_sid_addresses(<<1:16, 0, 0, 0, 0>>,  [{ipv4, 3232298895}]),
     Numbers = lists:seq(1, Count),
     PDU = case Level of
 	      level_1 -> level1_lsp;
@@ -180,7 +180,7 @@ purge_injected_lsps(Level, Count) ->
 				     neighbor = <<1:16, 0, 0, 0, 0, 0>>,
 				     metric = 10, sub_tlv=[]}]},
     isis_system:delete_tlv(ChainTLV, 0, Level),
-    isis_system:delete_sid_addresses(<<1:16, 0, 0, 0, 0>>, [3232298895]),
+    isis_system:delete_sid_addresses(<<1:16, 0, 0, 0, 0>>, [{ipv4, 3232298895}]),
     ok.
 
 %%%===================================================================

@@ -113,6 +113,11 @@
 	{interface_switching, 21}
 	]}).
 
+-enum({subtlv_ipv6r,
+       [{unknown, 0},
+	{srcdst, 1}      %% Not IANA defined yet!
+       ]}).
+
 %%%
 %%% Other defines that are used in IS-IS
 %%%

@@ -83,6 +83,9 @@ set(Pid, Values) ->
 set_level(Pid, Level, Values) ->
     gen_server:cast(Pid, {set, Level, Values}).
 
+get_level(Pid, Level, Value) ->
+    gen_server:call(Pid, {get, Level, Value}).
+
 enable_level(Pid, Level) ->
     gen_server:call(Pid, {enable, Level}).
 
@@ -141,12 +144,14 @@ handle_call({get_state, _, mac}, _From, State) ->
     {reply, State#state.mac, State};
 handle_call({get_state, _, mtu}, _From, State) ->
     {reply, State#state.mtu, State};
-handle_call({get_state, level1, Item}, _From,
+handle_call({get_state, level_1, Item}, _From,
 	    #state{level1 = L1Pid} = State) when is_pid(L1Pid) ->
     {reply, isis_interface_level:get_state(L1Pid, Item), State};
-handle_call({get_state, level2, Item}, _From,
+handle_call({get_state, level_2, Item}, _From,
 	    #state{level2 = L2Pid} = State) when is_pid(L2Pid) ->
     {reply, isis_interface_level:get_state(L2Pid, Item), State};
+handle_call({get_state, _, _}, _From, State) ->
+    {reply, level_not_configured, State};
 
 handle_call({get_state}, _From, State) ->
     {reply, State, State};
@@ -180,6 +185,13 @@ handle_call({get_addresses, Family}, _From, State) ->
     Addresses = lists:filtermap(Matcher,
 				Interface#isis_interface.addresses),
     {reply, Addresses, State};
+
+handle_call({get, level_1, Value}, _From, State) ->
+    R = isis_interface_level:get_state(State#state.level1, Value),
+    {reply, R, State};
+handle_call({get, level_2, Value}, _From, State) ->
+    R = isis_interface_level:get_state(State#state.level2, Value),
+    {reply, R, State};
 
 handle_call(_Request, _From, State) ->
     Reply = ok,

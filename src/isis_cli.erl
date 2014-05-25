@@ -61,11 +61,16 @@ pp_address(#isis_address{afi = ipv4, address = A}) ->
 pp_address(#isis_address{afi = ipv6, address = A}) ->
     inet:ntoa(erlang:list_to_tuple([X || <<X:16>> <= <<A:128>>])).
 
-show_interfaces_fun({Name, #isis_interface{mac = Mac,
+show_interface_level({Name, #isis_interface{pid = Pid}}, Level) ->
+    {AuthType, AuthKey} = isis_interface:get_state(Pid, Level, authentication),
+    io:format("   Encryption: ~s (key ~p)~n", [AuthType, AuthKey]).
+
+show_interfaces_fun({Name, #isis_interface{pid = Pid,
+					   mac = Mac,
 					   metric = Metric,
 					   enabled = Enabled,
 					   addresses = Addresses,
-					   mtu = MTU, mtu6 = MTU6}}) ->
+					   mtu = MTU, mtu6 = MTU6}} = I) ->
     io:format("Interface ~p~n", [Name]),
     %% Mash the Mac into something human readable
     MacStr =
@@ -79,7 +84,21 @@ show_interfaces_fun({Name, #isis_interface{mac = Mac,
     lists:map(fun(A) ->
 		      io:format("    ~s/~B~n",
 				[pp_address(A), A#isis_address.mask])
-	      end, Addresses).
+	      end, Addresses),
+    case Pid of
+	undefined -> io:format("  No process for this interface~n");
+	_ ->
+	    io:format("  Level 1 details~n", []),
+	    case isis_interface:get_state(Pid, level_1, authentication) of
+		level_not_configured -> io:format("   Level not configured~n");
+		_ -> show_interface_level(I, level_1)
+	    end,
+	    io:format("  Level 2 details~n", []),
+	    case isis_interface:get_state(Pid, level_2, authentication) of
+		level_not_configured -> io:format("   Level not configured~n");
+		_ -> show_interface_level(I, level_2)
+	    end
+    end.
 
 show_interfaces() ->
     I = dict:to_list(isis_system:list_interfaces()),

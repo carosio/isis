@@ -126,10 +126,11 @@ handle_call({get_state, hold_time}, _From, State) ->
     {reply, State#state.hold_time, State};
 handle_call({get_state, metric}, _From, State) ->
     {reply, State#state.metric, State};
-handle_call({get_state, authentication}, _From, State) ->
-    {reply, State#state.authentication_type, State};
 handle_call({get_state, up_adjacencies}, _From, State) ->
     {reply, State#state.up_adjacencies, State};
+handle_call({get_state, authentication}, _From, State) ->
+    {reply, {State#state.authentication_type,
+	     State#state.authentication_key}, State};
 
 handle_call({set, Values}, _From, State) ->
     NewState = set_values(Values, State),

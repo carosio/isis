@@ -146,13 +146,23 @@
 	   addresses :: [binary()]}).
 -type isis_tlv_ipv6_interface_address() :: #isis_tlv_ipv6_interface_address{}.
 
+-record (isis_subtlv_srcdst, {
+	   prefix_length :: integer(),
+	   prefix :: binary()
+	  }).
+-type isis_subtlv_srcdst() :: #isis_subtlv_srcdst{}.
+
+-type isis_subtlv_ipv6r() ::
+	isis_subtlv_srcdst() |
+	isis_subtlv_unknown().
+
 -record (isis_tlv_ipv6_reachability, {
 	   metric :: integer(),
 	   up :: boolean(),
 	   external :: boolean(),
 	   mask_len :: integer(),
 	   prefix :: binary(),
-	   sub_tlv :: binary()}).
+	   sub_tlv = [] :: [isis_subtlv_ipv6r()]}).
 -type isis_tlv_ipv6_reachability() :: #isis_tlv_ipv6_reachability{}.
 
 -record (isis_tlv_protocols_supported, {
@@ -220,15 +230,16 @@
 	   address :: integer()}).
 -type isis_subtlv_eis_ipv4_interface() :: #isis_subtlv_eis_ipv4_interface{}.
 
--record (isis_subtlv_eis_unknown, {
+-record (isis_subtlv_unknown, {
 	   type :: integer(),
 	   value :: binary()}).
--type isis_subtlv_eis_unknown() :: #isis_subtlv_eis_unknown{}.
+-type isis_subtlv_unknown() :: #isis_subtlv_unknown{}.
 
 -type isis_subtlv_eis() ::
 	isis_subtlv_eis_link_id() |
 	isis_subtlv_eis_ipv4_interface() |
-	isis_subtlv_eis_unknown().
+	isis_subtlv_srcdst() |
+	isis_subtlv_unknown().
 
 %%%-------------------------------------------------------------------
 %%% IS-IS raw packet format

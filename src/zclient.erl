@@ -445,7 +445,7 @@ update_router_id(#zclient_prefix{afi = Afi} = Address, State) ->
     State#state{router_id = NR ++ [Address]}.
 
 read_ipv4_route(_Type, _Flags, Info, MaskLen, R0) ->
-    <<_:4, MetricFlag:1, DistanceFlag:1, IfindexFlag:1,
+    <<_:3, SrcPfxFlag:1, MetricFlag:1, DistanceFlag:1, IfindexFlag:1,
       NexthopFlag:1>> = <<Info:8>>,
     ASize = erlang:trunc(MaskLen+7/8),
     <<A:ASize, R1/binary>> = R0,
@@ -479,7 +479,7 @@ read_ipv4_route(_Type, _Flags, Info, MaskLen, R0) ->
     R.
 
 read_ipv6_route(_Type, _Flags, Info, MaskLen, R0) ->
-    <<_:4, MetricFlag:1, DistanceFlag:1, IfindexFlag:1,
+    <<_:3, SrcPfxFlag:1, MetricFlag:1, DistanceFlag:1, IfindexFlag:1,
       NexthopFlag:1>> = <<Info:8>>,
     ASize = erlang:trunc(MaskLen+7/8),
     <<A:ASize, R1/binary>> = R0,
@@ -553,27 +553,40 @@ send_current_state(Pid, #state{router_id = RouterIDs,
 send_route(#zclient_route{prefix =
 			      #zclient_prefix{afi = AFI, address = Address,
 					      mask_length = Mask},
+			  source = Source,
 			  nexthop = NH, metric = Metric},
 	   State) ->
     Type = zclient_enum:to_int(zebra_route, isis),
     Unicast = zclient_enum:to_int(safi, unicast),
-    NexthopType = zclient_enum:to_int(nexthop, ipv4),
-    %% <<0:4, 1:1, 1:1, 0:1>>
+    {NexthopType, NHBin} = 
+	case AFI of
+	    ipv4 ->
+		{zclient_enum:to_int(nexthop, ipv4), <<NH:32>>};
+	    ipv6 ->
+		{zclient_enum:to_int(nexthop, ipv6), NH}
+	end,
+    {SrcPresent, SrcBin} =
+	case Source of
+	    #zclient_prefix{address = SDA, mask_length = M} ->
+		{1, <<M:8, SDA/binary>>};
+	    _ -> {0, <<>>}
+	end,
     ASize = erlang:trunc(Mask+7/8),
     A = 
 	case AFI of
 	    ipv4 -> Address bsr (32 - ASize);
 	    ipv6 -> 
 		case is_binary(Address) of
-		    true -> <<I:128>> = Address,
-			    I bsr (128 - ASize);
+		    true -> <<I:ASize>> = Address,
+			    I;
 		    _ -> Address bsr (128 - ASize)
 		end
 	end,
     RouteMessage = 
 	<<Type:8,
 	  0:8, %% 'Flags'
-	  0:4, %% unsed
+	  0:3, %% unused
+          SrcPresent:1,
 	  1:1, %% Metric present
 	  1:1, %% Distance present
 	  0:1, %% Ifindex present
@@ -581,9 +594,10 @@ send_route(#zclient_route{prefix =
 	  Unicast:16,
 	  Mask:8,
 	  A:ASize,
+	  SrcBin/binary,
 	  1:8, %% Nexthop count..
 	  NexthopType:8,
-	  NH:32,
+	  NHBin/binary,
 	  115:8, %% Distance..
 	  Metric:32>>,
     MessageType
@@ -600,14 +614,22 @@ delete_route(#zclient_prefix{afi = AFI, address = Address,
     Type = zclient_enum:to_int(zebra_route, isis),
     Unicast = zclient_enum:to_int(safi, unicast),
     ASize = erlang:trunc(Mask+7/8),
-    A = Address bsr (32 - ASize),
+    ABin = case AFI of
+	       ipv4 -> A = Address bsr (32 - ASize),
+		       <<A:ASize>>;
+	       ipv6 -> case is_binary(Address) of
+			   true -> Address;
+			   _ -> A = Address bsr (128 - ASize),
+				<<A:ASize>>
+		       end
+	   end,
     RouteMessage = 
 	<<Type:8,
 	  0:8, %% 'Flags'
 	  0:8, %% unsed
 	  Unicast:16,
 	  Mask:8,
-	  A:ASize>>,
+	  ABin/binary>>,
     MessageType
 	= case AFI of
 	      ipv4 -> ipv4_route_delete;

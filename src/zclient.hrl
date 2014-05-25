@@ -36,6 +36,7 @@
 
 -record (zclient_route, {
 	   prefix :: zclient_prefix(),
+	   source = undefined :: zclient_prefix() | undefined,
 	   nexthop :: integer(),
 	   metric :: integer()
 	  }).

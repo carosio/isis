@@ -114,6 +114,16 @@ filter_tlvs(AcceptedTLVs, TLVs) ->
 %%%===================================================================
 %%% TLV and subTLV decoders
 %%%===================================================================
+-spec decode_subtlv_ipv6r(atom(), integer(), binary()) -> isis_subtlv_ipv6r() | error.
+decode_subtlv_ipv6r(source_prefix, _Type, <<PLen:8, P/binary>>) ->
+    Bytes = erlang:trunc((PLen + 7) / 8),
+    case byte_size(P) =:= Bytes of
+	true -> #isis_subtlv_srcdst{prefix_length = PLen, prefix = P};
+	_ -> error
+    end;
+decode_subtlv_ipv6r(_, Type, <<Value>>) ->
+    #isis_subtlv_unknown{type = Type, value = Value}.
+
 -spec decode_subtlv_eir(atom(), integer(), binary()) -> isis_subtlv_eir() | error.
 decode_subtlv_eir(admin_tag_32bit, _Type, <<Value:32>>) ->
     #isis_subtlv_eir_admintag32{tag = Value};
@@ -127,7 +137,7 @@ decode_subtlv_eis(link_id, _Type, <<Local:32, Remote:32>>) ->
 decode_subtlv_eis(ipv4_interface, _Type, <<IP:32>>) ->
     #isis_subtlv_eis_ipv4_interface{address = IP};
 decode_subtlv_eis(_, Type, Value) ->
-    #isis_subtlv_eis_unknown{type = Type, value = Value}.
+    #isis_subtlv_unknown{type = Type, value = Value}.
 
 -spec decode_tlv_area_address(binary(), [binary()]) -> [binary()] | error.
 decode_tlv_area_address(<<>>, Areas) ->
@@ -297,12 +307,16 @@ decode_tlv(ipv6_reachability, _Type, <<Metric:32, Up:1, X:1, _S:1,
 				       _Res:5, PLen:8, Rest/binary>>) ->
     PLenBytes = erlang:trunc((PLen + 7) / 8),
     <<Prefix:PLenBytes/binary, SubTLV/binary>> = Rest,
-    #isis_tlv_ipv6_reachability{metric = Metric,
-				 up = isis_enum:to_atom(boolean, Up),
-				 external = isis_enum:to_atom(boolean, X),
-				 mask_len = PLen,
-				 prefix = Prefix,
-				 sub_tlv = SubTLV};
+    case decode_tlvs(SubTLV, subtlv_ipv6r, fun decode_subtlv_ipv6r/3, []) of
+	{ok, SubTLVs} ->
+	    #isis_tlv_ipv6_reachability{metric = Metric,
+					up = isis_enum:to_atom(boolean, Up),
+					external = isis_enum:to_atom(boolean, X),
+					mask_len = PLen,
+					prefix = Prefix,
+					sub_tlv = SubTLVs};
+	_ -> error
+    end;
 decode_tlv(protocols_supported, _Type, Value) ->
     Protocols = [isis_enum:to_atom(protocols, X) || <<X:8>> <= Value],
     #isis_tlv_protocols_supported{protocols = Protocols};
@@ -362,6 +376,12 @@ decode_tlvs(_, _,_,_) -> error.
 %%%===================================================================
 %%% TLV and subTLV encoders
 %%%===================================================================
+-spec encode_subtlv_ipv6r(isis_subtlv_ipv6r()) -> binary().
+encode_subtlv_ipv6r(#isis_subtlv_srcdst{prefix_length = PL, prefix = P}) ->
+    encode_tlv(srcdst, subtlv_ipv6r, <<PL:8, P/binary>>);
+encode_subtlv_ipv6r(#isis_subtlv_unknown{type = T, value = V}) ->
+    <<T:8, V/binary>>.
+
 -spec encode_subtlv_eir_detail(isis_subtlv_eir()) -> binary().
 encode_subtlv_eir_detail(#isis_subtlv_eir_admintag32{tag = Tag}) ->
     Type = isis_enum:to_int(subtlv_eir, admin_tag_32bit),
@@ -375,7 +395,7 @@ encode_subtlv_eis_detail(#isis_subtlv_eis_link_id{local = Local,
     encode_tlv(link_id, subtlv_eis, <<Local:32, Remote:32>>);
 encode_subtlv_eis_detail(#isis_subtlv_eis_ipv4_interface{address = Address}) ->
     encode_tlv(ipv4_interface, subtlv_eis, <<Address:32>>);
-encode_subtlv_eis_detail(#isis_subtlv_eis_unknown{type = Type, value = Value}) ->
+encode_subtlv_eis_detail(#isis_subtlv_unknown{type = Type, value = Value}) ->
     S = byte_size(Value),
     [<<Type:8, S:8, Value/binary>>].
 			
@@ -509,17 +529,18 @@ encode_tlv(#isis_tlv_ipv6_interface_address{addresses = Addresses}) ->
     encode_tlv_list(ipv6_interface_address, tlv, Bs);
 encode_tlv(#isis_tlv_ipv6_reachability{metric = Metric, up = Up, external = External,
 				       mask_len = Mask_Len, prefix = Prefix,
-				       sub_tlv = Sub_TLV}) ->
-    P = case byte_size(Sub_TLV) of
+				       sub_tlv = Sub_TLVs}) ->
+    P = case length(Sub_TLVs) of
 	    0 -> 0;
 	    _ -> 1
 	end,
     U = isis_enum:to_int(boolean, Up),
     E = isis_enum:to_int(boolean, External),
     PBytes = erlang:trunc((Mask_Len + 7) / 8),
-    encode_tlv(ipv6_reachability, tlv,
-	       <<Metric:32, U:1, E:1, P:1, 0:5,
-		 Mask_Len:8, Prefix:PBytes/binary, Sub_TLV/binary>>);
+    SubTLVBin = encode_tlvs(Sub_TLVs, fun encode_subtlv_ipv6r/1),
+    encode_tlv_list(ipv6_reachability, tlv,
+		    [<<Metric:32, U:1, E:1, P:1, 0:5,
+		       Mask_Len:8, Prefix:PBytes/binary>> | SubTLVBin]);
 encode_tlv(#isis_tlv_extended_reachability{reachability = EIS}) ->
     Bs = lists:map(fun encode_tlv_extended_reachability/1, EIS),
     encode_tlv_list(extended_reachability, tlv, Bs);

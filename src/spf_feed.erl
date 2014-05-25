@@ -106,7 +106,7 @@ generate_update(Time, Level, SPF) ->
 		      end, dict:to_list(SPFLinks)),
 
     SendRoute = 
-	fun(#isis_address{afi = AFI, address = Address, mask = Mask},
+	fun({#isis_address{afi = AFI, address = Address, mask = Mask}, _Source},
 	    NHs, Metric, Nodes) ->
 		NH = lists:nth(1, NHs),
 		AStr = isis_system:address_to_string(AFI, Address),

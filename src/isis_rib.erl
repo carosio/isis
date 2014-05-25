@@ -149,29 +149,39 @@ extract_prefixes(State) ->
 
 process_spf(SPF, State) ->
     SendRoute = 
-	fun(#isis_address{afi = AFI, address = Address, mask = Mask},
+	fun({#isis_address{afi = AFI, address = Address, mask = Mask}, Source},
 	    NHs, Metric, Added) ->
-		%% FIX to handle multiple nexthops..
-		NH = lists:nth(1, NHs),
-		P = #zclient_prefix{afi = AFI, address = Address, mask_length = Mask},
-		R = #zclient_route{prefix = P, nexthop = NH, metric = Metric},
-		case ets:lookup(State#state.rib, R) of
-		    [] ->
-			%% No prior route, so install into the RIB
-			ets:insert(State#state.rib, R),
-			zclient:add(R);
-		    [C] ->
-			case C =:= R of
-			    true ->
-				%% Prior route matches this one, no-op...
-				Added;
-			    _ ->
-				%% Prior route is different
+		SourceP = case Source of
+			      #isis_address{afi = SAFI, address = SAddress,
+					    mask = SMask} ->
+				  #zclient_prefix{afi = SAFI, address = SAddress,
+						  mask_length = SMask};
+			      _ -> undefined
+			  end,
+		%% FIX zclient to handle multiple nexthops..
+		case lists:keyfind(AFI, 1, NHs) of
+		    {_, NH} ->
+			P = #zclient_prefix{afi = AFI, address = Address, mask_length = Mask},
+			R = #zclient_route{prefix = P, nexthop = NH, metric = Metric, source = SourceP},
+			case ets:lookup(State#state.rib, R) of
+			    [] ->
+				%% No prior route, so install into the RIB
 				ets:insert(State#state.rib, R),
-				zclient:add(R)
-			end
-		end,
-		sets:add_element(P, Added)
+				zclient:add(R);
+			    [C] ->
+				case C =:= R of
+				    true ->
+					%% Prior route matches this one, no-op...
+					Added;
+				    _ ->
+					%% Prior route is different
+					ets:insert(State#state.rib, R),
+					zclient:add(R)
+				end
+			end,
+			sets:add_element(P, Added);
+		    _ -> Added
+		end
 	end,
     UpdateRib =
 	fun({_RouteNode, _NexthopNode, NextHops, Metric,

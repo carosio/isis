@@ -709,13 +709,29 @@ extract_ip_addresses(#isis_tlv_ip_internal_reachability{ip_reachability = R}, Ts
 									 metric = Metric
 									}}) ->
 		      %% MAP Subnet mask to a len here!
-		      #isis_address{afi = ipv4, address = A, mask = M, metric = Metric}
+		      {#isis_address{afi = ipv4, address = A, mask = M, metric = Metric}, undefined}
 	      end, R)
 	++ Ts;
 extract_ip_addresses(#isis_tlv_extended_ip_reachability{reachability = R}, Ts) ->
     lists:map(fun(#isis_tlv_extended_ip_reachability_detail{prefix = P, mask_len = M, metric = Metric}) ->
-		      #isis_address{afi = ipv4, address = P, mask = M, metric = Metric}
+		      {#isis_address{afi = ipv4, address = P, mask = M, metric = Metric}, undefined}
 	      end, R)
 	++ Ts;
-extract_ip_addresses(#isis_tlv_ipv6_reachability{prefix = P, mask_len = M, metric = Metric}, Ts) ->
-    [#isis_address{afi = ipv6, address = P, mask = M, metric = Metric}] ++ Ts.
+extract_ip_addresses(#isis_tlv_ipv6_reachability{prefix = P, mask_len = M,
+						 metric = Metric, sub_tlv = SubTLVs}, Ts) ->
+    Source = extract_source(SubTLVs, ipv6),
+    [{#isis_address{afi = ipv6, address = P, mask = M, metric = Metric}, Source}] ++ Ts.
+
+extract_source(SubTLVs, Afi) ->
+    S = lists:filtermap(
+	  fun(#isis_subtlv_srcdst{prefix_length = PL, prefix = P}) ->
+		  {true, #isis_address{afi = Afi, address = P, mask = PL}};
+	     (_) ->
+		  false
+	  end, SubTLVs),
+    case length(S) of
+	0 -> undefined;
+	_ ->
+	    %% Just take the first...
+	    lists:nth(1, S)
+    end.

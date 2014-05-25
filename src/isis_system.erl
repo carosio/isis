@@ -818,7 +818,6 @@ do_bump_lsp(Level, Node, Frag, SeqNo, State) ->
     DoBump = fun(#lsp_frag{level = L, pseudonode = N,
 			   fragment = F} = LspFrag)
 		   when L =:= Level, N =:= Node, F =:= Frag ->
-		     io:format("Setting to ~p~n", [SeqNo+1]),
 		     LspFrag#lsp_frag{sequence = (SeqNo + 1),
 				      updated = true};
 		(F) -> F
@@ -903,8 +902,7 @@ update_address_tlv(Updater, ipv4, Address, Mask, State) ->
 update_address_tlv(Updater, ipv6, Address, Mask, State) ->
     TLV = #isis_tlv_ipv6_reachability{prefix = <<Address:128/big>>, up = true,
 				      mask_len = Mask, metric = 0,
-				      external = false,
-				      sub_tlv = <<>>},
+				      external = false},
     update_frags(Updater, TLV, 0, State).
 
 

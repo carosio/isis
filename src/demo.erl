@@ -153,9 +153,13 @@ create_initial_state() ->
 next_demo(#state{nextstate = setup} = State) ->
     %% Create our 2 'gateway' nodes and cosy up to them...
     isis_system:add_sid_addresses(<<16#de, 16#ad, 16#be, 16#ef, 0, 0>>,
-				  [55664433]),
+				  [{ipv4, 55664433}]),
     isis_system:add_sid_addresses(<<16#c0, 16#ff, 16#fe, 0, 0, 0>>,
-				  [99887766]),
+				  [{ipv4, 99887766}]),
+    isis_system:add_sid_addresses(<<16#de, 16#ad, 16#be, 16#ef, 0, 0>>,
+				  [{ipv6, <<1,2,3,4, 0:(8*12)>>}]),
+    isis_system:add_sid_addresses(<<16#c0, 16#ff, 16#fe, 0, 0, 0>>,
+				  [{ipv6, <<4,3,2,1, 0:(8*12)>>}]),
     DeadBeefTLV = #isis_tlv_extended_reachability{
 		     reachability = [#isis_tlv_extended_reachability_detail{
 					neighbor = <<16#de, 16#ad, 16#be, 16#ef, 0, 0, 0>>,
@@ -282,7 +286,18 @@ generate_coffee(Nodes, Link, TN, State) ->
 						     mask_len = 24,
 						     metric = 1,
 						     up = true,
-						     sub_tlv = []}]}
+						     sub_tlv = []}]},
+			       #isis_tlv_ipv6_reachability{
+				  prefix = <<16#3F, 16#FE, TN:16>>,
+				  mask_len = 32,
+				  metric = 1,
+				  up = true, external = true,
+				  sub_tlv = [
+					    #isis_subtlv_srcdst{
+					      prefix_length = 16,
+					      prefix = <<1:8, TN:8>>}
+					    ]
+				 }
 			      ]
 		       },
 		NCSum = isis_protocol:checksum(NL),

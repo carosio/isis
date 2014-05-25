@@ -290,8 +290,8 @@ verify_interface_addresses(IIH, #state{ip_addresses = IPAddresses,
 	  lists:map(fun(#isis_tlv_ip_interface_address{addresses = A}) -> A end, V4)),
     V41 = sets:from_list(IPAddresses),
     V42 = sets:from_list(V4Addresses),
-    V4Remove = sets:to_list(sets:subtract(V41, V42)),
-    V4Add = sets:to_list(sets:subtract(V42, V41)),
+    V4Remove = lists:map(fun(F) -> {ipv4, F} end, sets:to_list(sets:subtract(V41, V42))),
+    V4Add = lists:map(fun(F) -> {ipv4, F} end, sets:to_list(sets:subtract(V42, V41))),
     isis_system:add_sid_addresses(IIH#isis_iih.source_id, V4Add),
     isis_system:delete_sid_addresses(IIH#isis_iih.source_id, V4Remove),
 
@@ -299,5 +299,11 @@ verify_interface_addresses(IIH, #state{ip_addresses = IPAddresses,
     V6Addresses =
 	lists:flatten(
 	  lists:map(fun(#isis_tlv_ipv6_interface_address{addresses = A}) -> A end, V6)),
+    V61 = sets:from_list(IPv6Addresses),
+    V62 = sets:from_list(V6Addresses),
+    V6Remove = lists:map(fun(F) -> {ipv6, F} end, sets:to_list(sets:subtract(V61, V62))),
+    V6Add = lists:map(fun(F) -> {ipv6, F} end, sets:to_list(sets:subtract(V62, V61))),
+    isis_system:add_sid_addresses(IIH#isis_iih.source_id, V6Add),
+    isis_system:delete_sid_addresses(IIH#isis_iih.source_id, V6Remove),
     {up, State#state{ip_addresses = V4Addresses,
 		     ipv6_addresses = V6Addresses}}.
