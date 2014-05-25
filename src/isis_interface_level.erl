@@ -407,7 +407,8 @@ send_iih(SID, State) ->
 		  dict:to_list(State#state.adj_handlers)),
     Areas = isis_system:areas(),
     V4Addresses = isis_interface:get_addresses(State#state.interface_ref, ipv4),
-    V6Addresses = isis_interface:get_addresses(State#state.interface_ref, ipv6),
+    %% V6Addresses = isis_interface:get_addresses(State#state.interface_ref, ipv6),
+    V6Addresses = [],
     DIS = case State#state.dis of
 	      undef -> <<SID:6/binary, 0:8>>;
 	      D -> D

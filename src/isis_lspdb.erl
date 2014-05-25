@@ -18,11 +18,11 @@
 
 %% API
 -export([start_link/1, get_db/1,
-	 lookup_lsps/2, store_lsp/2, delete_lsp/2,
+	 lookup_lsps/2, store_lsp/2, delete_lsp/2, flood_lsp/3,
 	 lookup_lsps_by_node/2,
 	 summary/2, range/3,
 	 replace_tlv/3, update_reachability/3,
-	 flood_lsp/3,
+	 schedule_spf/1,
 	 links/1]).
 
 %% gen_server callbacks
@@ -217,6 +217,17 @@ links(DB) ->
 start_link([{table, Table_Id}] = Args) ->
     gen_server:start_link({local, Table_Id}, ?MODULE, Args, []).
 
+%%--------------------------------------------------------------------
+%% @doc
+%%
+%% Schedule an SPF run for a given LSP-DB
+%%
+%% @spec start_link(list()) -> {ok, Pid} | ignore | {error, Error}
+%% @end
+%%--------------------------------------------------------------------
+schedule_spf(Ref) ->
+    gen_server:cast(Ref, {schedule_spf}).
+
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
@@ -299,9 +310,8 @@ handle_call(_Request, _From, State) ->
 %%                                  {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_cast({bump, Level, LSP}, State) ->
-    bump_an_lsp(Level, LSP, State),
-    {noreply, State};
+handle_cast({schedule_spf}, State) ->
+    {noreply, schedule_spf(full, State)};
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
@@ -353,6 +363,7 @@ terminate(_Reason, _State) ->
 %% @end
 %%--------------------------------------------------------------------
 code_change(_OldVsn, State, _Extra) ->
+    schedule_spf(full, State),
     {ok, State}.
 
 %%%===================================================================
@@ -553,14 +564,12 @@ update_eir(add,
 	   (E, Acc) -> {E, Acc}
 	end,
     {NewER, {Found, Modified}} = lists:mapfoldl(Replacer, {false, false}, R),
-    io:format("Was: ~p~nNow: ~p~n", [R, NewER]),
     Result = 
 	case {NewER, {Found, Modified}} of
 	    {NewER, {true, true}} -> {true, NewER};
 	    {NewER, {true, false}} -> {false, NewER};
 	    {NewER, {false, false}} -> {true, NewER ++ [UpdatedER]}
 	end,
-    io:format("Returning: ~p~n", [Result]),
     Result;
 update_eir(del,
 	   #isis_tlv_extended_reachability_detail{neighbor = N}, R) ->
@@ -591,7 +600,7 @@ do_spf(SID, State) ->
     RoutingTableF = 
 	fun({Node, {Metric, Nodes}}) when length(Nodes) >= 2 ->
 		Prefixes = lookup_prefixes(Node, State),
-		Nexthop = get_nexthop(lists:nth(2, Nodes)),
+		Nexthop = get_nexthop(Nodes),
 		{true, {Node, Nexthop, Metric, Prefixes, Nodes}};
 	   ({_, {_, _}}) -> true;
 	   ({_, unreachable}) -> true
@@ -614,8 +623,31 @@ lookup_prefixes(Node, State) ->
     IPs.
     
 
-get_nexthop(Node) ->
-    Node.
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%%
+%% From the list of transit nodes, rooted on ourselves, we need to
+%% find the true 'nexthop' node. Take into account the 'next' node may
+%% be a pseudo-node and that we may not see a true 'nexthop' if there
+%% are lsp issues.
+%%
+%% @end
+%%--------------------------------------------------------------------
+get_nexthop(Nodes) when length(Nodes) >= 2 ->
+    <<Candidate:6/binary, PN:8>> = lists:nth(2, Nodes),
+    case PN of
+	0 -> Candidate;
+	_ -> 
+	    case length(Nodes) >= 3 of
+		true -> <<Candidate2:6/binary, _:8>> = lists:nth(3, Nodes),
+			Candidate2;
+		_ -> unreachable
+	    end
+    end;
+get_nexthop(Nodes) ->
+    io:format("Node list length was ~b!~n", [length(Nodes)]),
+    unreachable.
 
 %%--------------------------------------------------------------------
 %% @private

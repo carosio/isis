@@ -110,7 +110,6 @@ init({iih, IIH}, State) ->
 	    _ -> {init, State}
 	end,
     NewState2 = start_timer(NewState),
-    io:format("Transition from init to ~p~n", [NextState]),
     {next_state, NextState, NewState2};
 init({timeout}, State) ->
     {next_state, init, State};

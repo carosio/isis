@@ -37,7 +37,7 @@
 	 %% System Name handling
 	 add_name/2, delete_name/1, lookup_name/1,
 	 %% Handle System ID mapping
-	 add_sid_addresses/2, delete_sid_addresses/2,
+	 add_sid_addresses/2, delete_sid_addresses/2, dump_sid_addresses/0,
 	 %% pseudonodes
 	 allocate_pseudonode/2, deallocate_pseudonode/2,
 	 %% Misc
@@ -184,6 +184,9 @@ delete_sid_addresses(_, []) ->
     ok;
 delete_sid_addresses(SID, Addresses) ->
     gen_server:cast(?MODULE, {delete_sid, SID, Addresses}).
+
+dump_sid_addresses() ->
+    gen_server:call(?MODULE, {dump_sid_addresses}).
 
 add_name(SID, Name) ->
     gen_server:cast(?MODULE, {add_name, SID, Name}).
@@ -406,6 +409,9 @@ handle_call({lsps}, _From, #state{frags = Frags} = State) ->
 handle_call({hostname, Name}, _From, State) ->
     {reply, ok, set_tlv_hostname(Name, State)};
 
+handle_call({dump_sid_addresses}, _From, State) ->
+    {reply, State#state.system_ids, State};
+
 handle_call({allocate_pseudonode, Pid, Level}, _From, State) ->
     {PN, NewState} = allocate_pseudonode(Pid, Level, State),
     {reply, PN, NewState};
@@ -440,6 +446,8 @@ handle_cast({schedule_lsp_refresh}, State) ->
 handle_cast({update_tlv, TLV, Node, Level},
 	    #state{frags = Frags} = State) ->
     NewFrags = isis_protocol:update_tlv(TLV, Node, Level, Frags),
+    isis_lspdb:schedule_spf(level_1),
+    isis_lspdb:schedule_spf(level_2),
     {noreply, State#state{frags = NewFrags}};
 handle_cast({delete_tlv, TLV, Node, Level},
 	    #state{frags = Frags} = State) ->
@@ -454,6 +462,8 @@ handle_cast({add_sid, SID, Addresses}, #state{system_ids = IDs} = State) ->
 		 NewAs = sets:to_list(sets:union([S1, S2])),
 		 dict:store(SID, NewAs, IDs)
 	 end,
+    isis_lspdb:schedule_spf(level_1),
+    isis_lspdb:schedule_spf(level_2),
     {noreply, State#state{system_ids = D1}};
 handle_cast({delete_sid, SID, Addresses}, State) ->
     D1 = case dict:find(SID, State#state.system_ids) of
@@ -468,7 +478,7 @@ handle_cast({delete_sid, SID, Addresses}, State) ->
 handle_cast({process_spf, {Level, Time, SPF}}, State) ->
     Table = 
 	lists:filtermap(
-	  fun({<<Node:7/binary>>, <<NHID:6/binary, _:8>> = FullNH, Metric, As, Nodes})
+	  fun({<<Node:7/binary>>, NHID, Metric, As, Nodes})
 	     when is_list(As) ->
 		  case length(As) of
 		      0 -> false;
@@ -476,7 +486,7 @@ handle_cast({process_spf, {Level, Time, SPF}}, State) ->
 			  case dict:find(NHID, State#state.system_ids) of
 			      {ok, NH} -> {true, {
 					     lookup_name(Node),
-					     lookup_name(FullNH),
+					     lookup_name(NHID),
 					     NH, Metric, As, Nodes}};
 			      _ -> false
 			  end
