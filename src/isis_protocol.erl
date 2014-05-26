@@ -243,6 +243,30 @@ decode_tlv_extended_ip_reachability(<<>>, Values) ->
     lists:reverse(Values);
 decode_tlv_extended_ip_reachability(_, _) -> error.
 
+decode_tlv_ipv6_reachability(<<Metric:32, Up:1, X:1, S:1,
+			       _Res:5, PLen:8, Rest/binary>>, Acc) ->
+    PLenBytes = erlang:trunc((PLen + 7) / 8),
+    {Prefix, SubTLVs, Remainder} = 
+	case S of
+	    1 ->
+		<<SLen:8, P:PLenBytes/binary, SubTLVBytes:SLen/binary, R/binary>> = Rest,
+		{ok, STs} = decode_tlvs(SubTLVBytes, subtlv_ipv6r,
+					    fun decode_subtlv_ipv6r/3, []),
+		{P, STs, R};
+	    0 ->
+		<<P:PLenBytes/binary, R/binary>> = Rest,
+		{P, [], R}
+	end,
+    decode_tlv_ipv6_reachability(Remainder,
+				 Acc ++ [#isis_tlv_ipv6_reachability_detail{metric = Metric,
+									    up = isis_enum:to_atom(boolean, Up),
+									    external = isis_enum:to_atom(boolean, X),
+									    mask_len = PLen,
+									    prefix = Prefix,
+									    sub_tlv = SubTLVs}]);
+decode_tlv_ipv6_reachability(<<>>, Acc) ->
+    lists:reverse(Acc).
+
 decode_tlv_extended_reachability(
   <<Neighbor_Id:7/binary, Metric:24,
     SubTLV_Len:8, SubTLVb:SubTLV_Len/binary, Rest/binary>>, Values) ->
@@ -303,20 +327,9 @@ decode_tlv(ip_interface_address, _Type, Value) ->
 decode_tlv(ipv6_interface_address, _Type, Value) ->
     Addresses = [X || <<X:16/binary>> <= Value],
     #isis_tlv_ipv6_interface_address{addresses = Addresses};
-decode_tlv(ipv6_reachability, _Type, <<Metric:32, Up:1, X:1, S:1,
-				       _Res:5, PLen:8, Rest/binary>>) ->
-    PLenBytes = erlang:trunc((PLen + 7) / 8),
-    <<Prefix:PLenBytes/binary, SubTLV/binary>> = Rest,
-    case decode_tlvs(SubTLV, subtlv_ipv6r, fun decode_subtlv_ipv6r/3, []) of
-	{ok, SubTLVs} ->
-	    #isis_tlv_ipv6_reachability{metric = Metric,
-					up = isis_enum:to_atom(boolean, Up),
-					external = isis_enum:to_atom(boolean, X),
-					mask_len = PLen,
-					prefix = Prefix,
-					sub_tlv = SubTLVs};
-	_ -> error
-    end;
+decode_tlv(ipv6_reachability, _Type, Bytes) ->
+    Reachability = decode_tlv_ipv6_reachability(Bytes, []),
+    #isis_tlv_ipv6_reachability{reachability = Reachability};
 decode_tlv(protocols_supported, _Type, Value) ->
     Protocols = [isis_enum:to_atom(protocols, X) || <<X:8>> <= Value],
     #isis_tlv_protocols_supported{protocols = Protocols};
@@ -472,6 +485,25 @@ encode_tlv_extended_ip_reachability(
     [<<Metric:32, Up:1, Present:1, Mask_Len:6,
       Calc_Prefix:PLenBits, SubTLV_LenB/binary>> | SubTLVB].
 
+encode_tlv_ipv6_reachability_detail(
+  #isis_tlv_ipv6_reachability_detail{
+     metric = Metric, up = Up, external = External,
+     mask_len = Mask_Len, prefix = Prefix,
+     sub_tlv = Sub_TLVs}) ->
+    U = isis_enum:to_int(boolean, Up),
+    E = isis_enum:to_int(boolean, External),
+    PBytes = erlang:trunc((Mask_Len + 7) / 8),
+    {P, SLen, SBin}
+	= case length(Sub_TLVs) of
+	      0 -> {0, <<>>, []};
+	    _ ->
+		  SBinary = encode_tlvs(Sub_TLVs, fun encode_subtlv_ipv6r/1),
+		  SBinaryLen = binary_list_size(SBinary),
+		  {1, <<SBinaryLen:8>>, SBinary}
+	  end,
+    [<<Metric:32, U:1, E:1, P:1, 0:5,
+       Mask_Len:8, SLen/binary, Prefix:PBytes/binary>> | SBin].
+
 -spec encode_tlv_extended_reachability(isis_tlv_extended_reachability_detail()) -> [binary()].
 encode_tlv_extended_reachability(
   #isis_tlv_extended_reachability_detail{
@@ -528,20 +560,9 @@ encode_tlv(#isis_tlv_ipv6_interface_address{addresses = Addresses}) ->
 		   end,
 		   Addresses),
     encode_tlv_list(ipv6_interface_address, tlv, Bs);
-encode_tlv(#isis_tlv_ipv6_reachability{metric = Metric, up = Up, external = External,
-				       mask_len = Mask_Len, prefix = Prefix,
-				       sub_tlv = Sub_TLVs}) ->
-    P = case length(Sub_TLVs) of
-	    0 -> 0;
-	    _ -> 1
-	end,
-    U = isis_enum:to_int(boolean, Up),
-    E = isis_enum:to_int(boolean, External),
-    PBytes = erlang:trunc((Mask_Len + 7) / 8),
-    SubTLVBin = encode_tlvs(Sub_TLVs, fun encode_subtlv_ipv6r/1),
-    encode_tlv_list(ipv6_reachability, tlv,
-		    [<<Metric:32, U:1, E:1, P:1, 0:5,
-		       Mask_Len:8, Prefix:PBytes/binary>> | SubTLVBin]);
+encode_tlv(#isis_tlv_ipv6_reachability{reachability = R}) ->
+    Bs = lists:map(fun encode_tlv_ipv6_reachability_detail/1, R),
+    encode_tlv_list(ipv6_reachability, tlv, Bs);
 encode_tlv(#isis_tlv_extended_reachability{reachability = EIS}) ->
     Bs = lists:map(fun encode_tlv_extended_reachability/1, EIS),
     encode_tlv_list(extended_reachability, tlv, Bs);
@@ -591,14 +612,9 @@ update_tlv(#isis_tlv_dynamic_hostname{} = TLV,
 	  Node, Level, Frags) ->
     F = fun(T) -> element(1, T) =/= element(1, TLV) end,
     merge_whole_tlv(F, TLV, Node, Level, Frags);
-update_tlv(#isis_tlv_ipv6_reachability{prefix = Prefix, mask_len = MaskLen} = TLV,
+update_tlv(#isis_tlv_ipv6_reachability{} = TLV,
 	   Node, Level, Frags) ->
-    F = fun(#isis_tlv_ipv6_reachability{prefix = P, mask_len = M})
-	      when P =:= Prefix, M =:= MaskLen ->
-		false;
-	   (_) -> true
-	end,
-    merge_whole_tlv(F, TLV, Node, Level, Frags);
+    merge_array_tlv(TLV, Node, Level, Frags);
 update_tlv(#isis_tlv_ip_internal_reachability{} = TLV,
 	   Node, Level, Frags) ->
     merge_array_tlv(TLV, Node, Level, Frags);
@@ -620,13 +636,9 @@ delete_tlv(#isis_tlv_extended_reachability{} = TLV,
 delete_tlv(#isis_tlv_extended_ip_reachability{} = TLV,
 	   Node, Level, Frags) ->
     delete_array_tlv(TLV, Node, Level, Frags);
-delete_tlv(#isis_tlv_ipv6_reachability{prefix = Prefix, mask_len = Mask},
+delete_tlv(#isis_tlv_ipv6_reachability{} = TLV,
 	   Node, Level, Frags) ->
-    Deleter = fun(#isis_tlv_ipv6_reachability{prefix = P, mask_len = M})
-		 when P =:= Prefix, M =:= Mask -> false;
-		 (_) -> true
-	      end,
-    delete_whole_tlv(Deleter, Node, Level, Frags);
+    delete_array_tlv(TLV, Node, Level, Frags);
 delete_tlv(TLV, Node, Level, Frags) ->
     delete_whole_tlv(fun(T) -> element(1, T) =/= element(1, TLV) end,
 		     Node, Level, Frags).
@@ -716,6 +728,25 @@ handle_delete_array_tlv(#isis_tlv_extended_ip_reachability{reachability = Delete
     case length(Results) =:= length(Existing) of
 	true -> {Original, {false, Size}};
 	_ -> NewTLV = Original#isis_tlv_extended_ip_reachability{reachability = Results},
+	     SizeDiff = tlv_size(Original) - tlv_size(NewTLV),
+	     {NewTLV, {true, Size - SizeDiff}}
+    end;
+handle_delete_array_tlv(#isis_tlv_ipv6_reachability{reachability = Deleted},
+			#isis_tlv_ipv6_reachability{reachability = Existing} = Original,
+			Size) ->
+    NewD = lists:nth(1, Deleted),
+    DeletedP = NewD#isis_tlv_ipv6_reachability_detail.prefix,
+    DeletedM = NewD#isis_tlv_ipv6_reachability_detail.mask_len,
+    Results = lists:filter(fun(#isis_tlv_ipv6_reachability_detail{
+				  prefix = P, mask_len = M})
+				 when P =:= DeletedP, M =:= DeletedM ->
+				   false;
+			      (_) -> true
+			   end,
+			   Existing),
+    case length(Results) =:= length(Existing) of
+	true -> {Original, {false, Size}};
+	_ -> NewTLV = Original#isis_tlv_ipv6_reachability{reachability = Results},
 	     SizeDiff = tlv_size(Original) - tlv_size(NewTLV),
 	     {NewTLV, {true, Size - SizeDiff}}
     end.
@@ -897,6 +928,43 @@ handle_merge_array_tlv(#isis_tlv_extended_ip_reachability{reachability = Existin
 		true ->
 		    AfterDelete = lists:filter(Deleter, Existing),
 		    DeletedTLV = #isis_tlv_extended_ip_reachability{reachability = AfterDelete},
+		    DeletedSize = (CurrentSize - ExistingSize) + tlv_size(DeletedTLV),
+		    {DeletedTLV,
+		     {DeletedSize, false, length(AfterDelete) =/= length(Existing)}};
+		_ ->
+		    {FinalTLV,
+		     {CurrentSize - ExistingSize + NewSize, true, true}}
+	    end;
+	_ -> {ET, {CurrentSize, false, false}}
+    end;
+handle_merge_array_tlv(#isis_tlv_ipv6_reachability{reachability = Existing} = ET,
+		       #isis_tlv_ipv6_reachability{reachability = New},
+		       CurrentSize)
+  when length(New) =:= 1 ->
+    %% There is just one detail entry....
+    NewD = lists:nth(1, New),
+    ExistingSize = tlv_size(ET),
+    NewPrefix = NewD#isis_tlv_ipv6_reachability_detail.prefix,
+    NewMask = NewD#isis_tlv_ipv6_reachability_detail.mask_len,
+    Updater = fun(#isis_tlv_ipv6_reachability_detail{prefix = P, mask_len = M}, _Acc)
+		    when P =:= NewPrefix, M =:= NewMask ->
+		      {NewD, true};
+		 (D, Acc) -> {D, Acc}
+	end,
+    Deleter = fun(#isis_tlv_ipv6_reachability_detail{prefix = P, mask_len = M}) ->
+		      P =/= NewPrefix, M =/= NewMask
+	      end,
+    {NewTLV, Updated} = lists:mapfoldl(Updater, false, Existing),
+    case Updated of
+	true ->
+	    FinalTLV = #isis_tlv_ipv6_reachability{reachability = NewTLV},
+	    NewSize = tlv_size(FinalTLV),
+	    %% If the new detail entry pushes us over the LSP size, just
+	    %% remove the old entry.
+	    case (CurrentSize - ExistingSize + NewSize) >= 1492 of
+		true ->
+		    AfterDelete = lists:filter(Deleter, Existing),
+		    DeletedTLV = #isis_tlv_ipv6_reachability{reachability = AfterDelete},
 		    DeletedSize = (CurrentSize - ExistingSize) + tlv_size(DeletedTLV),
 		    {DeletedTLV,
 		     {DeletedSize, false, length(AfterDelete) =/= length(Existing)}};

@@ -717,10 +717,13 @@ extract_ip_addresses(#isis_tlv_extended_ip_reachability{reachability = R}, Ts) -
 		      {#isis_address{afi = ipv4, address = P, mask = M, metric = Metric}, undefined}
 	      end, R)
 	++ Ts;
-extract_ip_addresses(#isis_tlv_ipv6_reachability{prefix = P, mask_len = M,
-						 metric = Metric, sub_tlv = SubTLVs}, Ts) ->
-    Source = extract_source(SubTLVs, ipv6),
-    [{#isis_address{afi = ipv6, address = P, mask = M, metric = Metric}, Source}] ++ Ts.
+extract_ip_addresses(#isis_tlv_ipv6_reachability{reachability = R}, Ts) ->
+    lists:map(fun(#isis_tlv_ipv6_reachability_detail{prefix = P, mask_len = M,
+						     metric = Metric, sub_tlv = SubTLVs}) ->
+		      Source = extract_source(SubTLVs, ipv6),
+		      {#isis_address{afi = ipv6, address = P, mask = M, metric = Metric}, Source}
+	      end, R)
+	++ Ts.
 
 extract_source(SubTLVs, Afi) ->
     S = lists:filtermap(

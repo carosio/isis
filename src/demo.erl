@@ -288,15 +288,18 @@ generate_coffee(Nodes, Link, TN, State) ->
 						     up = true,
 						     sub_tlv = []}]},
 			       #isis_tlv_ipv6_reachability{
-				  prefix = <<16#3F, 16#FE, TN:16>>,
-				  mask_len = 32,
-				  metric = 1,
-				  up = true, external = true,
-				  sub_tlv = [
-					    #isis_subtlv_srcdst{
-					      prefix_length = 16,
-					      prefix = <<1:8, TN:8>>}
-					    ]
+				  reachability = [
+						  #isis_tlv_ipv6_reachability_detail{
+						     prefix = <<16#3F, 16#FE, TN:16>>,
+						     mask_len = 32,
+						     metric = 1,
+						     up = true, external = true,
+						     sub_tlv = [
+								#isis_subtlv_srcdst{
+								   prefix_length = 16,
+								   prefix = <<1:8, TN:8>>}
+							       ]
+						    }]
 				 }
 			      ]
 		       },

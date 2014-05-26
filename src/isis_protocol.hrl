@@ -156,13 +156,18 @@
 	isis_subtlv_srcdst() |
 	isis_subtlv_unknown().
 
--record (isis_tlv_ipv6_reachability, {
+-record (isis_tlv_ipv6_reachability_detail, {
 	   metric :: integer(),
 	   up :: boolean(),
 	   external :: boolean(),
 	   mask_len :: integer(),
 	   prefix :: binary(),
 	   sub_tlv = [] :: [isis_subtlv_ipv6r()]}).
+-type isis_tlv_ipv6_reachability_detail() :: #isis_tlv_ipv6_reachability_detail{}.
+
+-record (isis_tlv_ipv6_reachability, {
+	   reachability = [] :: [isis_tlv_ipv6_reachability_detail]
+	  }).
 -type isis_tlv_ipv6_reachability() :: #isis_tlv_ipv6_reachability{}.
 
 -record (isis_tlv_protocols_supported, {
