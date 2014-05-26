@@ -144,6 +144,8 @@ handle_call({get_state, _, mac}, _From, State) ->
     {reply, State#state.mac, State};
 handle_call({get_state, _, mtu}, _From, State) ->
     {reply, State#state.mtu, State};
+handle_call({get_state, _, ifindex}, _From, State) ->
+    {reply, State#state.ifindex, State};
 handle_call({get_state, level_1, Item}, _From,
 	    #state{level1 = L1Pid} = State) when is_pid(L1Pid) ->
     {reply, isis_interface_level:get_state(L1Pid, Item), State};

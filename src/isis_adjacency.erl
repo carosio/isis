@@ -284,6 +284,7 @@ update_adjacency(Direction, State) ->
 %% we'll have no nexthops for routes!
 verify_interface_addresses(IIH, #state{ip_addresses = IPAddresses,
 				       ipv6_addresses = IPv6Addresses} = State) ->
+    IfIndex = isis_interface:get_state(State#state.interface, undef, ifindex),
     V4 = isis_protocol:filter_tlvs(isis_tlv_ip_interface_address, IIH#isis_iih.tlv),
     V4Addresses =
 	lists:flatten(
@@ -301,8 +302,8 @@ verify_interface_addresses(IIH, #state{ip_addresses = IPAddresses,
 	  lists:map(fun(#isis_tlv_ipv6_interface_address{addresses = A}) -> A end, V6)),
     V61 = sets:from_list(IPv6Addresses),
     V62 = sets:from_list(V6Addresses),
-    V6Remove = lists:map(fun(F) -> {ipv6, F} end, sets:to_list(sets:subtract(V61, V62))),
-    V6Add = lists:map(fun(F) -> {ipv6, F} end, sets:to_list(sets:subtract(V62, V61))),
+    V6Remove = lists:map(fun(F) -> {ipv6, {F, IfIndex}} end, sets:to_list(sets:subtract(V61, V62))),
+    V6Add = lists:map(fun(F) -> {ipv6, {F, IfIndex}} end, sets:to_list(sets:subtract(V62, V61))),
     isis_system:add_sid_addresses(IIH#isis_iih.source_id, V6Add),
     isis_system:delete_sid_addresses(IIH#isis_iih.source_id, V6Remove),
     {up, State#state{ip_addresses = V4Addresses,
