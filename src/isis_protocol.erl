@@ -121,7 +121,7 @@ decode_subtlv_ipv6r(source_prefix, _Type, <<PLen:8, P/binary>>) ->
 	true -> #isis_subtlv_srcdst{prefix_length = PLen, prefix = P};
 	_ -> error
     end;
-decode_subtlv_ipv6r(_, Type, <<Value>>) ->
+decode_subtlv_ipv6r(_, Type, Value) ->
     #isis_subtlv_unknown{type = Type, value = Value}.
 
 -spec decode_subtlv_eir(atom(), integer(), binary()) -> isis_subtlv_eir() | error.
@@ -303,7 +303,7 @@ decode_tlv(ip_interface_address, _Type, Value) ->
 decode_tlv(ipv6_interface_address, _Type, Value) ->
     Addresses = [X || <<X:16/binary>> <= Value],
     #isis_tlv_ipv6_interface_address{addresses = Addresses};
-decode_tlv(ipv6_reachability, _Type, <<Metric:32, Up:1, X:1, _S:1,
+decode_tlv(ipv6_reachability, _Type, <<Metric:32, Up:1, X:1, S:1,
 				       _Res:5, PLen:8, Rest/binary>>) ->
     PLenBytes = erlang:trunc((PLen + 7) / 8),
     <<Prefix:PLenBytes/binary, SubTLV/binary>> = Rest,
@@ -380,7 +380,8 @@ decode_tlvs(_, _,_,_) -> error.
 encode_subtlv_ipv6r(#isis_subtlv_srcdst{prefix_length = PL, prefix = P}) ->
     encode_tlv(srcdst, subtlv_ipv6r, <<PL:8, P/binary>>);
 encode_subtlv_ipv6r(#isis_subtlv_unknown{type = T, value = V}) ->
-    <<T:8, V/binary>>.
+    S = byte_size(V),
+    <<T:8, S:8, V/binary>>.
 
 -spec encode_subtlv_eir_detail(isis_subtlv_eir()) -> binary().
 encode_subtlv_eir_detail(#isis_subtlv_eir_admintag32{tag = Tag}) ->
