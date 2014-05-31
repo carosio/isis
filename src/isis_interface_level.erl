@@ -409,8 +409,10 @@ send_iih(SID, State) ->
 		  dict:to_list(State#state.adj_handlers)),
     Areas = isis_system:areas(),
     V4Addresses = isis_interface:get_addresses(State#state.interface_ref, ipv4),
-    V6Addresses = lists:filter(fun(A) -> <<LL:16, _R:112>> = <<A:128>>, LL =:= 16#FE80 end,
-			       isis_interface:get_addresses(State#state.interface_ref, ipv6)),
+    V6Addresses = 
+	lists:sublist(lists:filter(fun(A) -> <<LL:16, _R:112>> = <<A:128>>, LL =:= 16#FE80 end,
+				   isis_interface:get_addresses(State#state.interface_ref, ipv6)),
+		     ?ISIS_IIH_IPV6COUNT),
     DIS = case State#state.dis of
 	      undef -> <<SID:6/binary, 0:8>>;
 	      D -> D

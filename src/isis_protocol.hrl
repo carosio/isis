@@ -17,6 +17,7 @@
 -define(ISIS_CSNP_TIMER, 10 * 1000).
 -define(ISIS_CSNP_PACE_TIMER, 0.25 * 1000).
 -define(ISIS_SPF_DELAY, 4). %% 4ms
+-define(ISIS_IIH_IPV6COUNT, 15).
 
 -define(DEFAULT_EXPIRY_TIMER, 60).
 -define(DEFAULT_LSP_AGEOUT, 60).
