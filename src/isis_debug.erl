@@ -148,7 +148,8 @@ inject_some_lsps(Level, Count, Seq)
 						    mask_len = 24,
 						    metric = 1,
 						    up = true,
-						    sub_tlv = []}]}
+						    sub_tlv = []}]},
+			      #isis_tlv_unknown{type = 99, bytes = <<1,2,3,4,5,6,7,8,9,10>>}
 			     ]
 		      },
 		CSum = isis_protocol:checksum(L),

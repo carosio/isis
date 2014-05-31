@@ -32,6 +32,7 @@
 	  database = undef, %% The LSPDB reference
 	  hello_interval = (?DEFAULT_HOLD_TIME / 3),
 	  hold_time = ?DEFAULT_HOLD_TIME,
+	  csnp_timer = ?ISIS_CSNP_TIMER,
 	  metric = ?DEFAULT_METRIC,
 	  authentication_type = none :: none | text | md5,
 	  authentication_key = <<>>,
@@ -128,6 +129,10 @@ handle_call({get_state, metric}, _From, State) ->
     {reply, State#state.metric, State};
 handle_call({get_state, up_adjacencies}, _From, State) ->
     {reply, State#state.up_adjacencies, State};
+handle_call({get_state, priority}, _From, State) ->
+    {reply, State#state.priority, State};
+handle_call({get_state, csnp_interval}, _From, State) ->
+    {reply, State#state.csnp_timer, State};
 handle_call({get_state, authentication}, _From, State) ->
     {reply, {State#state.authentication_type,
 	     State#state.authentication_key}, State};
@@ -230,6 +235,10 @@ handle_info({timeout, _Ref, dis}, State) ->
     NewState = send_csnp(State),
     Timer = start_timer(dis, NewState),
     {noreply, NewState#state{dis_timer = Timer}};
+
+handle_info({'EXIT', Pid, _Reason}, State) ->
+    %% Remove adjacency...
+    {noreply, remove_adj_by_pid(Pid, State)};
 
 handle_info(_Info, State) ->
     {noreply, State}.
@@ -457,6 +466,25 @@ send_iih(SID, State) ->
     {ok, SendPDU, SendPDU_Size} = isis_protocol:encode(ActualIIH),
     send_pdu(SendPDU, SendPDU_Size, State).
 
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% 
+%% We've been notified an adj handler has terminated. Handle it
+%% cleanly...
+%%
+%% @end
+%%--------------------------------------------------------------------
+remove_adj_by_pid(Pid, State) ->
+    F = fun(_, P) when P =:= Pid ->
+		false;
+	   (_, _) -> true
+	end,
+    NewAdj = dict:filter(F, State#state.adj_handlers),
+    State#state{adj_handlers = NewAdj}.
+
+
 %%--------------------------------------------------------------------
 %% @private
 %% @doc
@@ -571,7 +599,10 @@ generate_csnp(Sys_ID, {Status, _}, Chunk_Size, Summary, State) ->
 
 -spec process_pdu(binary(), isis_pdu(), tuple()) -> tuple().
 process_pdu(From, #isis_iih{} = IIH, State) ->
-    handle_iih(From, IIH, State);
+    case valid_iih(From, IIH, State) of
+	true -> handle_iih(From, IIH, State);
+	false -> State
+    end;
 process_pdu(_From, #isis_lsp{} = LSP, State) ->
     handle_lsp(LSP, State),
     State;
@@ -593,8 +624,8 @@ cancel_timers([]) ->
     ok.
 
 -spec start_timer(atom(), tuple()) -> reference().
-start_timer(dis, #state{dis_continuation = DC}) when DC == undef ->
-    erlang:start_timer(isis_protocol:jitter(?ISIS_CSNP_TIMER, ?ISIS_CSNP_JITTER),
+start_timer(dis, #state{dis_continuation = DC, csnp_timer = CT}) when DC == undef ->
+    erlang:start_timer(isis_protocol:jitter(CT, ?ISIS_CSNP_JITTER),
 		      self(), dis);
 start_timer(dis, _State) ->
     erlang:start_timer(erlang:trunc(?ISIS_CSNP_PACE_TIMER), self(), dis);
@@ -953,9 +984,36 @@ set_values([{encryption, Type, Key} | Vs], State) ->
 		     authentication_key = Key});
 set_values([{metric, M} | Vs], State) ->
     set_values(Vs, State#state{metric = M});
+set_values([{csnp_timer, T} | Vs], State) ->
+    set_values(Vs, State#state{csnp_timer = T});
 set_values([{priority, P} | Vs], State) ->
     set_values(Vs, State#state{priority = P});
+set_values([{hold_time, P} | Vs], State) ->
+    set_values(Vs, State#state{hold_time = P * 1000});
+set_values([{hello_interval, P} | Vs], State) ->
+    set_values(Vs, State#state{hello_interval = P * 1000});
+set_values([{csnp_interval, P} | Vs], State) ->
+    set_values(Vs, State#state{csnp_timer = P * 1000});
 set_values([_ | Vs], State) ->
     set_values(Vs, State);
 set_values([], State) ->
     State.
+
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%%
+%% Validate the IIH before we process it...
+%%
+%% @end
+%%--------------------------------------------------------------------
+valid_iih(_From, IIH, _State) ->
+    %% Check for 'protocol supported' field
+    PS = isis_protocol:filter_tlvs(isis_tlv_protocols_supported,
+				   IIH#isis_iih.tlv),
+    case length(PS) of
+	0 -> false;
+	_ -> true
+    end.
+	    

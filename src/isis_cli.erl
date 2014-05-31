@@ -37,6 +37,7 @@ show_isis() ->
     {Autoconf_Enabled, System_ID_Set} = isis_system:autoconf_status(),
     io:format("Autoconfiguration: ~s (system id set: ~s)~n",
 	      [Autoconf_Enabled, System_ID_Set]),
+    io:format("Max LSP Age: ~b~n", [isis_system:get_state(lsp_lifetime)]),
     io:format("Areas: ~n", []),
     lists:map(
       fun(F) -> io:format("  ~s~n", [pp_binary(F, ".")]) end,
@@ -63,7 +64,13 @@ pp_address(#isis_address{afi = ipv6, address = A}) ->
 
 show_interface_level({Name, #isis_interface{pid = Pid}}, Level) ->
     {AuthType, AuthKey} = isis_interface:get_state(Pid, Level, authentication),
-    io:format("   Encryption: ~s (key ~p)~n", [AuthType, AuthKey]).
+    io:format("   Encryption: ~s (key ~p)~n", [AuthType, AuthKey]),
+    io:format("   Priority: ~b~n", [isis_interface:get_state(Pid, Level, priority)]),
+    Hello = erlang:trunc(isis_interface:get_state(Pid, Level, hello_interval) / 1000),
+    Hold = erlang:trunc(isis_interface:get_state(Pid, Level, hold_time) / 1000),
+    io:format("   Hello/Hold Time: ~b / ~b seconds~n", [Hello, Hold]),
+    CSNP = erlang:trunc(isis_interface:get_state(Pid, Level, csnp_interval) / 1000),
+    io:format("   CSNP Interval: ~b seconds~n", [CSNP]).
 
 show_interfaces_fun({Name, #isis_interface{pid = Pid,
 					   mac = Mac,

@@ -16,6 +16,7 @@
 
 %% API
 -export([start_link/1,
+	 set_state/1, get_state/1,
 	 %% Interface configuration (add/del/set/list)
 	 add_interface/1, del_interface/1, list_interfaces/0,
 	 set_interface/2, set_interface/3, get_interface/1,
@@ -55,6 +56,7 @@
 		fingerprint = <<>> :: binary(),     %% For autoconfig collisions
 		areas = [],
 		frags = [] :: [#lsp_frag{}],
+		max_lsp_lifetime = ?ISIS_MAX_LSP_LIFETIME,
 		pseudonodes :: dict(),  %% PID -> Pseudonode mapping
 		interfaces :: dict(),   %% Our 'state' per interface
 		system_ids :: dict(),   %% SID -> Neighbor address
@@ -222,6 +224,12 @@ deallocate_pseudonode(Node, Level) ->
 
 bump_lsp(Level, Node, Frag, SeqNo) ->
     gen_server:cast(?MODULE, {bump, Level, Node, Frag, SeqNo}).
+
+set_state(Item) ->
+    gen_server:cast(?MODULE, {set_state, Item}).
+
+get_state(Item) ->
+    gen_server:call(?MODULE, {get_state, Item}).
 
 %%--------------------------------------------------------------------
 %% @private
@@ -420,6 +428,9 @@ handle_call({deallocate_pseudonode, Node, Level}, _From, State) ->
     {Reply, NewState} = deallocate_pseudonode(Node, Level, State),
     {reply, Reply, NewState};
 
+handle_call({get_state, Item}, _From, State) ->
+    {reply, extract_state(Item, State), State};
+
 handle_call(_Request, _From, State) ->
     Reply = ok,
     {reply, Reply, State}.
@@ -506,6 +517,8 @@ handle_cast({delete_name, SID}, State) ->
 handle_cast({bump, Level, Node, Frag, SeqNo}, State) ->
     NewState = do_bump_lsp(Level, Node, Frag, SeqNo, State),
     {noreply, NewState};
+handle_cast({set_state, Item}, State) ->
+    {noreply, set_state(Item, State)};
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
@@ -652,7 +665,7 @@ lsp_ageout_check(#state{frags = Frags} = State) ->
 		    when RL < (2 * ?DEFAULT_AGEOUT_CHECK) ->
 		      %% Update
 		      NewLSP = 
-			  L#isis_lsp{remaining_lifetime = 1200,
+			  L#isis_lsp{remaining_lifetime = State#state.max_lsp_lifetime,
 				     sequence_number = SeqNo + 1,
 				     last_update = isis_protocol:current_timestamp()},
 		      CSum = isis_protocol:checksum(NewLSP),
@@ -684,7 +697,7 @@ create_lsp_from_frag(#lsp_frag{level = Level, sequence = SN} = Frag,
 			    end;
 		_ -> 1
 	    end,
-    LSP = #isis_lsp{lsp_id = LSP_Id, remaining_lifetime = 1200,
+    LSP = #isis_lsp{lsp_id = LSP_Id, remaining_lifetime = State#state.max_lsp_lifetime,
 		    last_update = isis_protocol:current_timestamp(),
 		    sequence_number = SeqNo, partition = false,
 		    overload = false, isis_type = level_1_2,
@@ -1047,3 +1060,15 @@ address_to_string(ipv6, Address) when is_binary(Address) ->
 address_to_string(ipv6, Address) when is_integer(Address) ->
     inet_parse:ntoa(
       erlang:list_to_tuple([X || <<X:8>> <= <<Address:128>>])).
+
+set_state([{lsp_lifetime, Value} | Vs], State) ->
+    set_state(Vs, State#state{max_lsp_lifetime = Value});
+set_state([_ | Vs], State) ->
+    set_state(Vs, State);
+set_state([], State) ->
+    State.
+
+extract_state(lsp_lifetime, State) ->
+    State#state.max_lsp_lifetime;
+extract_state(_, State) ->
+    unknown_item.

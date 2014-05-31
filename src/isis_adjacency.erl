@@ -96,7 +96,7 @@ new({interface_down}, State) ->
     {next_state, down, State};
 new(stop, State) ->
     cancel_timer(State),
-    {stop, stop, State}.
+    {stop, normal, State}.
 
 init({iih, IIH}, State) ->
     {NextState, NewState} = 
@@ -115,7 +115,7 @@ init({timeout}, State) ->
     {next_state, init, State};
 init(stop, State) ->
     cancel_timer(State),
-    {stop, stop, State}.
+    {stop, normal, State}.
 
 up({iih, IIH}, State) ->
     NewState =
@@ -130,7 +130,7 @@ up({timeout}, State) ->
     NewState = start_timer(State),
     {next_state, down, NewState};
 up(stop, State) ->
-    {stop, stop, State}.
+    {stop, normal, State}.
 
 down({iih, _}, State) ->
     NewState = start_timer(State),
@@ -138,10 +138,10 @@ down({iih, _}, State) ->
 down({timeout}, State) ->
     cancel_timer(State),
     update_adjacency(down, State),
-    {stop, timeout, State};
+    {stop, normal, State};
 down(stop, State) ->
     update_adjacency(down, State),
-    {stop, stop, State}.
+    {stop, normal, State}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -210,8 +210,9 @@ handle_info({timeout, _Ref, trigger}, StateName, State) ->
 %% @spec terminate(Reason, StateName, State) -> void()
 %% @end
 %%--------------------------------------------------------------------
-terminate(_Reason, _StateName, _State) ->
-    io:format("Terminating...~n"),
+terminate(_Reason, _StateName, State) ->
+    io:format("Adjacency with ~p ~p down due to timeout~n",
+	      [State#state.neighbor, State#state.level]),
     ok.
 
 %%--------------------------------------------------------------------

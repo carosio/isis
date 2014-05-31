@@ -165,20 +165,10 @@ update_reachability({AddDel, ER}, Level, #isis_lsp{tlv = TLVs} = LSP) ->
 %%--------------------------------------------------------------------
 %% @doc
 %%
-%% Bump sequence number and flood.
+%% Purge an LSP
 %%
 %% @end
 %%--------------------------------------------------------------------
-bump_an_lsp(Level, L, State) ->
-    ets:insert(State#state.db,
-	       L#isis_lsp{
-		 sequence_number = (L#isis_lsp.sequence_number + 1),
-		 remaining_lifetime = 1200,
-		 last_update = isis_protocol:current_timestamp()}),
-    D = isis_system:list_interfaces(),
-    I = dict:to_list(D),
-    flood_lsp(Level, I, L).
-
 purge(LSP, State) ->
     case ets:lookup(State#state.db, LSP) of
 	[OldLSP] ->
