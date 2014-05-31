@@ -355,7 +355,7 @@ handle_zclient_cmd(ipv4_route_add,
     io:format("Type: ~p, Flags: ~p, Info: ~p~n", [Type, Flags, Info]),
     R = read_ipv4_route(Type, Flags, Info, Mask, R0),
     NewRoutes = dict:store({R#zclient_route.prefix,
-			    R#zclient_route.nexthop},
+			    R#zclient_route.nexthops},
 			   R, State#state.routes),
     update_listeners({redistribute_add, R}, State),
     State#state{routes = NewRoutes};
@@ -364,7 +364,7 @@ handle_zclient_cmd(ipv4_route_delete,
 		   State) ->
     R = read_ipv4_route(Type, Flags, Info, Mask, R0),
     NewRoutes = dict:erase({R#zclient_route.prefix,
-			    R#zclient_route.nexthop}, State#state.routes),
+			    R#zclient_route.nexthops}, State#state.routes),
     update_listeners({redistribute_delete, R}, State),
     State#state{routes = NewRoutes};
 handle_zclient_cmd(ipv6_route_add,
@@ -372,7 +372,7 @@ handle_zclient_cmd(ipv6_route_add,
 		   State) ->
     R = read_ipv6_route(Type, Flags, Info, Mask, R0),
     NewRoutes = dict:store({R#zclient_route.prefix,
-			    R#zclient_route.nexthop},
+			    R#zclient_route.nexthops},
 			   R, State#state.routes),
     update_listeners({redistribute_add, R}, State),
     State#state{routes = NewRoutes};
@@ -381,7 +381,7 @@ handle_zclient_cmd(ipv6_route_delete,
 		   State) ->
     R = read_ipv6_route(Type, Flags, Info, Mask, R0),
     NewRoutes = dict:erase({R#zclient_route.prefix,
-			    R#zclient_route.nexthop}, State#state.routes),
+			    R#zclient_route.nexthops}, State#state.routes),
     update_listeners({redistribute_delete, R}, State),
     State#state{routes = NewRoutes};
 handle_zclient_cmd(C, M, State) ->
@@ -450,16 +450,31 @@ read_ipv4_route(_Type, _Flags, Info, MaskLen, R0) ->
     ASize = erlang:trunc(MaskLen+7/8),
     <<A:ASize, R1/binary>> = R0,
     Address = A bsl (32 - ASize),
+    {SrcPfx, R6} = 
+	case SrcPfxFlag of
+	    1 -> <<SrcPfxLen:8, R6T/binary>> = R1,
+		 SrcPfxBytes = erlang:trunc((SrcPfxLen+7)/8),
+		 <<SrcPfxB:SrcPfxBytes, R6T2/binary>> = R6T,
+		 {#zclient_prefix{afi = ipv4,
+				  address = SrcPfxB bsl (32 - SrcPfxBytes),
+				  mask_length = SrcPfxLen},
+		  R6T2};
+	    0 -> {undefined, R1}
+	end,
     {Nexthop, R2} =
 	case NexthopFlag of
-	    1 -> <<_NextHopNum:8, NexthopT:32, R2T/binary>> = R1,
-		 {NexthopT, R2T};
-	    _ -> {0, R1}
+	    1 -> <<NextHopNum:8, R2T1/binary>> = R6,
+		 NexthopBytes = NextHopNum * 4,
+		 <<Nexthops:NexthopBytes/binary, R2T2/binary>> = R2T1,
+		 {[N || <<N:32>> <= Nexthops], R2T2};
+	    _ -> {0, R6}
 	end,
     {Ifindex, R3} =
 	case IfindexFlag of
-	    1 -> <<_ifindexnum:8, IfindexT:32, R3T/binary>> = R2,
-		 {IfindexT, R3T};
+	    1 -> <<Ifindexnum:8, R3T1/binary>> = R2,
+		 IfBytes = Ifindexnum * 4,
+		 <<IfIndexes:IfBytes/binary, R3T2/binary>> = R3T1,
+		 {[I || <<I:32>> <= IfIndexes], R3T2};
 	    _ -> {0, R2}
 	end,
     {Distance, R4} = 
@@ -475,7 +490,11 @@ read_ipv4_route(_Type, _Flags, Info, MaskLen, R0) ->
 	    _ -> {0, R4}
 	end,
     P = #zclient_prefix{afi = ipv4, address = Address, mask_length = MaskLen},
-    R = #zclient_route{prefix = P, nexthop = Nexthop, metric = Metric},
+    R = #zclient_route{prefix = P,
+		       nexthops = Nexthop,
+		       ifindexes = Ifindex,
+		       metric = Metric,
+		       source = SrcPfx}, 
     R.
 
 read_ipv6_route(_Type, _Flags, Info, MaskLen, R0) ->
@@ -484,16 +503,31 @@ read_ipv6_route(_Type, _Flags, Info, MaskLen, R0) ->
     ASize = erlang:trunc(MaskLen+7/8),
     <<A:ASize, R1/binary>> = R0,
     Address = A bsl (128 - ASize),
+    {SrcPfx, R6} = 
+	case SrcPfxFlag of
+	    1 -> <<SrcPfxLen:8, R6T>> = R1,
+		 SrcPfxBytes = erlang:trunc((SrcPfxLen+7)/8),
+		 <<SrcPfxB:SrcPfxBytes, R6T2/binary>> = R6T,
+		 {#zclient_prefix{afi = ipv6,
+				  address = SrcPfxB bsl (128 - SrcPfxBytes),
+				  mask_length = SrcPfxLen},
+		  R6T2};
+	    0 -> {undefined, R1}
+	end,
     {Nexthop, R2} =
 	case NexthopFlag of
-	    1 -> <<_NextHopNum:8, NexthopT:128, R2T/binary>> = R1,
-		 {NexthopT, R2T};
-	    _ -> {0, R1}
+	    1 -> <<NextHopNum:8, R2T1/binary>> = R6,
+		 NexthopBytes = NextHopNum * 16,
+		 <<Nexthops:NexthopBytes/binary, R2T2/binary>> = R2T1,
+		 {[N || <<N:128>> <= Nexthops], R2T2};
+	    _ -> {0, R6}
 	end,
     {Ifindex, R3} =
 	case IfindexFlag of
-	    1 -> <<_ifindexnum:8, IfindexT:32, R3T/binary>> = R2,
-		 {IfindexT, R3T};
+	    1 -> <<Ifindexnum:8, R3T1/binary>> = R2,
+		 IfBytes = Ifindexnum * 4,
+		 <<IfIndexes:IfBytes/binary, R3T2/binary>> = R3T1,
+		 {[I || <<I:32>> <= IfIndexes], R3T2};
 	    _ -> {0, R2}
 	end,
     {Distance, R4} = 
@@ -509,7 +543,11 @@ read_ipv6_route(_Type, _Flags, Info, MaskLen, R0) ->
 	    _ -> {0, R4}
 	end,
     P = #zclient_prefix{afi = ipv6, address = Address, mask_length = MaskLen},
-    R = #zclient_route{prefix = P, nexthop = Nexthop, metric = Metric},
+    R = #zclient_route{prefix = P,
+		       nexthops = Nexthop,
+		       ifindexes = Ifindex,
+		       metric = Metric,
+		       source = SrcPfx},
     R.
 
 remove_client(Pid, #state{listeners = Clients} = State) ->
@@ -554,7 +592,7 @@ send_route(#zclient_route{prefix =
 			      #zclient_prefix{afi = AFI, address = Address,
 					      mask_length = Mask},
 			  source = Source,
-			  nexthop = NH, metric = Metric},
+			  nexthops = NH, ifindexes = IFs, metric = Metric},
 	   State) ->
     Type = zclient_enum:to_int(zebra_route, isis),
     Unicast = zclient_enum:to_int(safi, unicast),
@@ -562,12 +600,16 @@ send_route(#zclient_route{prefix =
 	case AFI of
 	    ipv4 ->
 		NHT = zclient_enum:to_int(nexthop, ipv4),
-		{0, <<1:8, NHT:8, NH:32>>};
+		Count = length(NH),
+		NHB = << <<X:32>> || X <- NH >>,
+		{0, <<Count:8, NHT:8, NHB/binary>>};
 	    ipv6 ->
 		NHT1 = zclient_enum:to_int(nexthop, ipv6),
 		NHT2 = zclient_enum:to_int(nexthop, ifindex),
-		{NHA, NHIfIndex} = NH,
-		{1, <<2:8, NHT1:8, NHA/binary, NHT2:8, NHIfIndex:32>>}
+		HCount  = length(NH) * 2,
+		HB = << <<X/binary>> || X <- NH >>,
+		IB = << <<I:32>> || I <- IFs >>,
+		{1, <<HCount:8, NHT1:8, HB/binary, NHT2:8, IB/binary>>}
 	end,
     {SrcPresent, SrcBin} =
 	case Source of

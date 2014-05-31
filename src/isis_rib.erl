@@ -161,8 +161,15 @@ process_spf(SPF, State) ->
 		%% FIX zclient to handle multiple nexthops..
 		case lists:keyfind(AFI, 1, NHs) of
 		    {_, NH} ->
+			{IfIndexes, Nexthops} = 
+			    case AFI of
+				ipv4 -> {[], [NH]};
+				ipv6 -> {NHa, NHi} = NH,
+					{[NHi], [NHa]}
+			    end,
 			P = #zclient_prefix{afi = AFI, address = Address, mask_length = Mask},
-			R = #zclient_route{prefix = P, nexthop = NH, metric = Metric, source = SourceP},
+			R = #zclient_route{prefix = P, nexthops = Nexthops, ifindexes = IfIndexes,
+					   metric = Metric, source = SourceP},
 			case ets:lookup(State#state.rib, R) of
 			    [] ->
 				%% No prior route, so install into the RIB
