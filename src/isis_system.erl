@@ -523,7 +523,7 @@ handle_info({add_interface, Interface}, State) ->
     {noreply, add_interface(Interface, State)};
 handle_info({add_address, Interface, A}, State) ->
     {noreply, add_address(A, Interface, State)};
-handle_info({delete_address, Interface, A}, State) ->
+handle_info({del_address, Interface, A}, State) ->
     {noreply, delete_address(A, Interface, State)};
 handle_info({redistribute_add, Route}, State) ->
     {noreply, add_redistribute(Route, State)};
@@ -941,8 +941,9 @@ add_address(#zclient_prefix{afi = AFI, address = Address,
 				  AFI, Address, Mask, State),
     NewState#state{interfaces = NewD}.
 
-delete_address(#zclient_prefix{afi = AFI, address = Address, mask_length = Mask} = A,
+delete_address(#zclient_prefix{afi = AFI, address = Address, mask_length = Mask},
 	       Name, State) ->
+    A = #isis_address{afi = AFI, address = Address, mask = Mask},
     case dict:is_key(Name, State#state.interfaces) of
 	true ->
 	    I = dict:fetch(Name, State#state.interfaces),
@@ -1035,7 +1036,7 @@ add_to_list(Item, List) ->
     end.
 
 delete_from_list(Item, List) ->
-    lists:filter(fun(I) -> Item =:= I end, List).
+    lists:filter(fun(I) -> Item =/= I end, List).
 		      
 address_to_string(ipv4, Address) ->
     inet_parse:ntoa(
