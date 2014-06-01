@@ -982,9 +982,17 @@ add_redistribute(#zclient_route{prefix = #zclient_prefix{afi = ipv4, address = A
     update_frags(fun isis_protocol:update_tlv/4, TLV, 0, State);
 add_redistribute(#zclient_route{prefix = #zclient_prefix{afi = ipv6, address = Address,
 						     mask_length = Mask},
-				metric = Metric}, State) ->
+				metric = Metric, source = Source}, State) ->
     MaskLenBytes = erlang:trunc((Mask + 7) / 8),
     A = Address bsr (128 - Mask),
+    SubTLV =
+	case Source of
+	    #zclient_prefix{afi = ipv6,
+			    address = S,
+			    mask_length = M} ->
+		[#isis_subtlv_srcdst{prefix = S, prefix_length = M}];
+	    _ -> []
+	end,
     TLV = 
 	#isis_tlv_ipv6_reachability{
 	   reachability =
@@ -992,7 +1000,7 @@ add_redistribute(#zclient_route{prefix = #zclient_prefix{afi = ipv6, address = A
 		   prefix = <<A:(MaskLenBytes * 8)>>, up = true,
 		   mask_len = Mask, metric = Metric,
 		   external = true,
-		   sub_tlv = []}]
+		   sub_tlv = SubTLV}]
 	  },
     update_frags(fun isis_protocol:update_tlv/4, TLV, 0, State).
 
