@@ -505,11 +505,12 @@ read_ipv6_route(_Type, _Flags, Info, MaskLen, R0) ->
     Address = A bsl (128 - ASize),
     {SrcPfx, R6} = 
 	case SrcPfxFlag of
-	    1 -> <<SrcPfxLen:8, R6T>> = R1,
+	    1 -> io:format("Binary Src: ~p~n", [R1]),
+		 <<SrcPfxLen:8, R6T/binary>> = R1,
 		 SrcPfxBytes = erlang:trunc((SrcPfxLen+7)/8),
-		 <<SrcPfxB:SrcPfxBytes, R6T2/binary>> = R6T,
+		 <<SrcPfxB:SrcPfxBytes/binary, R6T2/binary>> = R6T,
 		 {#zclient_prefix{afi = ipv6,
-				  address = SrcPfxB bsl (128 - SrcPfxBytes),
+				  address = SrcPfxB,
 				  mask_length = SrcPfxLen},
 		  R6T2};
 	    0 -> {undefined, R1}
