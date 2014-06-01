@@ -289,7 +289,7 @@ handle_call({del_interface, Name}, _From,
 	case dict:find(Name, Interfaces) of
 	    {ok, Interface} ->
 		isis_interface:stop(Interface#isis_interface.pid),
-		dict:store(Name, Interface#isis_interface{pid = undef, enabled = false},
+		dict:store(Name, Interface#isis_interface{pid = undefined, enabled = false},
 			   Interfaces);
 	    _ ->
 		Interfaces

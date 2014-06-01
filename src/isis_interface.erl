@@ -216,10 +216,12 @@ handle_cast(stop, #state{port = Port,
     erlang:port_close(Port),
     %% Notify our adjacencies
     case is_pid(Level1) of
-	true -> gen_server:cast(Level1, stop)
+	true -> gen_server:cast(Level1, stop);
+	_ -> no_process
     end,
     case is_pid(Level2) of
-	true -> gen_server:cast(Level2, stop)
+	true -> gen_server:cast(Level2, stop);
+	_ -> no_process
     end,
     {stop, normal, State};
 
