@@ -151,7 +151,9 @@ handle_call({clear_neighbors}, _From, State) ->
 	     State#state.adj_handlers),
     {reply, ok, State};
 
-handle_call(_Request, _From, State) ->
+handle_call(Request, _From, State) ->
+    io:format("~s: Failed to handle message: ~p~n",
+	      [?MODULE_STRING, Request]),
     Reply = ok,
     {reply, Reply, State}.
 
@@ -240,17 +242,22 @@ handle_info({timeout, _Ref, ssn}, State) ->
     NewState = send_psnp(State#state{ssn_timer = undef}),
     {noreply, NewState};
 
-handle_info({timeout, _Ref, dis}, State) ->
+handle_info({timeout, _Ref, dis},
+	    #state{are_we_dis = true} = State) ->
     cancel_timers([State#state.ssn_timer]),
     NewState = send_csnp(State),
     Timer = start_timer(dis, NewState),
     {noreply, NewState#state{dis_timer = Timer}};
+handle_info({timeout, _Ref, dis}, State) ->
+    {noreply, State#state{dis_timer = undef}};
 
-handle_info({'EXIT', Pid, _Reason}, State) ->
+handle_info({'DOWN', _Ref, process, Pid, _Reason}, State) ->
     %% Remove adjacency...
     {noreply, remove_adj_by_pid(Pid, State)};
 
-handle_info(_Info, State) ->
+handle_info(Info, State) ->
+    io:format("~s: Failed to handle message: ~p~n",
+	      [?MODULE_STRING, Info]),
     {noreply, State}.
 
 %%--------------------------------------------------------------------
@@ -408,9 +415,9 @@ relinquish_dis(#state{are_we_dis = true,
     isis_system:delete_tlv(TLV, 0, State#state.level),
     %% We're no longer DIS, so release pseudonode
     isis_system:deallocate_pseudonode(Node, State#state.level),
-    ok;
-relinquish_dis(_) ->
-    ok.
+    State#state{dis = undef, are_we_dis = false, pseudonode = 0};
+relinquish_dis(State) ->
+    State.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -492,8 +499,10 @@ remove_adj_by_pid(Pid, State) ->
 	   (_, _) -> true
 	end,
     NewAdj = dict:filter(F, State#state.adj_handlers),
-    State#state{adj_handlers = NewAdj}.
-
+    case length(dict:fetch_keys(NewAdj)) of
+	0 -> relinquish_dis(State#state{adj_handlers = NewAdj});
+	_ -> State#state{adj_handlers = NewAdj}
+    end.
 
 %%--------------------------------------------------------------------
 %% @private

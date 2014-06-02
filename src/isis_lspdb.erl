@@ -23,7 +23,8 @@
 	 summary/2, range/3,
 	 replace_tlv/3, update_reachability/3,
 	 schedule_spf/1,
-	 links/1]).
+	 links/1,
+	 clear_db/1]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -63,6 +64,16 @@ store_lsp(Ref, LSP) ->
 %%--------------------------------------------------------------------
 delete_lsp(Ref, LSP) ->
     gen_server:call(Ref, {delete, LSP}).
+
+%%--------------------------------------------------------------------
+%% @doc
+%%
+%% Given an LSP-Id, delete its from the LSP DB
+%%
+%% @end
+%%--------------------------------------------------------------------
+clear_db(Ref) ->
+    gen_server:call(Ref, {clear_db}).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -281,6 +292,10 @@ handle_call({store, #isis_lsp{} = LSP},
 handle_call({delete, LSP},
 	    _From, State) ->
     {reply, ets:delete(State#state.db, LSP), State};
+
+handle_call({clear_db}, _From, State) ->
+    ets:delete_all_objects(State#state.db),
+    {reply, ok, State};
 
 handle_call({purge, LSP}, _From, State) ->
     Result = purge(LSP, State),
