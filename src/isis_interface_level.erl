@@ -16,7 +16,7 @@
 
 %% API
 -export([start_link/1, get_state/2, set/2,
-	 update_adjacency/3]).
+	 update_adjacency/3, clear_neighbors/1]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -65,6 +65,9 @@ set(Pid, Values) ->
 
 update_adjacency(Pid, Direction, Neighbor) ->
     gen_server:cast(Pid, {update_adjacency, Direction, self(), Neighbor}).
+
+clear_neighbors(Pid) ->
+    gen_server:call(Pid, {clear_neighbors}).
 
 stop(Pid) ->
     gen_server:cast(Pid, stop).
@@ -140,6 +143,13 @@ handle_call({get_state, authentication}, _From, State) ->
 handle_call({set, Values}, _From, State) ->
     NewState = set_values(Values, State),
     {reply, ok, NewState};
+
+handle_call({clear_neighbors}, _From, State) ->
+    dict:map(fun(_, Pid) ->
+		     gen_fsm:send_event(Pid, stop)
+	     end,
+	     State#state.adj_handlers),
+    {reply, ok, State};
 
 handle_call(_Request, _From, State) ->
     Reply = ok,

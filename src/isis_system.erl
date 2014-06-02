@@ -22,6 +22,8 @@
 	 set_interface/2, set_interface/3, get_interface/1,
 	 %% Enable / disable level on an interface
 	 enable_level/2, disable_level/2,
+	 %% Clear
+	 clear_neighbors/0,
 	 %% TLV setting code:
 	 set_hostname/1,
 	 %% Add/Remove areas
@@ -118,7 +120,6 @@ enable_level(_, _) ->
     io:format("Invalid level, should be either level_1 or level_2~n", []),
     bad_level.
 
-
 disable_level(Interface, level_1) ->
     gen_server:call(?MODULE, {disable_level, Interface, level_1});
 disable_level(Interface, level_2) ->
@@ -127,6 +128,8 @@ disable_level(_, _) ->
     io:format("Invalid level, should be either level_1 or level_2~n", []),
     bad_level.
 
+clear_neighbors() ->
+    gen_server:call(?MODULE, {clear_neighbors}).
 
 system_id() ->
     gen_server:call(?MODULE, {system_id}).
@@ -357,6 +360,13 @@ handle_call({get_interface, Name}, _From,
 	end,
     {reply, Reply, State};
 
+handle_call({clear_neighbors}, _From,
+	    #state{interfaces = Interfaces} = State) ->
+    dict:map(fun(_, I) ->
+		     isis_interface:clear_neighbors(I#isis_interface.pid)
+	     end, Interfaces),
+    {reply, ok, State};
+		     
 handle_call({system_id}, _From,
 	    #state{system_id = ID} = State) ->
     {reply, ID, State};

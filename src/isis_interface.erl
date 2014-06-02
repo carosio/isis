@@ -23,7 +23,8 @@
 	 get_state/3, get_state/1, set/2,
 	 set_level/3,
 	 enable_level/2, disable_level/2, levels/1,
-	 get_addresses/2]).
+	 get_addresses/2,
+	 clear_neighbors/1]).
 
 %% Debug export
 -export([]).
@@ -97,6 +98,9 @@ levels(Pid) ->
 
 get_addresses(Pid, Family) ->
     gen_server:call(Pid, {get_addresses, Family}).
+
+clear_neighbors(Pid) ->
+    gen_server:cast(Pid, {clear_neighbors}).
 
 %%--------------------------------------------------------------------
 %% @private
@@ -231,6 +235,19 @@ handle_cast({set, level_1, Values}, State) ->
 handle_cast({set, level_2, Values}, State) ->
     isis_interface_level:set(State#state.level2, Values),
     {noreply,  State};
+
+handle_cast({clear_neighbors}, #state{
+				 level1 = Level1,
+				 level2 = Level2} = State) ->
+    case is_pid(Level1) of
+	true -> isis_interface_level:clear_neighbors(Level1);
+	_ -> no_level
+    end,
+    case is_pid(Level2) of
+	true -> isis_interface_level:clear_neighbors(Level2);
+	_ -> no_level
+    end,
+    {noreply, State};
 
 handle_cast(_Msg, State) ->
     {noreply, State}.
