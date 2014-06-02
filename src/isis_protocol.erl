@@ -249,7 +249,7 @@ decode_tlv_ipv6_reachability(<<Metric:32, Up:1, X:1, S:1,
     {Prefix, SubTLVs, Remainder} = 
 	case S of
 	    1 ->
-		<<SLen:8, P:PLenBytes/binary, SubTLVBytes:SLen/binary, R/binary>> = Rest,
+		<<P:PLenBytes/binary, SLen:8, SubTLVBytes:SLen/binary, R/binary>> = Rest,
 		{ok, STs} = decode_tlvs(SubTLVBytes, subtlv_ipv6r,
 					    fun decode_subtlv_ipv6r/3, []),
 		{P, STs, R};
@@ -502,7 +502,7 @@ encode_tlv_ipv6_reachability_detail(
 		  {1, <<SBinaryLen:8>>, SBinary}
 	  end,
     [<<Metric:32, U:1, E:1, P:1, 0:5,
-       Mask_Len:8, SLen/binary, Prefix:PBytes/binary>> | SBin].
+       Mask_Len:8, Prefix:PBytes/binary, SLen/binary>> | SBin].
 
 -spec encode_tlv_extended_reachability(isis_tlv_extended_reachability_detail()) -> [binary()].
 encode_tlv_extended_reachability(
@@ -560,6 +560,8 @@ encode_tlv(#isis_tlv_ipv6_interface_address{addresses = Addresses}) ->
 		   end,
 		   Addresses),
     encode_tlv_list(ipv6_interface_address, tlv, Bs);
+encode_tlv(#isis_tlv_ipv6_reachability{reachability = []}) ->
+    [];
 encode_tlv(#isis_tlv_ipv6_reachability{reachability = R}) ->
     Bs = lists:map(fun encode_tlv_ipv6_reachability_detail/1, R),
     encode_tlv_list(ipv6_reachability, tlv, Bs);
