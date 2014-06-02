@@ -12,6 +12,7 @@
 
 -behaviour(gen_server).
 
+-include("isis_system.hrl").
 -include("isis_protocol.hrl").
 
 %% API
@@ -859,16 +860,23 @@ handle_lsp(#isis_lsp{lsp_id = ID, sequence_number = TheirSeq} = LSP, State) ->
 	true -> handle_old_lsp(LSP, State);
 	_ ->
 	    L = isis_lspdb:lookup_lsps([ID], State#state.database),
-	    case length(L) of
-		1 -> [OurLSP] = L,
-		     OurSeq = OurLSP#isis_lsp.sequence_number,
-		     case OurSeq =< TheirSeq of
-			 true -> isis_lspdb:store_lsp(State#state.level, LSP);
-			 _ -> ok
-		     end;
-		0 -> isis_lspdb:store_lsp(State#state.level, LSP);
+	    Announce = 
+		case length(L) of
+		    1 -> [OurLSP] = L,
+			 OurSeq = OurLSP#isis_lsp.sequence_number,
+			 case OurSeq =< TheirSeq of
+			     true -> isis_lspdb:store_lsp(State#state.level, LSP),
+				     true;
+			     _ -> false
+			 end;
+		    0 -> isis_lspdb:store_lsp(State#state.level, LSP),
+			 true;
+		    _ -> false
+		end,
+	    case Announce of
+		true -> flood_lsp(LSP, State);
 		_ -> ok
-	    end
+	    end	    
     end,
     State.
 
@@ -1035,4 +1043,24 @@ valid_iih(_From, IIH, _State) ->
 	0 -> false;
 	_ -> true
     end.
-	    
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%%
+%% Flood a received LSP to other interfaces. Ultimately, this needs to be
+%% maintained in the LSPDB so if we learn an LSP via multiple paths within
+%5 quick succession, we don't flood unnecessarily...
+%%
+%% @end
+%%--------------------------------------------------------------------
+flood_lsp(LSP, State) ->
+    Is = dict:to_list(isis_system:list_interfaces()),
+    OutputIs = 
+	lists:filter(
+	  fun(#isis_interface{pid = P})
+		when P =/= State#state.interface_ref ->
+		  false;
+	     (_) -> true
+	  end, Is),
+    isis_lspdb:flood_lsp(State#state.level, OutputIs, LSP).
