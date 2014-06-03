@@ -1035,14 +1035,36 @@ set_values([], State) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
-valid_iih(_From, IIH, _State) ->
-    %% Check for 'protocol supported' field
+valid_iih(_From, IIH, State) ->
+    valid_iih_ps(IIH, State) and
+	valid_iih_area(IIH, State).
+
+%% Checks we have a valid protocol supported field
+valid_iih_ps(IIH, _State) ->
     PS = isis_protocol:filter_tlvs(isis_tlv_protocols_supported,
 				   IIH#isis_iih.tlv),
     case length(PS) of
 	0 -> false;
 	_ -> true
     end.
+
+% Checks we have an intersection area
+valid_iih_area(IIH, _State) ->
+    IIHAreas = 
+	lists:foldl(fun(#isis_tlv_area_address{areas = A}, Acc) ->
+			    Acc ++ A;
+		       (_, Acc) ->
+			    Acc
+		    end, [], IIH#isis_iih.tlv),
+    SysAreas = isis_system:areas(),
+    S1 = sets:from_list(IIHAreas),
+    S2 = sets:from_list(SysAreas),
+    case length(sets:to_list(sets:intersection(S1, S2))) of
+	0 -> false;
+	_ -> true
+    end.
+	     
+	    
 
 %%--------------------------------------------------------------------
 %% @private
