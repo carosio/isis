@@ -447,16 +447,16 @@ update_router_id(#zclient_prefix{afi = Afi} = Address, State) ->
 read_ipv4_route(_Type, _Flags, Info, MaskLen, R0) ->
     <<_:3, SrcPfxFlag:1, MetricFlag:1, DistanceFlag:1, IfindexFlag:1,
       NexthopFlag:1>> = <<Info:8>>,
-    ASize = erlang:trunc(MaskLen+7/8),
+    ASize = erlang:trunc((MaskLen+7)/8) * 8,
     <<A:ASize, R1/binary>> = R0,
     Address = A bsl (32 - ASize),
     {SrcPfx, R6} = 
 	case SrcPfxFlag of
 	    1 -> <<SrcPfxLen:8, R6T/binary>> = R1,
-		 SrcPfxBytes = erlang:trunc((SrcPfxLen+7)/8),
-		 <<SrcPfxB:SrcPfxBytes, R6T2/binary>> = R6T,
+		 SrcPfxBits = erlang:trunc((SrcPfxLen+7)/8) * 8,
+		 <<SrcPfxB:SrcPfxBits, R6T2/binary>> = R6T,
 		 {#zclient_prefix{afi = ipv4,
-				  address = SrcPfxB bsl (32 - SrcPfxBytes),
+				  address = SrcPfxB bsl (32 - SrcPfxBits),
 				  mask_length = SrcPfxLen},
 		  R6T2};
 	    0 -> {undefined, R1}
@@ -500,9 +500,9 @@ read_ipv4_route(_Type, _Flags, Info, MaskLen, R0) ->
 read_ipv6_route(_Type, _Flags, Info, MaskLen, R0) ->
     <<_:3, SrcPfxFlag:1, MetricFlag:1, DistanceFlag:1, IfindexFlag:1,
       NexthopFlag:1>> = <<Info:8>>,
-    ASize = erlang:trunc(MaskLen+7/8),
+    ASize = erlang:trunc((MaskLen+7)/8) * 8,
     <<A:ASize, R1/binary>> = R0,
-    Address = A bsl (128 - ASize),
+    Address = A bsl (128 - MaskLen),
     {SrcPfx, R6} = 
 	case SrcPfxFlag of
 	    1 -> <<SrcPfxLen:8, R6T/binary>> = R1,
@@ -617,7 +617,7 @@ send_route(#zclient_route{prefix =
 		{1, <<M:8, SDA/binary>>};
 	    _ -> {0, <<>>}
 	end,
-    ASize = erlang:trunc(Mask+7/8),
+    ASize = erlang:trunc((Mask+7)/8) * 8,
     A = 
 	case AFI of
 	    ipv4 -> Address bsr (32 - ASize);
@@ -657,7 +657,7 @@ delete_route(#zclient_prefix{afi = AFI, address = Address,
 	     State) ->
     Type = zclient_enum:to_int(zebra_route, isis),
     Unicast = zclient_enum:to_int(safi, unicast),
-    ASize = erlang:trunc(Mask+7/8),
+    ASize = erlang:trunc((Mask+7)/8) * 8,
     ABin = case AFI of
 	       ipv4 -> A = Address bsr (32 - ASize),
 		       <<A:ASize>>;
