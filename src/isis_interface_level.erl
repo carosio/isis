@@ -1049,7 +1049,9 @@ valid_iih_ps(IIH, _State) ->
     end.
 
 % Checks we have an intersection area
-valid_iih_area(IIH, _State) ->
+valid_iih_area(_IIH, #state{level = level_2}) ->
+    true;
+valid_iih_area(IIH, #state{level = level_1}) ->
     IIHAreas = 
 	lists:foldl(fun(#isis_tlv_area_address{areas = A}, Acc) ->
 			    Acc ++ A;
