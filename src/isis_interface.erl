@@ -229,12 +229,16 @@ handle_cast(stop, #state{port = Port,
     end,
     {stop, normal, State};
 
-handle_cast({set, level_1, Values}, State) ->
-    isis_interface_level:set(State#state.level1, Values),
+handle_cast({set, level_1, Values}, #state{level1 = P} = State)
+  when is_pid(P) ->
+    isis_interface_level:set(P, Values),
     {noreply, State};
-handle_cast({set, level_2, Values}, State) ->
-    isis_interface_level:set(State#state.level2, Values),
+handle_cast({set, level_2, Values}, #state{level2 = P} = State)
+  when is_pid(P) ->
+    isis_interface_level:set(P, Values),
     {noreply,  State};
+handle_cast({set, _, _}, State) ->
+    {noreply, State};
 
 handle_cast({clear_neighbors}, #state{
 				 level1 = Level1,
