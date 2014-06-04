@@ -24,7 +24,8 @@
 	 replace_tlv/3, update_reachability/3,
 	 schedule_spf/1,
 	 links/1,
-	 clear_db/1]).
+	 clear_db/1,
+	 set_system_id/2]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -35,6 +36,7 @@
 -record(state, {db,               %% The ETS table we store our LSPs in
 		name_db,          %% Dict for name mapping (may need this as ETS?)
 		level,            %% Our level
+		system_id = undefined, %% Our system id
 	        expiry_timer,     %% We expire LSPs based on this timer
 		spf_timer = undef, %% Dijkestra timer
 		hold_timer        %% SPF Hold timer
@@ -85,6 +87,17 @@ clear_db(Ref) ->
 %%--------------------------------------------------------------------
 get_db(Ref) ->
     gen_server:call(Ref, {get_db}).
+
+%%--------------------------------------------------------------------
+%% @doc
+%%
+%% Inform the lsp-db about the system id, so it doesn't need to request it
+%% from isis_system..
+%%
+%% @end
+%%--------------------------------------------------------------------
+set_system_id(Ref, Id) ->
+    gen_server:cast(Ref, {set_system_id, Id}).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -317,6 +330,8 @@ handle_call(_Request, _From, State) ->
 %%--------------------------------------------------------------------
 handle_cast({schedule_spf}, State) ->
     {noreply, schedule_spf(full, State)};
+handle_cast({set_system_id, ID}, State) ->
+    {noreply, State#state{system_id = ID}};
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
@@ -339,7 +354,7 @@ handle_info({timeout, _Ref, {run_spf, _Type}}, State) ->
     %% Ignoring type for now...
     erlang:cancel_timer(State#state.spf_timer),
     %% Dijkestra...
-    {Time, SPF} = timer:tc(fun() -> do_spf(isis_system:system_id(), State) end),
+    {Time, SPF} = timer:tc(fun() -> do_spf(State#state.system_id, State) end),
     isis_system:process_spf({State#state.level, Time, SPF}),
     {noreply, State#state{spf_timer = undef}};
 handle_info(_Info, State) ->

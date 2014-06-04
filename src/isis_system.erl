@@ -257,6 +257,8 @@ init(Args) ->
 			       self(), lsp_ageout),
     Names = ets:new(isis_names, [named_table, ordered_set,
 				 {keypos, #isis_name.system_id}]),
+    isis_lspdb:set_system_id(level_1, StartState2#state.system_id),
+    isis_lspdb:set_system_id(level_2, StartState2#state.system_id),
     {ok, StartState2#state{periodic_refresh = Timer, names = Names}}.
 
 %%--------------------------------------------------------------------
@@ -371,11 +373,15 @@ handle_call({system_id}, _From,
 	    #state{system_id = ID} = State) ->
     {reply, ID, State};
 handle_call({set_system_id, undefined}, _From, State) ->
+    isis_lspdb:set_system_id(level_1, undefined),
+    isis_lspdb:set_system_id(level_2, undefined),
     NewState = purge_all_lsps(State),
     {reply, ok, NewState#state{system_id = undefined,
 			       system_id_set = false}};
 handle_call({set_system_id, Id}, _From, State)
   when is_binary(Id), byte_size(Id) =:= 6 ->
+    isis_lspdb:set_system_id(level_1, Id),
+    isis_lspdb:set_system_id(level_2, Id),
     NewState = 
 	case State#state.system_id =:= Id of
 	    true -> State;
@@ -886,6 +892,8 @@ autoconf_interface(#isis_interface{mac = Mac, name = Name} = I,
 	    true -> State;
 	    _ -> <<ID:(6*8)>> = Mac,
 		 DynamicName = lists:flatten(io_lib:format("autoconf-~.16B", [ID])),
+		 isis_lspdb:set_system_id(level_1, Mac),
+		 isis_lspdb:set_system_id(level_2, Mac),
 		 NextState =
 		     set_tlv_hostname(DynamicName, State#state{system_id = Mac,
 							system_id_set = true}),
