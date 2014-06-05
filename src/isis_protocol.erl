@@ -530,6 +530,8 @@ encode_tlv(#isis_tlv_is_reachability{virtual = VirtualA,
     Virtual = isis_enum:to_int(boolean, VirtualA),
     Ns = lists:map(fun encode_tlv_is_reachability/1, Neighbors),
     encode_tlv_list(is_reachability, tlv, [<<Virtual:8>>, Ns]);
+encode_tlv(#isis_tlv_is_neighbors{neighbors = []}) ->
+    [];
 encode_tlv(#isis_tlv_is_neighbors{neighbors = Neighbors}) ->
     encode_tlv_list(is_neighbors, tlv, Neighbors);
 encode_tlv(#isis_tlv_padding{size = Size}) ->
