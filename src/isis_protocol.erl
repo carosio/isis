@@ -307,9 +307,13 @@ decode_tlv(padding, _Type, Value) ->
 decode_tlv(lsp_entry, _Type, Value) ->
     LSPs = decode_tlv_lsp_entry(Value, []),
     #isis_tlv_lsp_entry{lsps = LSPs};
-decode_tlv(authentication, _Type, <<AuthType:8, Rest/binary>>) ->
-    AT = isis_enum:to_atom(authentication_type, AuthType),
-    #isis_tlv_authentication{type = AT, signature = Rest};
+decode_tlv(authentication, _Type, <<AuthType:8, Rest/binary>> = R) ->
+    try isis_enum:to_atom(authentication_type, AuthType) of
+	AT -> #isis_tlv_authentication{type = AT, signature = Rest}
+    catch
+	bad_enum -> #isis_tlv_authentication{type = unknown,
+					     signature = R}
+    end;
 decode_tlv(dynamic_hostname, _Type, Value) ->
     #isis_tlv_dynamic_hostname{hostname = binary:bin_to_list(Value)};
 decode_tlv(ip_internal_reachability, _Type, Value) ->
@@ -539,6 +543,8 @@ encode_tlv(#isis_tlv_padding{size = Size}) ->
 encode_tlv(#isis_tlv_lsp_entry{lsps = LSPS}) ->
     LSPb = lists:map(fun encode_tlv_lsp_entry/1, LSPS),
     encode_tlv_list(lsp_entry, tlv, LSPb);
+encode_tlv(#isis_tlv_authentication{type = unknown}) ->
+    [];
 encode_tlv(#isis_tlv_authentication{type = AT, signature = Sig}) ->
     AuthType = isis_enum:to_int(authentication_type, AT),
     encode_tlv(authentication, tlv, <<AuthType:8, Sig/binary>>);
