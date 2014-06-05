@@ -676,7 +676,8 @@ lsp_ageout_check(#state{frags = Frags} = State) ->
     {_, {L1IDs, L2IDs}} = lists:mapfoldl(LSP_Gen, {[], []}, Frags),
     L1LSPs = isis_lspdb:lookup_lsps(L1IDs, isis_lspdb:get_db(level_1)),
     L2LSPs = isis_lspdb:lookup_lsps(L2IDs, isis_lspdb:get_db(level_2)),
-    Updater = fun(#isis_lsp{remaining_lifetime = RL,
+    Updater = fun(#isis_lsp{lsp_id = Id,
+			    remaining_lifetime = RL,
 			    sequence_number = SeqNo} = L, Level)
 		    when RL < (2 * ?DEFAULT_AGEOUT_CHECK) ->
 		      %% Update
@@ -685,9 +686,12 @@ lsp_ageout_check(#state{frags = Frags} = State) ->
 				     sequence_number = SeqNo + 1,
 				     last_update = isis_protocol:current_timestamp()},
 		      CSum = isis_protocol:checksum(NewLSP),
-		      {isis_lspdb:store_lsp(Level, NewLSP#isis_lsp{checksum = CSum}),
-		       Level};
-		 (_, Level) -> {false, Level}
+		      CompleteLSP = NewLSP#isis_lsp{checksum = CSum},
+		      isis_lspdb:flood_lsp(Level, dict:to_list(State#state.interfaces),
+					   CompleteLSP),
+		      {isis_lspdb:store_lsp(Level, CompleteLSP), Level};
+		 (_, Level) -> 
+		      {false, Level}
 	      end,
     lists:mapfoldl(Updater, level_1, L1LSPs),
     lists:mapfoldl(Updater, level_2, L2LSPs).
