@@ -466,19 +466,24 @@ handle_cast({schedule_lsp_refresh},
     %% Schedule LSP generation at somepoint in the future. In time, we
     %% could stagger this a bit - have a fast first re-gen, followed
     %% by longer subsequent ones to allow the network to settle.
+    %% io:format("LSP Refresh scheduled~n", []),
     Timer = erlang:start_timer(2 * 1000, self(), lsp_refresh),
     {noreply, State#state{refresh_timer = Timer}};
 handle_cast({schedule_lsp_refresh}, State) ->
     {noreply, State};
 handle_cast({update_tlv, TLV, Node, Level},
 	    #state{frags = Frags} = State) ->
+    %% io:format("Updating tlv: ~p~n", [TLV]),
     NewFrags = isis_protocol:update_tlv(TLV, Node, Level, Frags),
+    schedule_lsp_refresh(),
     isis_lspdb:schedule_spf(level_1),
     isis_lspdb:schedule_spf(level_2),
     {noreply, State#state{frags = NewFrags}};
 handle_cast({delete_tlv, TLV, Node, Level},
 	    #state{frags = Frags} = State) ->
+    %% io:format("Deleting TLV: ~p~n", [TLV]),
     NewFrags = isis_protocol:delete_tlv(TLV, Node, Level, Frags),
+    schedule_lsp_refresh(),
     {noreply, State#state{frags = NewFrags}};
 handle_cast({add_sid, SID, Addresses}, #state{system_ids = IDs} = State) ->
     D1 = case dict:find(SID, IDs) of
@@ -639,7 +644,10 @@ do_enable_level(_I, _Level) ->
 %%% Refresh LSPs - take the set of fragments and convert them to
 %%% LSPs that we store/update the database with.
 %%% ===================================================================
-refresh_lsps([#lsp_frag{updated = true} = Frag | T], State) ->
+refresh_lsps([#lsp_frag{updated = true} = Frag | T],
+	     #state{system_id_set = true} = State) ->
+    %% LSPId = generate_lspid_from_frag(Frag, State),
+    %% io:format("Refreshing LSP ~p~n", [LSPId]),
     create_lsp_from_frag(Frag, State),
     refresh_lsps(T, State);
 refresh_lsps([_H | T], State) ->

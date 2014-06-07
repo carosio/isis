@@ -194,6 +194,7 @@ handle_cast({set_database}, State) ->
     {noreply, State#state{database = DB, iih_timer = Timer}};
 
 handle_cast({update_adjacency, up, Pid, Sid}, State) ->
+    %% io:format("Adjacency with ~p now up~n", [Sid]),
     D = dict:store(Pid, Sid, State#state.up_adjacencies),
     case State#state.are_we_dis of
 	true ->
@@ -207,17 +208,19 @@ handle_cast({update_adjacency, up, Pid, Sid}, State) ->
     end,
     {noreply, State#state{up_adjacencies = D}};
 handle_cast({update_adjacency, down, Pid, Sid}, State) ->
+    %% io:format("Adjacency with ~p now down~n", [Sid]),
     D = dict:erase(Pid, State#state.up_adjacencies),
-    case State#state.are_we_dis of
-	true ->
-	    TLV = #isis_tlv_extended_reachability{
-		     reachability = [#isis_tlv_extended_reachability_detail{
-					neighbor = <<Sid:6/binary, 0:8>>,
-					metric = 0,
-					sub_tlv = []}]},
-	    isis_system:delete_tlv(TLV, State#state.pseudonode, State#state.level);
-	_ -> ok
+    PN = 
+	case State#state.are_we_dis of
+	true -> State#state.pseudonode;
+	    _ -> 0
     end,
+    TLV = #isis_tlv_extended_reachability{
+	     reachability = [#isis_tlv_extended_reachability_detail{
+				neighbor = <<Sid:6/binary, 0:8>>,
+				metric = 0,
+				sub_tlv = []}]},
+    isis_system:delete_tlv(TLV, PN, State#state.level),
     {noreply, State#state{up_adjacencies = D}};
 handle_cast(_Msg, State) ->
     {noreply, State}.
@@ -327,6 +330,7 @@ handle_dis_election(From,
 		    #isis_iih{priority = TheirP, dis = DIS, source_id = SID},
 		    #state{priority = OurP, snpa = OurSNPA} = State)
   when TheirP > OurP; TheirP == OurP, From > OurSNPA ->
+    %% io:format("handle_dis_election: They win~n", []),
     <<D:6/binary, _:1/binary>> = DIS,
     DIS_Priority = 
 	case D =:= SID of
@@ -350,6 +354,7 @@ handle_dis_election(_From,
 		    #isis_iih{priority = _TheirP, dis = DIS, source_id = _SID},
 		    #state{priority = _OurP, are_we_dis = Us} = State)
   when Us =:= false ->
+    %% io:format("handle_dis_election: We win, assuming DIS if adj is up~n", []),
     <<D:6/binary, _D1:1/binary>> = DIS,
     NewState = 
 	case dict:find(D, State#state.adj_handlers) of
@@ -360,6 +365,7 @@ handle_dis_election(_From,
 handle_dis_election(_From,
 		    #isis_iih{priority = _TheirP, dis = _DIS, source_id = _SID},
 		    #state{priority = _OurP, are_we_dis = _Us} = State) ->
+    %% io:format("handle_dis_election: no-op~n", []),
     State.
 
 assume_dis(State) ->
@@ -419,6 +425,21 @@ relinquish_dis(#state{are_we_dis = true,
     State#state{dis = undef, are_we_dis = false, pseudonode = 0};
 relinquish_dis(State) ->
     State.
+
+remove_adjacency(#state{are_we_dis = false,
+			dis = DIS,
+			level = Level})
+  when DIS =/= undef ->
+    TLV = 
+	#isis_tlv_extended_reachability{
+	   reachability = [#isis_tlv_extended_reachability_detail{
+			      neighbor = DIS,
+			      metric = 0,
+			      sub_tlv = []}]},
+    isis_system:delete_tlv(TLV, 0, Level);
+remove_adjacency(_) ->
+    ok.
+
 
 %%--------------------------------------------------------------------
 %% @private
@@ -501,7 +522,9 @@ remove_adj_by_pid(Pid, State) ->
 	end,
     NewAdj = dict:filter(F, State#state.adj_handlers),
     case length(dict:fetch_keys(NewAdj)) of
-	0 -> relinquish_dis(State#state{adj_handlers = NewAdj});
+	0 -> remove_adjacency(State),
+	     relinquish_dis(State#state{adj_handlers = NewAdj,
+					dis = undef});
 	_ -> State#state{adj_handlers = NewAdj}
     end.
 

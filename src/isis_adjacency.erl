@@ -130,6 +130,7 @@ up({timeout}, State) ->
     NewState = start_timer(State),
     {next_state, down, NewState};
 up(stop, State) ->
+    update_adjacency(down, State),
     {stop, normal, State}.
 
 down({iih, _}, State) ->
