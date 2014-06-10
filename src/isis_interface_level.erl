@@ -35,6 +35,7 @@
 	  hold_time = ?DEFAULT_HOLD_TIME,
 	  csnp_timer = ?ISIS_CSNP_TIMER,
 	  metric = ?DEFAULT_METRIC,
+	  metric_type = wide :: wide | narrow,
 	  authentication_type = none :: none | text | md5,
 	  authentication_key = <<>>,
 	  padding = true :: true | false,  %% To pad or not...
@@ -198,13 +199,11 @@ handle_cast({update_adjacency, up, Pid, Sid}, State) ->
     D = dict:store(Pid, Sid, State#state.up_adjacencies),
     case State#state.are_we_dis of
 	true ->
-	    TLV = #isis_tlv_extended_reachability{
-		     reachability = [#isis_tlv_extended_reachability_detail{
-					neighbor = <<Sid:6/binary, 0:8>>,
-					metric = 0,
-					sub_tlv = []}]},
-	    isis_system:update_tlv(TLV, State#state.pseudonode, State#state.level);
-	_ -> ok
+	    update_reachability_tlv(add, <<Sid:6/binary, 0:8>>, 0,
+				    State#state.pseudonode, State);
+	_ ->
+	    update_reachability_tlv(add, <<Sid:6/binary, 0:8>>,
+				    State#state.metric, 0, State)
     end,
     {noreply, State#state{up_adjacencies = D}};
 handle_cast({update_adjacency, down, Pid, Sid}, State) ->
@@ -215,12 +214,7 @@ handle_cast({update_adjacency, down, Pid, Sid}, State) ->
 	true -> State#state.pseudonode;
 	    _ -> 0
     end,
-    TLV = #isis_tlv_extended_reachability{
-	     reachability = [#isis_tlv_extended_reachability_detail{
-				neighbor = <<Sid:6/binary, 0:8>>,
-				metric = 0,
-				sub_tlv = []}]},
-    isis_system:delete_tlv(TLV, PN, State#state.level),
+    update_reachability_tlv(del, <<Sid:6/binary, 0:8>>, PN, 0, State),
     {noreply, State#state{up_adjacencies = D}};
 handle_cast(_Msg, State) ->
     {noreply, State}.
@@ -340,12 +334,7 @@ handle_dis_election(From,
     case State#state.dis =:= DIS of
 	false ->
 	    relinquish_dis(State),
-	    TLV = #isis_tlv_extended_reachability{
-		     reachability = [#isis_tlv_extended_reachability_detail{
-					neighbor = DIS,
-					metric = State#state.metric,
-					sub_tlv = []}]},
-	    isis_system:update_tlv(TLV, 0, State#state.level);
+	    update_reachability_tlv(add, DIS, 0, 0, State);
 	_ ->
 	    ok
     end,
@@ -377,34 +366,13 @@ assume_dis(State) ->
     DIS = <<ID:6/binary, Node:8>>,
     NewState = State#state{dis = DIS, dis_timer = DIS_Timer,
 			   are_we_dis = true, pseudonode = Node},
-    OldDISReach = #isis_tlv_extended_reachability{
-		     reachability = [#isis_tlv_extended_reachability_detail{
-					neighbor = State#state.dis,
-					metric = 0,
-					sub_tlv = []}]},
-    NewDISReach = #isis_tlv_extended_reachability{
-		     reachability = [#isis_tlv_extended_reachability_detail{
-					neighbor = SysID,
-					metric = 0,
-					sub_tlv = []}]},
-    SysReach = #isis_tlv_extended_reachability{
-		  reachability = [#isis_tlv_extended_reachability_detail{
-				     neighbor = DIS,
-				     metric = State#state.metric,
-				     sub_tlv = []}]},
     %% Add our relationship to the DIS to our LSP
-    isis_system:update_tlv(SysReach, 0, State#state.level),
+    update_reachability_tlv(add, DIS, 0, State#state.metric, State),
     %% Remove our relationship with the old DIS, and link DIS to new node
-    isis_system:delete_tlv(OldDISReach, 0, State#state.level),
-    isis_system:update_tlv(NewDISReach, Node, State#state.level),
+    update_reachability_tlv(del, State#state.dis, 0, 0, State),
+    update_reachability_tlv(add, SysID, Node, 0, State),
     dict:map(fun(_, AdjID) -> 
-		     isis_system:update_tlv(
-		       #isis_tlv_extended_reachability{
-			  reachability = [#isis_tlv_extended_reachability_detail{
-					     neighbor = <<AdjID:6/binary, 0:8>>,
-					     metric = 0,
-					     sub_tlv = []}]},
-		       Node, State#state.level)
+		     update_reachability_tlv(add, <<AdjID:6/binary, 0:8>>, Node, 0, State)
 	     end, State#state.up_adjacencies),
     isis_system:schedule_lsp_refresh(),
     send_iih(ID, NewState),
@@ -414,12 +382,7 @@ relinquish_dis(#state{are_we_dis = true,
 		      dis = DIS,
 		      pseudonode = Node} = State) ->
     %% Unlink our LSP from our DIS LSP...
-    TLV = #isis_tlv_extended_reachability{
-	     reachability = [#isis_tlv_extended_reachability_detail{
-				neighbor = DIS,
-				metric = State#state.metric,
-				sub_tlv = []}]},
-    isis_system:delete_tlv(TLV, 0, State#state.level),
+    update_reachability_tlv(del, DIS, 0, 0, State),
     %% We're no longer DIS, so release pseudonode
     isis_system:deallocate_pseudonode(Node, State#state.level),
     State#state{dis = undef, are_we_dis = false, pseudonode = 0};
@@ -1111,3 +1074,40 @@ flood_lsp(LSP, State) ->
 	     (_) -> true
 	  end, Is),
     isis_lspdb:flood_lsp(State#state.level, OutputIs, LSP).
+
+update_reachability_tlv(add, N, PN, Metric,
+			#state{metric_type = narrow} = State) ->
+    TLV = #isis_tlv_is_reachability{
+	     virtual = false,
+	     is_reachability = [#isis_tlv_is_reachability_detail{
+				   neighbor = N,
+				   default = #isis_metric_information{metric_supported = true,
+								      metric = Metric,
+								      metric_type = internal}}]},
+    isis_system:update_tlv(TLV, PN, State#state.level);
+update_reachability_tlv(del, N, PN, Metric,
+			#state{metric_type = narrow} = State) ->
+    TLV = #isis_tlv_is_reachability{
+	     virtual = false,
+	     is_reachability = [#isis_tlv_is_reachability_detail{
+				   neighbor = N,
+				   default = #isis_metric_information{metric_supported = true,
+								      metric = Metric,
+								      metric_type = internal}}]},
+    isis_system:delete_tlv(TLV, PN, State#state.level);
+update_reachability_tlv(add, N, PN, Metric,
+			#state{metric_type = wide} = State) ->
+    TLV = #isis_tlv_extended_reachability{
+	     reachability = [#isis_tlv_extended_reachability_detail{
+				neighbor = N,
+				metric = Metric,
+				sub_tlv = []}]},
+    isis_system:update_tlv(TLV, PN, State#state.level);
+update_reachability_tlv(del, N, PN, Metric,
+			#state{metric_type = wide} = State) ->
+    TLV = #isis_tlv_extended_reachability{
+	     reachability = [#isis_tlv_extended_reachability_detail{
+				neighbor = N,
+				metric = Metric,
+				sub_tlv = []}]},
+    isis_system:delete_tlv(TLV, PN, State#state.level).

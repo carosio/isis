@@ -615,6 +615,9 @@ encode_tlvs(TLVs, Encoder) ->
 %%%===================================================================
 %%% TLV updating
 %%% ===================================================================
+update_tlv(#isis_tlv_is_reachability{} = TLV, 
+	   Node, Level, Frags) ->
+    merge_array_tlv(TLV, Node, Level, Frags);
 update_tlv(#isis_tlv_extended_reachability{} = TLV, 
 	   Node, Level, Frags) ->
     merge_array_tlv(TLV, Node, Level, Frags);
@@ -640,6 +643,9 @@ delete_tlv(#isis_tlv_dynamic_hostname{} = TLV,
 	   Node, Level, Frags) ->
     delete_whole_tlv(fun(T) -> element(1, T) =/= element(1, TLV) end,
 		     Node, Level, Frags);
+delete_tlv(#isis_tlv_is_reachability{} = TLV,
+	   Node, Level, Frags) ->
+    delete_array_tlv(TLV, Node, Level, Frags);
 delete_tlv(#isis_tlv_extended_reachability{} = TLV,
 	   Node, Level, Frags) ->
     delete_array_tlv(TLV, Node, Level, Frags);
@@ -705,6 +711,23 @@ delete_array_tlv(TLV, Node, Level, Frags) ->
 	       end,
     lists:map(Iterator, Frags).
 
+handle_delete_array_tlv(#isis_tlv_is_reachability{is_reachability = Deleted},
+			#isis_tlv_is_reachability{is_reachability = Existing} = Original,
+			Size) ->
+    NewD = lists:nth(1, Deleted),
+    DeletedN = NewD#isis_tlv_is_reachability_detail.neighbor,
+    Results = lists:filter(fun(#isis_tlv_is_reachability_detail{neighbor = N})
+				 when N =:= DeletedN ->
+				   false;
+			      (_) -> true
+			   end,
+			   Existing),
+    case length(Results) =:= length(Existing) of
+	true -> {Original, {false, Size}};
+	_ -> NewTLV = Original#isis_tlv_is_reachability{is_reachability = Results},
+	     SizeDiff = tlv_size(Original) - tlv_size(NewTLV),
+	     {NewTLV, {true, Size - SizeDiff}}
+    end;
 handle_delete_array_tlv(#isis_tlv_extended_reachability{reachability = Deleted},
 			#isis_tlv_extended_reachability{reachability = Existing} = Original,
 			Size) ->
@@ -802,6 +825,19 @@ merge_whole_tlv(Matcher, TLV, #lsp_frag{tlvs = TLVs, size = Size,
 %%% Add an entry to an array TLV. Find any existing TLV and see if we
 %%% have space to add this array entry.
 %%% ===================================================================
+handle_add_array_tlv(#isis_tlv_is_reachability{is_reachability = Existing} = ET,
+		     #isis_tlv_is_reachability{is_reachability = New},
+		     Size)
+  when length(New) =:= 1 ->
+    NewD = lists:nth(1, New),
+    ExistingSize = tlv_size(ET),
+    NewList = Existing ++ [NewD],
+    NewSize = tlv_size(ET#isis_tlv_is_reachability{is_reachability = NewList}),
+    case (Size - ExistingSize + NewSize) =< 1492 of
+	false -> {ET, {Size - ExistingSize + NewSize, false}};
+	true -> {ET#isis_tlv_is_reachability{is_reachability = NewList},
+		 {Size, true}}
+    end;
 handle_add_array_tlv(#isis_tlv_extended_reachability{reachability = Existing} = ET,
 		     #isis_tlv_extended_reachability{reachability = New},
 		     Size)
@@ -874,6 +910,42 @@ add_array_tlv(TLV, Node, Level, Frags) ->
 %%% until we've run out of TLVs. Then we start again, and we see if we
 %%% can add to the first TLV, etc...
 %%% ===================================================================
+handle_merge_array_tlv(#isis_tlv_is_reachability{is_reachability = Existing} = ET,
+		       #isis_tlv_is_reachability{is_reachability = New},
+		       CurrentSize)
+  when length(New) =:= 1 ->
+    %% There is just one detail entry....
+    NewD = lists:nth(1, New),
+    ExistingSize = tlv_size(ET),
+    NewNeighbor = NewD#isis_tlv_is_reachability_detail.neighbor,
+    Updater = fun(#isis_tlv_is_reachability_detail{neighbor = N}, _Acc)
+		    when N =:= NewNeighbor ->
+		      {NewD, true};
+		 (D, Acc) -> {D, Acc}
+	end,
+    Deleter = fun(#isis_tlv_extended_reachability_detail{neighbor = N}) ->
+		      N =/= NewNeighbor
+	      end,
+    {NewTLV, Updated} = lists:mapfoldl(Updater, false, Existing),
+    case Updated of
+	true ->
+	    FinalTLV = #isis_tlv_is_reachability{is_reachability = NewTLV},
+	    NewSize = tlv_size(FinalTLV),
+	    %% If the new detail entry pushes us over the LSP size, just
+	    %% remove the old entry.
+	    case (CurrentSize - ExistingSize + NewSize) >= 1492 of
+		true ->
+		    AfterDelete = lists:filter(Deleter, Existing),
+		    DeletedTLV = #isis_tlv_is_reachability{is_reachability = AfterDelete},
+		    DeletedSize = (CurrentSize - ExistingSize) + tlv_size(DeletedTLV),
+		    {DeletedTLV,
+		     {DeletedSize, false, length(AfterDelete) =/= length(Existing)}};
+		_ ->
+		    {FinalTLV,
+		     {CurrentSize - ExistingSize + NewSize, true, true}}
+	    end;
+	_ -> {ET, {CurrentSize, false, false}}
+    end;
 handle_merge_array_tlv(#isis_tlv_extended_reachability{reachability = Existing} = ET,
 		       #isis_tlv_extended_reachability{reachability = New},
 		       CurrentSize)

@@ -58,12 +58,19 @@
 	   areas :: [binary()]}).
 -type isis_tlv_area_address() :: #isis_tlv_area_address{}.
 
+-record (isis_metric_information, {
+	   metric_supported  = false:: atom(),
+	   metric = 0 :: integer(),
+	   metric_type = internal :: atom()
+	  }).
+-type isis_metric_information() :: #isis_metric_information{}.
+
 -record (isis_tlv_is_reachability_detail, {
 	   neighbor :: binary(),
-	   default :: isis_metric_information(),
-	   delay :: isis_metric_information(),
-	   expense :: isis_metric_information(),
-	   error :: isis_metric_information()
+	   default = #isis_metric_information{} :: isis_metric_information(),
+	   delay = #isis_metric_information{} :: isis_metric_information(),
+	   expense = #isis_metric_information{} :: isis_metric_information(),
+	   error = #isis_metric_information{} :: isis_metric_information()
 	  }).
 -type isis_tlv_is_reachability_detail() :: #isis_tlv_is_reachability_detail{}.
 -record (isis_tlv_is_reachability, {
@@ -97,13 +104,6 @@
 -record (isis_tlv_dynamic_hostname, {
 	   hostname :: nonempty_string()}).
 -type isis_tlv_dynamic_hostname() :: #isis_tlv_dynamic_hostname{}.
-
--record (isis_metric_information, {
-	   metric_supported :: atom(),
-	   metric :: integer(),
-	   metric_type :: atom()
-	  }).
--type isis_metric_information() :: #isis_metric_information{}.
 
 -record (isis_tlv_ip_internal_reachability_detail, {
 	   ip_address :: integer(),
