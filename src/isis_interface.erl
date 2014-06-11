@@ -24,7 +24,8 @@
 	 set_level/3,
 	 enable_level/2, disable_level/2, levels/1,
 	 get_addresses/2,
-	 clear_neighbors/1]).
+	 clear_neighbors/1,
+	 dump_config/1]).
 
 %% Debug export
 -export([]).
@@ -101,6 +102,9 @@ get_addresses(Pid, Family) ->
 
 clear_neighbors(Pid) ->
     gen_server:cast(Pid, {clear_neighbors}).
+
+dump_config(Pid) ->
+    gen_server:call(Pid, {dump_config}).
 
 %%--------------------------------------------------------------------
 %% @private
@@ -191,6 +195,10 @@ handle_call({get_addresses, Family}, _From, State) ->
     Addresses = lists:filtermap(Matcher,
 				Interface#isis_interface.addresses),
     {reply, Addresses, State};
+
+handle_call({dump_config}, _From, State) ->
+    dump_config_state(State),
+    {reply, ok, State};
 
 handle_call({get, level_1, Value}, _From, State) ->
     R = isis_interface_level:get_state(State#state.level1, Value),
@@ -506,3 +514,23 @@ extract_args([{circuit_type, Type} | T] , State) ->
     extract_args(T, State#state{circuit_type = Type});
 extract_args([], State) ->
     State.
+
+dump_config_fields([{level1, P} | Fs], #state{name = N} = State)
+  when is_pid(P) ->
+    io:format("isis_system:enable_level(\"~s\", level_1).~n", [N]),
+    isis_interface_level:dump_config(N, level_1, P),
+    dump_config_fields(Fs, State);
+dump_config_fields([{level2, P} | Fs], #state{name = N} = State)
+  when is_pid(P) ->
+    io:format("isis_system:enable_level(\"~s\", level_2).~n", [N]),
+    isis_interface_level:dump_config(N, level_2, P),
+    dump_config_fields(Fs, State);
+dump_config_fields([_ | Fs], State) ->
+    dump_config_fields(Fs, State);
+dump_config_fields([], _) ->
+    ok.
+
+dump_config_state(State) ->
+    S = lists:zip(record_info(fields, state),
+		  tl(erlang:tuple_to_list(State))),
+    dump_config_fields(S, State).

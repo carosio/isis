@@ -17,7 +17,8 @@
 
 %% API
 -export([start_link/1, get_state/2, set/2,
-	 update_adjacency/3, clear_neighbors/1]).
+	 update_adjacency/3, clear_neighbors/1,
+	 dump_config/3]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -70,6 +71,9 @@ update_adjacency(Pid, Direction, Neighbor) ->
 
 clear_neighbors(Pid) ->
     gen_server:call(Pid, {clear_neighbors}).
+
+dump_config(Name, Level, Pid) ->
+    gen_server:call(Pid, {dump_config, Name, Level}).
 
 stop(Pid) ->
     gen_server:cast(Pid, stop).
@@ -151,6 +155,10 @@ handle_call({clear_neighbors}, _From, State) ->
 		     gen_fsm:send_event(Pid, stop)
 	     end,
 	     State#state.adj_handlers),
+    {reply, ok, State};
+
+handle_call({dump_config, Name, Level}, _From, State) ->
+    dump_config_state(Name, Level, State),
     {reply, ok, State};
 
 handle_call(Request, _From, State) ->
@@ -1111,3 +1119,43 @@ update_reachability_tlv(del, N, PN, Metric,
 				metric = Metric,
 				sub_tlv = []}]},
     isis_system:delete_tlv(TLV, PN, State#state.level).
+
+dump_config_fields(Name, Level,
+		   [{authentication_type, text} | Fs],
+		   #state{authentication_key = K} = State) ->
+    io:format("isis_sytem:set_interface(\"~s\", ~s, [{encryption, ~s, ~p}]).~n",
+	      [Name, Level, text, K]),
+    dump_config_fields(Name, Level, Fs, State);
+dump_config_fields(Name, Level,
+		   [{metric, M} | Fs], State)
+  when M =/= ?DEFAULT_METRIC ->
+    io:format("isis_system:set_interface(\"~s\", ~s, [{metric, ~p}]).~n",
+	      [Name, Level, M]),
+    dump_config_fields(Name, Level, Fs, State);
+dump_config_fields(Name, Level,
+		   [{priority, M} | Fs], State)
+ when M =/= 64 ->
+    io:format("isis_system:set_interface(\"~s\", ~s, [{priority, ~p}]).~n",
+	      [Name, Level, M]),
+    dump_config_fields(Name, Level, Fs, State);
+dump_config_fields(Name, Level,
+		   [{hello_interval, M} | Fs], State)
+  when M =/= (?DEFAULT_HOLD_TIME / 3) ->
+    io:format("isis_system:set_interface(\"~s\", ~s, [{hello_interval, ~p}]).~n",
+	      [Name, Level, erlang:trunc(M/1000)]),
+    dump_config_fields(Name, Level, Fs, State);
+dump_config_fields(Name, Level,
+		   [{hold_time, M} | Fs], State)
+  when M =/= ?DEFAULT_HOLD_TIME ->
+    io:format("isis_system:set_interface(\"~s\", ~s, [hold_time, ~p}]).~n",
+	      [Name, Level, erlang:trunc(M/1000)]),
+    dump_config_fields(Name, Level, Fs, State);
+dump_config_fields(Name, Level, [_ | Fs], State) ->
+    dump_config_fields(Name, Level, Fs, State);
+dump_config_fields(_, _, [], _) ->
+    ok.
+
+dump_config_state(Name, Level, State) ->
+    S = lists:zip(record_info(fields, state),
+		  tl(erlang:tuple_to_list(State))),
+    dump_config_fields(Name, Level, S, State).

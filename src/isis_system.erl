@@ -44,7 +44,7 @@
 	 %% pseudonodes
 	 allocate_pseudonode/2, deallocate_pseudonode/2,
 	 %% Misc
-	 address_to_string/2]).
+	 address_to_string/2, dump_config/0]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -56,6 +56,7 @@
 		system_id,
 		system_id_set = false :: boolean(),
 		fingerprint = <<>> :: binary(),     %% For autoconfig collisions
+		hostname = [],
 		areas = [],
 		frags = [] :: [#lsp_frag{}],
 		max_lsp_lifetime = ?ISIS_MAX_LSP_LIFETIME,
@@ -233,6 +234,9 @@ set_state(Item) ->
 
 get_state(Item) ->
     gen_server:call(?MODULE, {get_state, Item}).
+
+dump_config() ->
+    gen_server:call(?MODULE, {dump_config}).
 
 %%--------------------------------------------------------------------
 %% @private
@@ -446,6 +450,10 @@ handle_call({deallocate_pseudonode, Node, Level}, _From, State) ->
 
 handle_call({get_state, Item}, _From, State) ->
     {reply, extract_state(Item, State), State};
+
+handle_call({dump_config}, _From, State) ->
+    dump_config(State),
+    {reply, ok, State};
 
 handle_call(_Request, _From, State) ->
     Reply = ok,
@@ -769,7 +777,7 @@ set_tlv_hostname(Name, State) ->
     TLV = #isis_tlv_dynamic_hostname{hostname = Name},
     L1Frags = isis_protocol:update_tlv(TLV, 0, level_1, State#state.frags),
     L2Frags = isis_protocol:update_tlv(TLV, 0, level_2, L1Frags),
-    State#state{frags = L2Frags}.
+    State#state{frags = L2Frags, hostname = Name}.
 
 allocate_pseudonode(Pid, Level, #state{frags = Frags} = State) ->
     F = fun(#lsp_frag{pseudonode = PN, level = L})
@@ -1110,3 +1118,39 @@ extract_state(lsp_lifetime, State) ->
     State#state.max_lsp_lifetime;
 extract_state(_, State) ->
     unknown_item.
+
+dump_config_fields([{autoconf, true} | Fs], State) ->
+    io:format("isis_system:set_state([{autoconf, true}]).~n", []),
+    dump_config_fields(Fs, State);
+dump_config_fields([{system_id, SID} | Fs], #state{system_id_set = true,
+						   autoconf = false} = State) ->
+    io:format("isis_system:set_system_id(~p).~n", [SID]),
+    dump_config_fields(Fs, State);
+dump_config_fields([{hostname, H} | Fs], State)
+  when length(H) > 0 ->
+    io:format("isis_system:set_hostname(~p).~n", [H]),
+    dump_config_fields(Fs, State);
+dump_config_fields([{areas, A} | Fs], State) ->
+    lists:map(fun(Area) -> io:format("isis_system:add_area(~p).~n", [Area]) end,
+	      A),
+    dump_config_fields(Fs, State);
+dump_config_fields([{max_lsp_lifetime, V} | Fs], State)
+  when V =/= ?ISIS_MAX_LSP_LIFETIME ->
+    io:format("isis_system:set_state([{lsp_lifetime, ~p}]).~n", [V]),
+    dump_config_fields(Fs, State);
+dump_config_fields([{interfaces, I} | Fs], State) ->
+    dict:map(fun(Name, #isis_interface{enabled = true, pid = Pid}) ->
+		     io:format("isis_system:add_interface(\"~s\").~n", [Name]),
+		     isis_interface:dump_config(Pid);
+		(_, _) -> false
+	     end, I),
+    dump_config_fields(Fs, State);
+dump_config_fields([_ | Fs], State) ->
+    dump_config_fields(Fs, State);
+dump_config_fields([], _) ->
+    ok.
+
+dump_config(State) ->
+    S = lists:zip(record_info(fields, state),
+		  tl(erlang:tuple_to_list(State))),
+    dump_config_fields(S, State).
