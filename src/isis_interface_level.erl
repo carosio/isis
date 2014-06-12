@@ -1123,7 +1123,7 @@ update_reachability_tlv(del, N, PN, Metric,
 dump_config_fields(Name, Level,
 		   [{authentication_type, text} | Fs],
 		   #state{authentication_key = K} = State) ->
-    io:format("isis_sytem:set_interface(\"~s\", ~s, [{encryption, ~s, ~p}]).~n",
+    io:format("isis_system:set_interface(\"~s\", ~s, [{encryption, ~s, ~p}]).~n",
 	      [Name, Level, text, K]),
     dump_config_fields(Name, Level, Fs, State);
 dump_config_fields(Name, Level,
