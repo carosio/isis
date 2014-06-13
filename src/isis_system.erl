@@ -102,10 +102,22 @@ del_interface(Name) ->
     gen_server:call(?MODULE, {del_interface, Name}).
 
 set_interface(Name, Values) ->
-    gen_server:call(?MODULE, {set_interface, Name, Values}).
+    Pid = gen_server:call(?MODULE, {interface_pid, Name}),
+    case is_pid(Pid) of
+	true -> isis_interface:set(Pid, Values);
+	_ -> not_enabled
+    end.
 
 set_interface(Name, Level, Values) ->
-    gen_server:call(?MODULE, {set_interface, Name, Level, Values}).
+    Pid = gen_server:call(?MODULE, {interface_pid, Name}),
+    case is_pid(Pid) of
+	true -> LevelPid = isis_interface:get_level_pid(Pid, Level),
+		case is_pid(LevelPid) of
+		    true -> isis_interface_level:set(LevelPid, Values);
+		    _ -> not_enabled
+		end;
+	_ -> not_enabled
+    end.
 
 list_interfaces() ->
     gen_server:call(?MODULE, {list_interfaces}).
@@ -304,6 +316,17 @@ handle_call({del_interface, Name}, _From,
 		Interfaces
 	end,
     {reply, ok, State#state{interfaces = NewInterfaces}};
+
+handle_call({interface_pid, Name}, _From,
+	    #state{interfaces = Interfaces} = State) ->
+    Reply = 
+	case dict:find(Name, Interfaces) of
+	    {ok, Interface} ->
+		Interface#isis_interface.pid;
+	    _ ->
+		not_enabled
+	end,
+    {reply, Reply, State};
 
 handle_call({enable_level, InterfaceName, Level}, _From,
 	    #state{interfaces = Interfaces} = State) ->

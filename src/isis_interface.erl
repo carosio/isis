@@ -21,8 +21,7 @@
 %% API
 -export([start_link/1, send_pdu/4, stop/1,
 	 get_state/3, get_state/1, set/2,
-	 set_level/3,
-	 enable_level/2, disable_level/2, levels/1,
+	 enable_level/2, disable_level/2, levels/1, get_level_pid/2,
 	 get_addresses/2,
 	 clear_neighbors/1,
 	 dump_config/1]).
@@ -82,8 +81,8 @@ get_state(Pid) ->
 set(Pid, Values) ->
     gen_server:call(Pid, {set, Values}).
 
-set_level(Pid, Level, Values) ->
-    gen_server:cast(Pid, {set, Level, Values}).
+get_level_pid(Pid, Level) ->
+    gen_server:call(Pid, {get_level_pid, Level}).
 
 get_level(Pid, Level, Value) ->
     gen_server:call(Pid, {get, Level, Value}).
@@ -185,6 +184,15 @@ handle_call({levels}, _From, State) ->
 	    {_, _} -> [level_1, level_2]
 	end,
     {reply, Levels, State};
+
+handle_call({get_level_pid, level_1}, _From,
+	    #state{level1 = L1Pid} = State) when is_pid(L1Pid) ->
+    {reply, L1Pid, State};
+handle_call({get_level_pid, level_2}, _From,
+	    #state{level2 = L2Pid} = State) when is_pid(L2Pid) ->
+    {reply, L2Pid, State};
+handle_call({get_level_pid, _}, _From, State) ->
+    {reply, not_enabled, State};
 
 handle_call({get_addresses, Family}, _From, State) ->
     Interface = isis_system:get_interface(State#state.name),
