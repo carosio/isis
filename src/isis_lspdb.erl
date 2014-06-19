@@ -209,7 +209,7 @@ flood_lsp(Level, Interfaces, LSP) ->
 	{ok, Packet, Size} ->
 	    Sender = fun({_N, #isis_interface{pid = P}}) ->
 			     case is_pid(P) of
-				 true -> isis_interface:send_pdu(P, Packet, Size, Level);
+				 true -> isis_interface:send_pdu(P, lsp, Packet, Size, Level);
 				 _ -> ok
 			     end
 		     end,

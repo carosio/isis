@@ -474,7 +474,7 @@ send_iih(SID, State) ->
 			       State),
     ActualIIH = IIH#isis_iih{tlv = TLVs ++ PadTLVs},
     {ok, SendPDU, SendPDU_Size} = isis_protocol:encode(ActualIIH),
-    send_pdu(SendPDU, SendPDU_Size, State).
+    send_pdu(iih, SendPDU, SendPDU_Size, State).
 
 
 %%--------------------------------------------------------------------
@@ -608,7 +608,7 @@ generate_csnp(Sys_ID, {Status, _}, Chunk_Size, Summary, State) ->
 		      end_lsp_id = End,
 		      tlv = TLVs},
     {ok, PDU, PDU_Size} = isis_protocol:encode(CSNP),
-    send_pdu(PDU, PDU_Size, State),
+    send_pdu(csnp, PDU, PDU_Size, State),
     ok.
 
 -spec process_pdu(binary(), isis_pdu(), tuple()) -> tuple().
@@ -733,7 +733,7 @@ send_lsps(LSPs, State) ->
     lists:map(fun(#isis_lsp{} = L) ->
 		      %% NewTLVs = AuthTLV ++ TLVs,
 		      case isis_protocol:encode(L) of
-			  {ok, Bin, Len} -> send_pdu(Bin, Len, State);
+			  {ok, Bin, Len} -> send_pdu(lsp, Bin, Len, State);
 			  _ -> io:format("Failed to encode LSP ~p~n",
 					 [L#isis_lsp.lsp_id])
 		      end
@@ -797,7 +797,7 @@ send_psnp(#state{ssn = SSN} = State) ->
 					      ?LSP_ENTRY_PER_PDU),
     lists:map(fun(F) ->
 		      case isis_protocol:encode(F) of
-			  {ok, Bin, Len} -> send_pdu(Bin, Len, State);
+			  {ok, Bin, Len} -> send_pdu(psnp, Bin, Len, State);
 			  _ -> io:format("Bad encoding for ~p~n", [F])
 		      end
 	      end,
@@ -986,8 +986,9 @@ authentication_tlv(State) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
-send_pdu(PDU, PDU_Size, State) ->
-    isis_interface:send_pdu(State#state.interface_ref, PDU, PDU_Size,
+send_pdu(Type, PDU, PDU_Size, State) ->
+    isis_interface:send_pdu(State#state.interface_ref, Type, 
+			    PDU, PDU_Size,
 			    State#state.level).
 
 parse_args([{level, L} | T], State) ->

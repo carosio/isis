@@ -19,7 +19,7 @@
 -define(SIOCGIFINDEX, 16#8933).
 
 %% API
--export([start_link/1, send_pdu/4, stop/1,
+-export([start_link/1, send_pdu/5, stop/1,
 	 get_state/3, get_state/1, set/2,
 	 enable_level/2, disable_level/2, levels/1, get_level_pid/2,
 	 get_addresses/2,
@@ -66,8 +66,8 @@ start_link(Args) ->
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
-send_pdu(Pid, Packet, Packet_Size, Level) ->
-    gen_server:call(Pid, {send_pdu, Packet, Packet_Size, Level}).
+send_pdu(Pid, Type, Packet, Packet_Size, Level) ->
+    gen_server:cast(Pid, {send_pdu, Type, Packet, Packet_Size, Level}).
 
 stop(Pid) ->
     gen_server:cast(Pid, stop).
@@ -142,11 +142,6 @@ init(Args) ->
 %%                                   {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_call({send_pdu, PDU, PDU_Size, Level}, _From, State) ->
-    Result = send_packet(PDU, PDU_Size, Level, State),
-    {reply, Result, State};
-
-
 handle_call({get_state, _, mac}, _From, State) ->
     {reply, State#state.mac, State};
 handle_call({get_state, _, mtu}, _From, State) ->
@@ -229,6 +224,28 @@ handle_call(_Request, _From, State) ->
 %%                                  {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
+handle_cast({send_pdu, iih, PDU, PDU_Size, Level}, State) ->
+    send_packet(PDU, PDU_Size, Level, State),
+    {noreply, State};
+handle_cast({send_pdu, _Type, PDU, PDU_Size, level_1},
+	    #state{level1 = P} = State) when is_pid(P) ->
+    Adj = isis_interface_level:get_state(P, up_adjacencies),
+    case length(dict:fetch_keys(Adj)) of
+	0 -> no_adj;
+	_ -> send_packet(PDU, PDU_Size, level_1, State)
+    end,
+    {noreply, State};
+handle_cast({send_pdu, _Type, PDU, PDU_Size, level_2},
+	    #state{level2 = P} = State) when is_pid(P) ->
+    Adj = isis_interface_level:get_state(P, up_adjacencies),
+    case length(dict:fetch_keys(Adj)) of
+	0 -> no_adj;
+	_ -> send_packet(PDU, PDU_Size, level_2, State)
+    end,
+    {noreply, State};
+handle_cast({send_pdu, _PDU, _PDU_Size, _}, State) ->
+    {noreply, State};
+
 handle_cast(stop, #state{port = Port,
 			 level1 = Level1,
 			 level2 = Level2} = State) ->
