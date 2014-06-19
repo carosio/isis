@@ -44,7 +44,7 @@
 	 %% pseudonodes
 	 allocate_pseudonode/2, deallocate_pseudonode/2,
 	 %% Misc
-	 address_to_string/2, dump_config/0]).
+	 address_to_string/1, address_to_string/2, dump_config/0]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -1125,10 +1125,29 @@ address_to_string(ipv4, Address) ->
       erlang:list_to_tuple([X || <<X:8>> <= <<Address:32>>]));
 address_to_string(ipv6, Address) when is_binary(Address) ->
     inet_parse:ntoa(
-      erlang:list_to_tuple([X || <<X:8>> <= Address]));
+      erlang:list_to_tuple([X || <<X:16>> <= Address]));
 address_to_string(ipv6, Address) when is_integer(Address) ->
     inet_parse:ntoa(
-      erlang:list_to_tuple([X || <<X:8>> <= <<Address:128>>])).
+      erlang:list_to_tuple([X || <<X:16>> <= <<Address:128>>])).
+
+address_to_string(#isis_address{afi = AFI, address = A, mask = M})
+  when is_binary(A) ->
+    SA = 
+	case AFI of
+	    ipv4 -> <<T:M>> = A,
+		    T bsl (32 - M);
+	    ipv6 -> <<T:M>> = A,
+		    T bsl (128 - M)
+	end,
+    address_to_string(AFI, SA);
+address_to_string(#isis_address{afi = AFI, address = A, mask = M}) ->
+    SA = 
+	case AFI of
+	    ipv4 -> A bsl (32 - M);
+	    ipv6 -> A bsl (128 - M)
+	end,
+    address_to_string(AFI, SA).
+
 
 set_state([{lsp_lifetime, Value} | Vs], State) ->
     set_state(Vs, State#state{max_lsp_lifetime = Value});
