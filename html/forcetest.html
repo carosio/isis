@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="utf-8">
-    <title>Test Representation of Nodes & Links</title>
+    <title>SPF Results</title>
     <script type="text/javascript" src="d3/d3.js"></script>
 </head>
 <style>
@@ -32,10 +32,8 @@ text {
 </style>
 <body>
 <div class="intro">
-<B>IS-IS autoconfiguration demo</B><BR>
-Behind the scences, our IS-IS implementation is running - with a 'demo' process which is injecting LSPs directly into the LSP Database. This causes SPF to run - the results of which are pushed into the routing table as well as being pushed to a distribution layer.<br>
-For this demo, the distribution layer summarises the output and sends it via a websocket to this page, where is is displayed using the sublime <a href="http://d3js.org">d3</a>.<br>
-Lans are shown in blue, nodes in red.<br>
+<B>IS-IS Network</B><BR>
+This graph is the result of the SPF run from ISIS.<br>
 Until we get the first 'live' SPF, we don't see the routing table - as we're showing the actual results of the SPF run<br>
 <br>
 </div>
@@ -63,10 +61,12 @@ function connectToSPFFeed() {
 		    "The last SPF run took " + NewState["Time"] + " &micro;seconds"
             }
             Rib = "";
-            for(var i = 0; i < NewState.rib.length; i++) {
-              Rib += NewState.rib[i][0].address + "/" + NewState.rib[i][0].mask + " -> "
-		+ NewState.rib[i][0].nexthop + " ("
-		+ NewState.rib[i][0].nodepath + ")<BR>";
+            for(var i = 0; i < NewState.rib[0].length; i++) {
+              Rib += NewState.rib[0][i].address + "/"
+                + NewState.rib[0][i].mask + " -> "
+		+ NewState.rib[0][i].nexthop + " via "
+                + NewState.rib[0][i].interface + " ("
+		+ NewState.rib[0][i].nodepath + ")<BR>";
             }
 	    document.getElementById('routingtable').innerHTML = Rib;
 
