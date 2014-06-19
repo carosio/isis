@@ -95,6 +95,11 @@ get_upgrade_header(#headers{other=L}) ->
                 end, undefined, L).
 
 generate_update(Time, Level, SPF) ->
+    %% Get ourselves an ifindex->name mapping...
+    Interfaces = 
+	dict:from_list(
+	  lists:map(fun({Name, #isis_interface{ifindex = IFIndex}}) -> {IFIndex, Name} end,
+		    dict:to_list(isis_system:list_interfaces()))),
     SPFLinks = isis_lspdb:links(isis_lspdb:get_db(Level)),
     Links = lists:map(fun({{<<A:7/binary>>,
 			   <<B:7/binary>>}, Weight}) ->
@@ -106,17 +111,23 @@ generate_update(Time, Level, SPF) ->
 		      end, dict:to_list(SPFLinks)),
 
     SendRoute = 
-	fun({#isis_address{afi = AFI, address = Address, mask = Mask}, _Source},
+	fun({#isis_address{afi = AFI, mask = Mask} = A, _Source},
 	    NHs, Metric, Nodes) ->
-		NH = lists:nth(1, NHs),
-		AStr = isis_system:address_to_string(AFI, Address),
-		NHStr = isis_system:address_to_string(AFI, NH),
+		{NHAfi, {NH, IFIndex}} = lists:nth(1, NHs),
+		AStr = isis_system:address_to_string(A),
+		NHStr = isis_system:address_to_string(NHAfi, NH),
+		InterfaceStr =
+		    case dict:find(IFIndex, Interfaces) of
+			{ok, Value} -> Value;
+			_ -> "unknown"
+		    end,
 		NodesStrList = lists:map(fun(N) -> isis_system:lookup_name(N) end, Nodes),
 		NodesStr = string:join(NodesStrList, ", "),
 		{true, {struct, [{"afi", atom_to_list(AFI)},
 				 {"address", AStr},
 				 {"mask", Mask},
 				 {"nexthop", NHStr},
+				 {"interface", InterfaceStr},
 				 {"nodepath", NodesStr}]}};
 	   (_, _, _, _) -> false
 	end,
