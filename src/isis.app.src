@@ -4,7 +4,10 @@
   {registered, []},
   {applications, [
 		  kernel,
-		  stdlib
+		  stdlib,
+		  procket,
+                  eenum,
+                  yaws
 		  ]},
   {mod, { isis_app, []}},
   {env, []}
