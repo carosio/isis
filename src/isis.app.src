@@ -2,12 +2,14 @@
  [{description, "IS-IS implementation in erlang"},
   {vsn, "1"},
   {registered, []},
+  {included_applications, [yaws]},
   {applications, [
 		  kernel,
 		  stdlib,
 		  procket,
                   eenum,
-                  yaws
+		  crypto,
+		  ssl
 		  ]},
   {mod, { isis_app, []}},
   {env, []}
