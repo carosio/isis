@@ -927,33 +927,44 @@ add_interface(#zclient_interface{
 %%% If we're doing 'autoconf' we should enable on all interfaces (for
 %%% now) and also set the system-id from a MAC address.
 %%% ===================================================================
+is_interface(Name) when is_list(Name) ->
+    % An interface name is expected to consist of a reasonable
+    % subset of all characters, use a whitelist and extend it if needed
+    Name == [C || C <- Name, (((C bor 32) >= $a) and ((C bor 32) =< $z))
+        or ((C >= $0) and (C =< $9)) or (C == $.)].
+
 autoconf_interface(#isis_interface{mac = Mac, name = Name} = I,
 		   #state{autoconf = true} = State) 
   when byte_size(Mac) =:= 6 ->
-    State1 = 
-	case State#state.system_id_set of
-	    true -> State;
-	    _ -> <<ID:(6*8)>> = Mac,
-		 DynamicName = lists:flatten(io_lib:format("autoconf-~.16B", [ID])),
-		 isis_lspdb:set_system_id(level_1, Mac),
-		 isis_lspdb:set_system_id(level_2, Mac),
-		 NextState =
-		     set_tlv_hostname(DynamicName, State#state{system_id = Mac,
-							system_id_set = true}),
-		 force_refresh_lsp(NextState),
-		 NextState
-	end,
-    %% Enable interface and level1...
-    State2 = do_enable_interface(I, State1),
-    Interface = dict:fetch(Name, State2#state.interfaces),
-    do_enable_level(Interface, level_1),
-    LevelPid = isis_interface:get_level_pid(Interface#isis_interface.pid, level_1),
-    isis_interface_level:set(LevelPid,
-			     [{encryption, text, <<"isis-autoconf">>},
-			      {metric, ?DEFAULT_AUTOCONF_METRIC},
-			      %%{priority, ?DEFAULT_PRIORITY}]),
-			      {priority, 4}]),
-    State2;
+    case is_interface(Name) of
+	true ->
+	    State1 = 
+		case State#state.system_id_set of
+		    true -> State;
+		    _ -> <<ID:(6*8)>> = Mac,
+			 DynamicName = lists:flatten(io_lib:format("autoconf-~.16B", [ID])),
+			 isis_lspdb:set_system_id(level_1, Mac),
+			 isis_lspdb:set_system_id(level_2, Mac),
+			 NextState =
+			     set_tlv_hostname(DynamicName, State#state{system_id = Mac,
+								       system_id_set = true}),
+			 force_refresh_lsp(NextState),
+			 NextState
+		end,
+	    %% Enable interface and level1...
+	    State2 = do_enable_interface(I, State1),
+	    Interface = dict:fetch(Name, State2#state.interfaces),
+	    do_enable_level(Interface, level_1),
+	    LevelPid = isis_interface:get_level_pid(Interface#isis_interface.pid, level_1),
+	    isis_interface_level:set(LevelPid,
+				     [{encryption, text, <<"isis-autoconf">>},
+				      {metric, ?DEFAULT_AUTOCONF_METRIC},
+				      %%{priority, ?DEFAULT_PRIORITY}]),
+				      {priority, 4}]),
+	    State2;
+	_ ->
+	    State
+    end;
 autoconf_interface(_I, State) ->
     State.
 
