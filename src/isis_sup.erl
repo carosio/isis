@@ -51,6 +51,9 @@ start_link() ->
 %% @end
 %%--------------------------------------------------------------------
 init([]) ->
+
+    HWFingerPrint = <<1,2,3,4,0:(32*8)>>,
+
     RestartStrategy = one_for_one,
     MaxRestarts = 1000,
     MaxSecondsBetweenRestarts = 3600,
@@ -69,7 +72,7 @@ init([]) ->
 	    Restart, Shutdown, Type, [isis_lspdb]},
     L2DB = {level2_lspdb, {isis_lspdb, start_link, [[{table, level_2}]]},
 	    Restart, Shutdown, Type, [isis_lspdb]},
-    ISIS = {isis, {isis_system, start_link, [[]]},
+    ISIS = {isis, {isis_system, start_link, [[{autoconf, HWFingerPrint}]]},
 	    Restart, Shutdown, Type, [isis_system, isis_protocol, isis_enum]},
     ISISRib = {isis_rib, {isis_rib, start_link, []},
 	       permanent, 10000, worker, []},
