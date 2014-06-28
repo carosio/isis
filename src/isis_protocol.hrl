@@ -38,7 +38,7 @@
 %%% Used to create the LSPs we generate
 %%%===================================================================
 -record(lsp_frag, {level :: atom(),        %% Level
-		   pseudonode :: 0..255,   %% Pseudo-node
+		   pseudonode = 256 :: 0..255,   %% Pseudo-node
 		   fragment = 0 :: 0..255, %% Fragment
 		   sequence = 1 :: integer(),  %% Sequence number
 		   updated  = false :: atom(),      %% Do we need to refresh this LSP?

@@ -22,7 +22,7 @@
 	 lookup_lsps_by_node/2,
 	 summary/2, range/3,
 	 replace_tlv/3, update_reachability/3,
-	 schedule_spf/1,
+	 schedule_spf/2,
 	 links/1,
 	 clear_db/1,
 	 set_system_id/2]).
@@ -39,6 +39,7 @@
 		system_id = undefined, %% Our system id
 	        expiry_timer,     %% We expire LSPs based on this timer
 		spf_timer = undef, %% Dijkestra timer
+		spf_reason = "",
 		hold_timer        %% SPF Hold timer
 	       }).
 
@@ -239,8 +240,8 @@ start_link([{table, Table_Id}] = Args) ->
 %% @spec start_link(list()) -> {ok, Pid} | ignore | {error, Error}
 %% @end
 %%--------------------------------------------------------------------
-schedule_spf(Ref) ->
-    gen_server:cast(Ref, {schedule_spf}).
+schedule_spf(Ref, Reason) ->
+    gen_server:cast(Ref, {schedule_spf, Reason}).
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -285,11 +286,15 @@ handle_call({get_db}, _From, State) ->
 handle_call({store, #isis_lsp{} = LSP},
 	    _From, State) ->
     OldLSP = ets:lookup(State#state.db, LSP#isis_lsp.lsp_id),
+    <<ID:6/binary, PN:8, Frag:8>> = LSP#isis_lsp.lsp_id,
+    Reason = lists:flatten(
+	       io_lib:format("LSP ~16s.~2.16.0B-~2.16.0B updated",
+			     [isis_system:lookup_name(ID), PN, Frag])),
     NewState = 
 	case spf_type_required(OldLSP, LSP) of
-	    full -> schedule_spf(full, State);
-	    partial -> schedule_spf(partial, State);
-	    incremental -> schedule_spf(incremental, State);
+	    full -> schedule_spf(full, Reason, State);
+	    partial -> schedule_spf(partial, Reason, State);
+	    incremental -> schedule_spf(incremental, Reason, State);
 	    none -> State
 	end,
     Result = ets:insert(NewState#state.db, LSP),
@@ -328,8 +333,8 @@ handle_call(_Request, _From, State) ->
 %%                                  {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_cast({schedule_spf}, State) ->
-    {noreply, schedule_spf(full, State)};
+handle_cast({schedule_spf, Reason}, State) ->
+    {noreply, schedule_spf(full, Reason, State)};
 handle_cast({set_system_id, ID}, State) ->
     {noreply, State#state{system_id = ID}};
 handle_cast(_Msg, State) ->
@@ -355,8 +360,9 @@ handle_info({timeout, _Ref, {run_spf, _Type}}, State) ->
     erlang:cancel_timer(State#state.spf_timer),
     %% Dijkestra...
     {Time, SPF} = timer:tc(fun() -> do_spf(State#state.system_id, State) end),
-    isis_system:process_spf({State#state.level, Time, SPF}),
-    {noreply, State#state{spf_timer = undef}};
+    isis_system:process_spf({State#state.level, Time, SPF,
+			     State#state.spf_reason}),
+    {noreply, State#state{spf_timer = undef, spf_reason = ""}};
 handle_info(_Info, State) ->
     {noreply, State}.
 
@@ -383,7 +389,7 @@ terminate(_Reason, _State) ->
 %% @end
 %%--------------------------------------------------------------------
 code_change(_OldVsn, State, _Extra) ->
-    schedule_spf(full, State),
+    schedule_spf(full, "Code update", State),
     {ok, State}.
 
 %%%===================================================================
@@ -528,14 +534,16 @@ spf_type_required([OldLSP], NewLSP) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec schedule_spf(full | partial | incremental, tuple()) -> tuple().
-schedule_spf(Type, #state{spf_timer = undef} = State) ->
+-spec schedule_spf(full | partial | incremental, string(), tuple()) -> tuple().
+schedule_spf(Type, Reason, #state{spf_timer = undef} = State) ->
+    io:format("Scheduling ~p SPF due to ~s~n", [State#state.level, Reason]),
     Timer = erlang:start_timer(
 	      isis_protocol:jitter(?ISIS_SPF_DELAY, 10),
 	      self(), {run_spf, Type}),
-    State#state{spf_timer = Timer};
-schedule_spf(_, State) ->
+    State#state{spf_timer = Timer, spf_reason = Reason};
+schedule_spf(_, Reason, State) ->
     %% Timer already primed...
+    io:format("SPF required due to ~s (but already scheduled)~n", [Reason]),
     State.
 
 -spec start_timer(atom(), tuple()) -> integer() | ok.

@@ -30,6 +30,7 @@
 -record(state, {
 	  level,           %% The level
 	  interface_ref,   %% Interface
+	  interface_name,
 	  snpa,            %% Our mac address
 	  database = undef, %% The LSPDB reference
 	  hello_interval = (?DEFAULT_HOLD_TIME / 3),
@@ -207,11 +208,11 @@ handle_cast({update_adjacency, up, Pid, Sid}, State) ->
     D = dict:store(Pid, Sid, State#state.up_adjacencies),
     case State#state.are_we_dis of
 	true ->
-	    update_reachability_tlv(add, <<Sid:6/binary, 0:8>>, 0,
-				    State#state.pseudonode, State);
+	    update_reachability_tlv(add, <<Sid:6/binary, 0:8>>,
+				    State#state.pseudonode, 0, State);
 	_ ->
 	    update_reachability_tlv(add, <<Sid:6/binary, 0:8>>,
-				    State#state.metric, 0, State)
+				    0, State#state.metric, State)
     end,
     {noreply, State#state{up_adjacencies = D}};
 handle_cast({update_adjacency, down, Pid, Sid}, State) ->
@@ -368,6 +369,8 @@ handle_dis_election(_From,
 assume_dis(State) ->
     %% Get pseudo-node here, create LSP etc..
     Node = isis_system:allocate_pseudonode(self(), State#state.level),
+    io:format("Allocated pseudo-node ~p to ~p ~s~n",
+	      [Node, State#state.level,  State#state.interface_name]),
     DIS_Timer = start_timer(dis, State),
     ID = isis_system:system_id(),
     SysID = <<ID:6/binary, 0:8>>,
@@ -848,7 +851,8 @@ handle_psnp(#isis_psnp{tlv = TLVs}, State) ->
 %% @end
 %%--------------------------------------------------------------------
 -spec handle_lsp(isis_lsp(), tuple()) -> tuple().
-handle_lsp(#isis_lsp{lsp_id = ID, sequence_number = TheirSeq} = LSP, State) ->
+handle_lsp(#isis_lsp{lsp_id = ID, sequence_number = TheirSeq,
+		     checksum = TheirCSum} = LSP, State) ->
     <<RemoteSys:6/binary, _Rest/binary>> = ID,
     case RemoteSys =:= isis_system:system_id() of
 	true -> handle_old_lsp(LSP, State);
@@ -858,12 +862,15 @@ handle_lsp(#isis_lsp{lsp_id = ID, sequence_number = TheirSeq} = LSP, State) ->
 		case length(L) of
 		    1 -> [OurLSP] = L,
 			 OurSeq = OurLSP#isis_lsp.sequence_number,
-			 case OurSeq =< TheirSeq of
+			 OurCSum = OurLSP#isis_lsp.checksum,
+			 case ((OurSeq < TheirSeq) or ((OurSeq =:= TheirSeq) and (OurCSum =/= TheirCSum))) of
 			     true -> isis_lspdb:store_lsp(State#state.level, LSP),
+				     io:format("Updated LSP, storing..~n", []),
 				     true;
 			     _ -> false
 			 end;
 		    0 -> isis_lspdb:store_lsp(State#state.level, LSP),
+			 io:format("New LSP, storing..~n", []),
 			 true;
 		    _ -> false
 		end,
@@ -995,8 +1002,9 @@ parse_args([{level, L} | T], State) ->
     parse_args(T, State#state{level = L});
 parse_args([{snpa, M} | T], State) ->
     parse_args(T, State#state{snpa = M});
-parse_args([{interface, I} | T], State) ->
-    parse_args(T, State#state{interface_ref = I});
+parse_args([{interface, N, I} | T], State) ->
+    parse_args(T, State#state{interface_ref = I,
+			      interface_name = N});
 parse_args([], State) ->
     State.
 

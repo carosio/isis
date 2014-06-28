@@ -58,7 +58,7 @@ function connectToSPFFeed() {
 	    NewState = JSON.parse(received_msg);
 	    if (NewState["Time"] > 0) {
 		document.getElementById('spftime').innerHTML =
-		    "The last SPF run took " + NewState["Time"] + " &micro;seconds"
+		    "The last SPF run took " + NewState["Time"] + " &micro;seconds, due to: " + NewState["Reason"]
             }
             Rib = "";
             for(var i = 0; i < NewState.rib[0].length; i++) {

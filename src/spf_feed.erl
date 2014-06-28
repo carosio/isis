@@ -39,7 +39,7 @@ out(A) ->
 
 handle_message({text, <<"start">>}) ->
     spf_summary:subscribe(self()),
-    M = generate_update(0, level_1, []),
+    M = generate_update(0, level_1, [], "Startup"),
     {reply, {text, list_to_binary(M)}};
 
 handle_message({close, Status, _Reason}) ->
@@ -53,10 +53,10 @@ terminate(_Reason, _State) ->
     spf_summary:unsubscribe(self()),
     ok.
 
- handle_info({spf_summary, {Time, level_1, SPF}}, State) ->
-    Json = generate_update(Time, level_1, SPF),
+ handle_info({spf_summary, {Time, level_1, SPF, Reason}}, State) ->
+    Json = generate_update(Time, level_1, SPF, Reason),
     {reply, {text, list_to_binary(Json)}, State};
- handle_info({spf_summary, {_, level_2, _}}, State) ->
+ handle_info({spf_summary, {_, level_2, _, _Reason}}, State) ->
     {noreply, State};
 
 
@@ -94,7 +94,7 @@ get_upgrade_header(#headers{other=L}) ->
                         Acc
                 end, undefined, L).
 
-generate_update(Time, Level, SPF) ->
+generate_update(Time, Level, SPF, Reason) ->
     %% Get ourselves an ifindex->name mapping...
     Interfaces = 
 	dict:from_list(
@@ -138,4 +138,5 @@ generate_update(Time, Level, SPF) ->
 				Routes)
 	end,
     Rs = lists:map(UpdateRib, SPF),
-    json2:encode({struct, [{"Time", Time}, {"links", {array, Links}}, {"rib", {array, Rs}}]}).
+    json2:encode({struct, [{"Time", Time}, {"links", {array, Links}}, {"rib", {array, Rs}},
+			   {"Reason", Reason}]}).

@@ -166,8 +166,8 @@ schedule_lsp_refresh() ->
 
 update_tlv(TLV, Node, Level) ->
     %% io:format("Updating TLVs for node ~p ~p~n~p~n~p~n",
-    %% 	      [Node, Level, TLV,
-    %% 	      element(2, process_info(self(), backtrace))]),
+    %%  	      [Node, Level, TLV,
+    %% 	       element(2, process_info(self(), backtrace))]),
     gen_server:cast(?MODULE, {update_tlv, TLV, Node, Level}).
 
 delete_tlv(TLV, Node, Level) ->
@@ -507,8 +507,8 @@ handle_cast({update_tlv, TLV, Node, Level},
     %% io:format("Updating tlv: ~p~n", [TLV]),
     NewFrags = isis_protocol:update_tlv(TLV, Node, Level, Frags),
     schedule_lsp_refresh(),
-    isis_lspdb:schedule_spf(level_1),
-    isis_lspdb:schedule_spf(level_2),
+    isis_lspdb:schedule_spf(level_1, "Self-originated TLV change"),
+    isis_lspdb:schedule_spf(level_2, "Self-originated TLV change"),
     {noreply, State#state{frags = NewFrags}};
 handle_cast({delete_tlv, TLV, Node, Level},
 	    #state{frags = Frags} = State) ->
@@ -525,8 +525,8 @@ handle_cast({add_sid, SID, Addresses}, #state{system_ids = IDs} = State) ->
 		 NewAs = sets:to_list(sets:union([S1, S2])),
 		 dict:store(SID, NewAs, IDs)
 	 end,
-    isis_lspdb:schedule_spf(level_1),
-    isis_lspdb:schedule_spf(level_2),
+    isis_lspdb:schedule_spf(level_1, "Neighbor change"),
+    isis_lspdb:schedule_spf(level_2, "Neighbor change"),
     {noreply, State#state{system_ids = D1}};
 handle_cast({delete_sid, SID, Addresses}, State) ->
     D1 = case dict:find(SID, State#state.system_ids) of
@@ -538,7 +538,7 @@ handle_cast({delete_sid, SID, Addresses}, State) ->
 		 dict:store(SID, NewAs, State#state.system_ids)
 	 end,
     {noreply, State#state{system_ids = D1}};
-handle_cast({process_spf, {Level, Time, SPF}}, State) ->
+handle_cast({process_spf, {Level, Time, SPF, Reason}}, State) ->
     Table = 
 	lists:filtermap(
 	  fun({<<Node:7/binary>>, NHID, Metric, As, Nodes})
@@ -556,7 +556,7 @@ handle_cast({process_spf, {Level, Time, SPF}}, State) ->
 		  end;
 	     (_) -> false
 	  end, SPF),
-    spf_summary:notify_subscribers({Time, Level, Table}),
+    spf_summary:notify_subscribers({Time, Level, Table, Reason}),
     {noreply, State};
 handle_cast({add_name, SID, Name}, State) ->
     N = #isis_name{system_id = SID, name = Name},
@@ -789,12 +789,16 @@ create_initial_frags(State) ->
 	      end,
     {_, F} = lists:foldl(Creator, {level_1, []}, FingerPrintTLVs),
     {_, F1} = lists:foldl(Creator, {level_2, F}, FingerPrintTLVs),
+    io:format("Starting frags: ~p~n", [F1]),
     NewState = State#state{frags = F1},
     NewState.
 
-create_frag(PN, Level) ->
+create_frag(PN, Level) when PN > 0, PN =< 255 ->
     #lsp_frag{level = Level,
-	      pseudonode = PN}.
+	      pseudonode = PN};
+create_frag(PN, Level) ->
+    io:format("Tried to create PN ~p for ~p~n", [PN, Level]),
+    error.
 
 set_tlv_hostname(Name, State) ->
     TLV = #isis_tlv_dynamic_hostname{hostname = Name},
