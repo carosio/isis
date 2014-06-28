@@ -98,6 +98,7 @@ init([{type, T}]) ->
     request_router_id(State),
     request_interface(State),
     request_redistribution(static, State),
+    request_redistribution(kernel, State),
     {ok, State};
 init(Args) ->
     io:format("Unknown args: ~p~n", [Args]),
