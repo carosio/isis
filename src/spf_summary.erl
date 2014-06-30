@@ -25,7 +25,8 @@
 -define(SERVER, ?MODULE).
 
 -record(state, {
-	 subscribers
+	 subscribers,
+	 last_run = undef
 	 }).
 
 %%%===================================================================
@@ -83,10 +84,14 @@ init([]) ->
 %%                                   {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_call({subscribe, Pid}, _From, #state{subscribers = Subscribers} = State) ->
+handle_call({subscribe, Pid}, _From, #state{subscribers = Subscribers, last_run = LR} = State) ->
     %% Monitor the subscribing process, so we know if they die
     erlang:monitor(process, Pid),
     NewDict = dict:store(Pid, [], Subscribers),
+    case LR of
+	undef -> ok;
+	M -> Pid ! {spf_summary, M}
+    end,
     {reply, ok, State#state{subscribers = NewDict}};
 
 handle_call({unsubscribe, Pid}, _From, State) ->
@@ -111,6 +116,9 @@ handle_call(_Request, _From, State) ->
 %%                                  {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
+handle_cast({last_run, Message}, State) ->
+    {noreply, State#state{last_run = Message}};
+
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
@@ -169,4 +177,5 @@ notify_subscribers(Message, Subscribers) ->
     lists:foreach(
       fun(Pid) ->
 	      Pid ! {spf_summary, Message} end, Pids),
+    gen_server:cast(?MODULE, {last_run, Message}),
     ok.
