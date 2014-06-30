@@ -290,6 +290,8 @@ handle_call({store, #isis_lsp{} = LSP},
     Reason = lists:flatten(
 	       io_lib:format("LSP ~16s.~2.16.0B-~2.16.0B updated",
 			     [isis_system:lookup_name(ID), PN, Frag])),
+    %% io:format("SPF type required: ~p~nOld: ~p~nNew: ~p~n",
+    %% 	      [spf_type_required(OldLSP, LSP), OldLSP, LSP]),
     NewState = 
 	case spf_type_required(OldLSP, LSP) of
 	    full -> schedule_spf(full, Reason, State);
@@ -510,7 +512,8 @@ expire_lsps(#state{db = DB}) ->
 %%--------------------------------------------------------------------
 -spec spf_type_required([isis_lsp()], isis_lsp()) -> full | partial | incremental | none.
 spf_type_required([], LSP) ->
-    L = isis_protocol:filter_tlvs(isis_tlv_extended_reachability,
+    L = isis_protocol:filter_tlvs([isis_tlv_is_reachability,
+				   isis_tlv_extended_reachability],
 				  LSP#isis_lsp.tlv),
     case length(L) >= 1 of
 	true -> full;
