@@ -789,7 +789,6 @@ create_initial_frags(State) ->
 	      end,
     {_, F} = lists:foldl(Creator, {level_1, []}, FingerPrintTLVs),
     {_, F1} = lists:foldl(Creator, {level_2, F}, FingerPrintTLVs),
-    io:format("Starting frags: ~p~n", [F1]),
     NewState = State#state{frags = F1},
     NewState.
 
