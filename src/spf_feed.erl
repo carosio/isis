@@ -113,7 +113,11 @@ generate_update(Time, Level, SPF, Reason) ->
     SendRoute = 
 	fun({#isis_address{afi = AFI, mask = Mask} = A, _Source},
 	    NHs, Metric, Nodes) ->
-		{NHAfi, {NH, IFIndex}} = lists:nth(1, NHs),
+		{NHAfi, {NH, IFIndex}} = 
+		    case lists:nth(1, NHs) of
+			{ipv4, NHA} -> {ipv4, {A, no_ifindex}};
+			{ipv6, {NHA, NHI}} -> {ipv6, {NHA, NHI}}
+		    end,
 		AStr = isis_system:address_to_string(A),
 		NHStr = isis_system:address_to_string(NHAfi, NH),
 		InterfaceStr =
