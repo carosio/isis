@@ -98,8 +98,8 @@ generate_update(Time, Level, SPF, Reason) ->
     %% Get ourselves an ifindex->name mapping...
     Interfaces = 
 	dict:from_list(
-	  lists:map(fun({Name, #isis_interface{ifindex = IFIndex}}) -> {IFIndex, Name} end,
-		    dict:to_list(isis_system:list_interfaces()))),
+	  lists:map(fun(#isis_interface{name = Name, ifindex = IFIndex}) -> {IFIndex, Name} end,
+		    isis_system:list_interfaces())),
     SPFLinks = isis_lspdb:links(isis_lspdb:get_db(Level)),
     Links = lists:map(fun({{<<A:7/binary>>,
 			   <<B:7/binary>>}, Weight}) ->

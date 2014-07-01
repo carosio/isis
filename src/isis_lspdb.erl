@@ -208,7 +208,7 @@ purge(LSP, State) ->
 flood_lsp(Level, Interfaces, LSP) ->
     case isis_protocol:encode(LSP) of
 	{ok, Packet, Size} ->
-	    Sender = fun({_N, #isis_interface{pid = P}}) ->
+	    Sender = fun(#isis_interface{pid = P}) ->
 			     case is_pid(P) of
 				 true -> isis_interface:send_pdu(P, lsp, Packet, Size, Level);
 				 _ -> ok

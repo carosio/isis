@@ -62,7 +62,7 @@ pp_address(#isis_address{afi = ipv4, address = A}) ->
 pp_address(#isis_address{afi = ipv6, address = A}) ->
     inet:ntoa(erlang:list_to_tuple([X || <<X:16>> <= <<A:128>>])).
 
-show_interface_level({Name, #isis_interface{pid = Pid}}, Level) ->
+show_interface_level(#isis_interface{pid = Pid}, Level) ->
     {AuthType, AuthKey} = isis_interface:get_state(Pid, Level, authentication),
     io:format("   Encryption: ~s (key ~p)~n", [AuthType, AuthKey]),
     io:format("   Priority: ~b~n", [isis_interface:get_state(Pid, Level, priority)]),
@@ -72,12 +72,13 @@ show_interface_level({Name, #isis_interface{pid = Pid}}, Level) ->
     CSNP = erlang:trunc(isis_interface:get_state(Pid, Level, csnp_interval) / 1000),
     io:format("   CSNP Interval: ~b seconds~n", [CSNP]).
 
-show_interfaces_fun({Name, #isis_interface{pid = Pid,
-					   mac = Mac,
-					   metric = Metric,
-					   enabled = Enabled,
-					   addresses = Addresses,
-					   mtu = MTU, mtu6 = MTU6}} = I) ->
+show_interfaces_fun(#isis_interface{name = Name,
+				    pid = Pid,
+				    mac = Mac,
+				    metric = Metric,
+				    enabled = Enabled,
+				    addresses = Addresses,
+				    mtu = MTU, mtu6 = MTU6} = I) ->
     io:format("Interface ~p~n", [Name]),
     %% Mash the Mac into something human readable
     MacStr =
@@ -108,7 +109,7 @@ show_interfaces_fun({Name, #isis_interface{pid = Pid,
     end.
 
 show_interfaces() ->
-    I = dict:to_list(isis_system:list_interfaces()),
+    I = isis_system:list_interfaces(),
     lists:map(fun show_interfaces_fun/1, I),
     ok.
 		      

@@ -1084,7 +1084,7 @@ valid_iih_area(IIH, #state{level = level_1}) ->
 %% @end
 %%--------------------------------------------------------------------
 flood_lsp(LSP, State) ->
-    Is = dict:to_list(isis_system:list_interfaces()),
+    Is = isis_system:list_interfaces(),
     OutputIs = 
 	lists:filter(
 	  fun(#isis_interface{pid = P})
