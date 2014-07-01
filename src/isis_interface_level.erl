@@ -32,6 +32,7 @@
 	  interface_ref,   %% Interface
 	  interface_name,
 	  snpa,            %% Our mac address
+	  mtu,
 	  database = undef, %% The LSPDB reference
 	  hello_interval = (?DEFAULT_HOLD_TIME / 3),
 	  hold_time = ?DEFAULT_HOLD_TIME,
@@ -473,7 +474,7 @@ send_iih(SID, State) ->
 	     tlv = TLVs
 	},
     {ok, _, PDU_Size} = isis_protocol:encode(IIH),
-    PadTLVs = generate_padding(isis_interface:get_state(State#state.interface_ref, undef, mtu) - PDU_Size -3,
+    PadTLVs = generate_padding(State#state.mtu - PDU_Size -3,
 			       State),
     ActualIIH = IIH#isis_iih{tlv = TLVs ++ PadTLVs},
     {ok, SendPDU, SendPDU_Size} = isis_protocol:encode(ActualIIH),
@@ -1002,9 +1003,10 @@ parse_args([{level, L} | T], State) ->
     parse_args(T, State#state{level = L});
 parse_args([{snpa, M} | T], State) ->
     parse_args(T, State#state{snpa = M});
-parse_args([{interface, N, I} | T], State) ->
+parse_args([{interface, N, I, M} | T], State) ->
     parse_args(T, State#state{interface_ref = I,
-			      interface_name = N});
+			      interface_name = N,
+			      mtu = M});
 parse_args([], State) ->
     State.
 
