@@ -22,7 +22,6 @@
 -export([start_link/1, send_pdu/5, stop/1,
 	 get_state/3, get_state/1, set/2,
 	 enable_level/2, disable_level/2, levels/1, get_level_pid/2,
-	 get_addresses/2,
 	 clear_neighbors/1,
 	 dump_config/1]).
 
@@ -95,9 +94,6 @@ disable_level(Pid, Level) ->
 
 levels(Pid) ->
     gen_server:call(Pid, {levels}).
-
-get_addresses(Pid, Family) ->
-    gen_server:call(Pid, {get_addresses, Family}).
 
 clear_neighbors(Pid) ->
     gen_server:cast(Pid, {clear_neighbors}).
@@ -188,16 +184,6 @@ handle_call({get_level_pid, level_2}, _From,
     {reply, L2Pid, State};
 handle_call({get_level_pid, _}, _From, State) ->
     {reply, not_enabled, State};
-
-handle_call({get_addresses, Family}, _From, State) ->
-    Interface = isis_system:get_interface(State#state.name),
-    Matcher = fun(#isis_address{afi = F, address = A})
-		    when F =:= Family -> {true, A};
-		 (_) -> false
-	      end,
-    Addresses = lists:filtermap(Matcher,
-				Interface#isis_interface.addresses),
-    {reply, Addresses, State};
 
 handle_call({dump_config}, _From, State) ->
     dump_config_state(State),

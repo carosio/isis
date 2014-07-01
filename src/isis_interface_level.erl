@@ -431,10 +431,10 @@ send_iih(SID, State) ->
 	lists:map(fun({A, _}) -> A end,
 		  dict:to_list(State#state.adj_handlers)),
     Areas = isis_system:areas(),
-    V4Addresses = isis_interface:get_addresses(State#state.interface_ref, ipv4),
+    V4Addresses = get_addresses(State, ipv4),
     V6Addresses = 
 	lists:sublist(lists:filter(fun(A) -> <<LL:16, _R:112>> = <<A:128>>, LL =:= 16#FE80 end,
-				   isis_interface:get_addresses(State#state.interface_ref, ipv6)),
+				   get_addresses(State, ipv6)),
 		     ?ISIS_IIH_IPV6COUNT),
     DIS = case State#state.dis of
 	      undef -> <<SID:6/binary, 0:8>>;
@@ -1170,3 +1170,12 @@ dump_config_state(Name, Level, State) ->
     S = lists:zip(record_info(fields, state),
 		  tl(erlang:tuple_to_list(State))),
     dump_config_fields(Name, Level, S, State).
+
+get_addresses(State, Family) ->
+    Interface = isis_system:get_interface(State#state.interface_name),
+    Matcher = fun(#isis_address{afi = F, address = A})
+ 		    when F =:= Family -> {true, A};
+ 		 (_) -> false
+ 	      end,
+    lists:filtermap(Matcher,
+		    Interface#isis_interface.addresses).
