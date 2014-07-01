@@ -945,7 +945,8 @@ autoconf_interface(#isis_interface{mac = Mac, name = Name} = I,
 		case State#state.system_id_set of
 		    true -> State;
 		    _ -> <<ID:(6*8)>> = Mac,
-			 DynamicName = lists:flatten(io_lib:format("autoconf-~.16B", [ID])),
+			 %%DynamicName = lists:flatten(io_lib:format("autoconf-~.16B", [ID])),
+			 {ok, DynamicName} = inet:gethostname(),
 			 isis_lspdb:set_system_id(level_1, Mac),
 			 isis_lspdb:set_system_id(level_2, Mac),
 			 NextState =
