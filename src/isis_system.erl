@@ -1027,6 +1027,7 @@ add_redistribute(#zclient_route{prefix = #zclient_prefix{afi = ipv6, address = A
 						     mask_length = Mask},
 				metric = Metric, source = Source, nexthops = NH} = R, State)
   when is_list(NH) ->
+    io:format("Redisting: ~p~n", [R]),
     MaskLenBytes = erlang:trunc((Mask + 7) / 8),
     A = Address bsr (128 - Mask),
     SubTLV =
@@ -1047,8 +1048,9 @@ add_redistribute(#zclient_route{prefix = #zclient_prefix{afi = ipv6, address = A
 		   sub_tlv = SubTLV}]
 	  },
     update_frags(fun isis_protocol:update_tlv/4, TLV, 0, State);
-add_redistribute(_, State) ->
+add_redistribute(R, State) ->
     %% Ignoring this route
+    io:format("Ignoring redistributed route: ~p~n", [R]),
     State.
 
 delete_redistribute(#zclient_route{prefix = #zclient_prefix{afi = ipv4, address = Address,

@@ -19,7 +19,7 @@
 	 %% Subscription to updates...
 	 subscribe/1, unsubscribe/1,
 	 %% Sending information to the RIB
-	 add/1, delete/1]).
+	 add/1, delete/1, request_redist/1]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -73,6 +73,9 @@ delete(#zclient_prefix{} = Prefix) ->
 delete(_) ->
     unknown.
 
+request_redist(Type) ->
+    gen_server:call(?MODULE, {request_redist, Type}).
+
 %%--------------------------------------------------------------------
 %% @private
 %% @doc
@@ -97,8 +100,9 @@ init([{type, T}]) ->
     send_hello(State),
     request_router_id(State),
     request_interface(State),
-    request_redistribution(static, State),
-    request_redistribution(kernel, State),
+    erlang:start_timer(1000, self(), request_redist),
+    %%request_redistribution(static, State),
+    %%request_redistribution(kernel, State),
     {ok, State};
 init(Args) ->
     io:format("Unknown args: ~p~n", [Args]),
@@ -132,6 +136,9 @@ handle_call({send_route, Route}, _From, State) ->
     {reply, ok, State};
 handle_call({delete_route, Prefix}, _From, State) ->
     delete_route(Prefix, State),
+    {reply, ok, State};
+handle_call({request_redist, Type}, _From, State) ->
+    request_redistribution(Type, State),
     {reply, ok, State};
 handle_call(_Request, _From, State) ->
     Reply = ok,
@@ -167,6 +174,10 @@ handle_info({tcp, _Socket, Data}, #state{buffer = Buffer} = State) ->
 handle_info({'DOWN', _Ref, process, Pid2, _Reason}, State) ->
     NewState = remove_client(Pid2, State),    
     {noreply, NewState};
+handle_info({timeout, _Ref, request_redist}, State) ->
+    request_redistribution(static, State),
+    request_redistribution(kernel, State),
+    {noreply, State};
 handle_info(_Info, State) ->
     {noreply, State}.
 
