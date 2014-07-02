@@ -61,7 +61,7 @@ show_routes(Level) ->
 	fun({#isis_address{afi = AFI, mask = Mask} = A, _Source},
 	    NHs, Metric, Nodes) ->
 		{NHAfi, {NH, IFIndex}} = 
-		    case lists:nth(1, NHs) of
+		    case lists:keyfind(AFI, 1, NHs) of
 			{ipv4, NHA} -> {ipv4, {NHA, no_ifindex}};
 			{ipv6, {NHA, NHI}} -> {ipv6, {NHA, NHI}}
 		    end,
