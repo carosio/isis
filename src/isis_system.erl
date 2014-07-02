@@ -62,6 +62,7 @@
 		max_lsp_lifetime = ?ISIS_MAX_LSP_LIFETIME,
 		pseudonodes :: dict(),  %% PID -> Pseudonode mapping
 		interfaces,             %% Our 'state' per interface
+		ignore_list = [],       %% Interfaces to ignore
 		system_ids :: dict(),   %% SID -> Neighbor address
 		refresh_timer = undef,
 		periodic_refresh,
@@ -603,6 +604,8 @@ extract_args([{system_id, Id} | T], State) ->
     extract_args(T, State#state{system_id = Id});
 extract_args([{areas, Areas} | T], State) ->
     extract_args(T, State#state{areas = Areas});
+extract_args([{ignore_interfaces, Is} | T], State) ->
+    extract_args(T, State#state{ignore_list = Is});
 extract_args([_ | T], State) ->
     extract_args(T, State);
 extract_args([], State) ->
@@ -880,7 +883,7 @@ add_interface(#zclient_interface{
 				 mac = Mac,
 				 mtu = MTU,
 				 mtu6 = MTU6},
-    NewInterfaces = ets:insert(State#state.interfaces, Interface),
+    ets:insert(State#state.interfaces, Interface),
     Autoconf(Interface, State).
 
 
@@ -888,16 +891,20 @@ add_interface(#zclient_interface{
 %%% If we're doing 'autoconf' we should enable on all interfaces (for
 %%% now) and also set the system-id from a MAC address.
 %%% ===================================================================
-is_interface(Name) when is_list(Name) ->
+is_valid_interface(Name, #state{ignore_list = Ignores}) when is_list(Name) ->
     % An interface name is expected to consist of a reasonable
     % subset of all characters, use a whitelist and extend it if needed
-    Name == [C || C <- Name, (((C bor 32) >= $a) and ((C bor 32) =< $z))
-        or ((C >= $0) and (C =< $9)) or (C == $.)].
+    case lists:member(Name, Ignores) of
+	true -> false;
+	_ ->
+	    Name == [C || C <- Name, (((C bor 32) >= $a) and ((C bor 32) =< $z))
+			      or ((C >= $0) and (C =< $9)) or (C == $.)]
+    end.
 
 autoconf_interface(#isis_interface{mac = Mac, name = Name} = I,
-		   #state{autoconf = true} = State) 
+		   #state{autoconf = true, ignore_list = Igs} = State) 
   when byte_size(Mac) =:= 6 ->
-    case is_interface(Name) of
+    case is_valid_interface(Name, State) of
 	true ->
 	    State1 = 
 		case State#state.system_id_set of

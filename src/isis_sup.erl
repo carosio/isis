@@ -72,7 +72,12 @@ init([]) ->
 	    Restart, Shutdown, Type, [isis_lspdb]},
     L2DB = {level2_lspdb, {isis_lspdb, start_link, [[{table, level_2}]]},
 	    Restart, Shutdown, Type, [isis_lspdb]},
-    ISIS = {isis, {isis_system, start_link, [[{autoconf, HWFingerPrint}]]},
+    StartupParams =
+	case application:get_env(isis, startup) of
+	    undefined -> [];
+	    {ok, Params} -> Params
+	end,
+    ISIS = {isis, {isis_system, start_link, [[{autoconf, HWFingerPrint}] ++ StartupParams]},
 	    Restart, Shutdown, Type, [isis_system, isis_protocol, isis_enum]},
     ISISRib = {isis_rib, {isis_rib, start_link, []},
 	       permanent, 10000, worker, []},
