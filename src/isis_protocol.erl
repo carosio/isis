@@ -770,9 +770,10 @@ handle_delete_array_tlv(#isis_tlv_ipv6_reachability{reachability = Deleted},
     NewD = lists:nth(1, Deleted),
     DeletedP = NewD#isis_tlv_ipv6_reachability_detail.prefix,
     DeletedM = NewD#isis_tlv_ipv6_reachability_detail.mask_len,
+    DeletedSTLV = NewD#isis_tlv_ipv6_reachability_detail.sub_tlv,
     Results = lists:filter(fun(#isis_tlv_ipv6_reachability_detail{
-				  prefix = P, mask_len = M})
-				 when P =:= DeletedP, M =:= DeletedM ->
+				  prefix = P, mask_len = M, sub_tlv = ST})
+				 when P =:= DeletedP, M =:= DeletedM, ST =:= DeletedSTLV ->
 				   false;
 			      (_) -> true
 			   end,
@@ -862,6 +863,19 @@ handle_add_array_tlv(#isis_tlv_extended_ip_reachability{reachability = Existing}
     case (Size - ExistingSize + NewSize) =< 1492 of
 	false -> {ET, {Size - ExistingSize + NewSize, false}};
 	true -> {ET#isis_tlv_extended_ip_reachability{reachability = NewList},
+		 {Size, true}}
+    end;
+handle_add_array_tlv(#isis_tlv_ipv6_reachability{reachability = Existing} = ET,
+		     #isis_tlv_ipv6_reachability{reachability = New},
+		     Size)
+  when length(New) =:= 1 ->
+    NewD = lists:nth(1, New),
+    ExistingSize = tlv_size(ET),
+    NewList = Existing ++ [NewD],
+    NewSize = tlv_size(ET#isis_tlv_ipv6_reachability{reachability = NewList}),
+    case (Size - ExistingSize + NewSize) =< 1492 of
+	false -> {ET, {Size - ExistingSize + NewSize, false}};
+	true -> {ET#isis_tlv_ipv6_reachability{reachability = NewList},
 		 {Size, true}}
     end;
 handle_add_array_tlv(ET, _, Size) ->
@@ -1028,13 +1042,16 @@ handle_merge_array_tlv(#isis_tlv_ipv6_reachability{reachability = Existing} = ET
     ExistingSize = tlv_size(ET),
     NewPrefix = NewD#isis_tlv_ipv6_reachability_detail.prefix,
     NewMask = NewD#isis_tlv_ipv6_reachability_detail.mask_len,
-    Updater = fun(#isis_tlv_ipv6_reachability_detail{prefix = P, mask_len = M}, _Acc)
-		    when P =:= NewPrefix, M =:= NewMask ->
+    NewSTLV = NewD#isis_tlv_ipv6_reachability_detail.sub_tlv,
+    Updater = fun(#isis_tlv_ipv6_reachability_detail{prefix = P,
+						     mask_len = M,
+						     sub_tlv = ST}, _Acc)
+		    when P =:= NewPrefix, M =:= NewMask, ST =:= NewSTLV ->
 		      {NewD, true};
 		 (D, Acc) -> {D, Acc}
 	end,
-    Deleter = fun(#isis_tlv_ipv6_reachability_detail{prefix = P, mask_len = M}) ->
-		      P =/= NewPrefix, M =/= NewMask
+    Deleter = fun(#isis_tlv_ipv6_reachability_detail{prefix = P, mask_len = M, sub_tlv = ST}) ->
+		      P =/= NewPrefix, M =/= NewMask, ST =/= NewSTLV
 	      end,
     {NewTLV, Updated} = lists:mapfoldl(Updater, false, Existing),
     case Updated of
