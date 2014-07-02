@@ -77,7 +77,7 @@ init([]) ->
 	    undefined -> [];
 	    {ok, Params} -> Params
 	end,
-    ISIS = {isis, {isis_system, start_link, [[{autoconf, HWFingerPrint}] ++ StartupParams]},
+    ISIS = {isis, {isis_system, start_link, [[{autoconf_fingerprint, HWFingerPrint}] ++ StartupParams]},
 	    Restart, Shutdown, Type, [isis_system, isis_protocol, isis_enum]},
     ISISRib = {isis_rib, {isis_rib, start_link, []},
 	       permanent, 10000, worker, []},

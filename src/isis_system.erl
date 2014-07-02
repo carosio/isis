@@ -596,10 +596,13 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
-extract_args([{autoconf, Fingerprint} | T], State) ->
+extract_args([{autoconf, true} | T], State) ->
     %% If we're autoconfig, we need a hardware-fingerprint
-    extract_args(T, State#state{autoconf = true, fingerprint = Fingerprint,
+    extract_args(T, State#state{autoconf = true,
 				areas = [<<0:(13*8)>>]});
+extract_args([{autoconf_fingerprint, FP} | T], State) ->
+    %% If we're autoconfig, we need a hardware-fingerprint
+    extract_args(T, State#state{fingerprint = FP});
 extract_args([{system_id, Id} | T], State) ->
     extract_args(T, State#state{system_id = Id});
 extract_args([{areas, Areas} | T], State) ->
