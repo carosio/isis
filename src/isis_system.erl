@@ -465,7 +465,6 @@ handle_cast({schedule_lsp_refresh}, State) ->
     {noreply, State};
 handle_cast({update_tlv, TLV, Node, Level},
 	    #state{frags = Frags} = State) ->
-    %% io:format("Updating tlv: ~p~n", [TLV]),
     NewFrags = isis_protocol:update_tlv(TLV, Node, Level, Frags),
     schedule_lsp_refresh(),
     isis_lspdb:schedule_spf(level_1, "Self-originated TLV change"),
@@ -995,8 +994,12 @@ add_address(#zclient_prefix{afi = AFI, address = Address,
     A = #isis_address{afi = AFI, address = Address, mask = Mask},
     NewA = add_to_list(A, I#isis_interface.addresses),
     ets:insert(State#state.interfaces, I#isis_interface{addresses = NewA}),
-    NewState = update_address_tlv(fun isis_protocol:update_tlv/4,
-				  AFI, Address, Mask, State),
+    NewState = 
+	case is_valid_interface(I#isis_interface.name, State) of
+	    true -> update_address_tlv(fun isis_protocol:update_tlv/4,
+				       AFI, Address, Mask, State);
+	    _ -> State
+	end,
     NewState.
 
 delete_address(#zclient_prefix{afi = AFI, address = Address, mask_length = Mask},
@@ -1005,9 +1008,11 @@ delete_address(#zclient_prefix{afi = AFI, address = Address, mask_length = Mask}
     case ets:lookup(State#state.interfaces, Name) of
 	[I] -> NewA = delete_from_list(A, I#isis_interface.addresses),
 	       ets:insert(State#state.interfaces, I#isis_interface{addresses = NewA}),
-	       NewState = update_address_tlv(fun isis_protocol:delete_tlv/4,
-					  AFI, Address, Mask, State),
-	       NewState;
+	       case is_valid_interface(I#isis_interface.name, State) of
+		   true -> update_address_tlv(fun isis_protocol:delete_tlv/4,
+					      AFI, Address, Mask, State);
+		   _ -> State
+	       end;
 	_ -> State
     end.
 
@@ -1027,7 +1032,7 @@ add_redistribute(#zclient_route{prefix = #zclient_prefix{afi = ipv6, address = A
 						     mask_length = Mask},
 				metric = Metric, source = Source, nexthops = NH} = R, State)
   when is_list(NH) ->
-    io:format("Redisting: ~p~n", [R]),
+    lager:warning("Redisting: ~p~n", [R]),
     MaskLenBytes = erlang:trunc((Mask + 7) / 8),
     A = Address bsr (128 - Mask),
     SubTLV =
@@ -1067,16 +1072,24 @@ delete_redistribute(#zclient_route{prefix = #zclient_prefix{afi = ipv4, address 
     update_frags(fun isis_protocol:delete_tlv/4, TLV, 0, State);
 delete_redistribute(#zclient_route{prefix = #zclient_prefix{afi = ipv6, address = Address,
 							    mask_length = Mask},
-				   metric = Metric}, State) ->
+				   metric = Metric, source = Source}, State) ->
     MaskLenBytes = erlang:trunc((Mask + 7) / 8),
     A = Address bsr (128 - Mask),
+    SubTLV =
+	case Source of
+	    #zclient_prefix{afi = ipv6,
+			    address = S,
+			    mask_length = M} ->
+		[#isis_subtlv_srcdst{prefix = S, prefix_length = M}];
+	    _ -> []
+	end,
     TLV = 
 	#isis_tlv_ipv6_reachability{
 	   reachability =
 	       [#isis_tlv_ipv6_reachability_detail{
 		   prefix = <<A:(MaskLenBytes * 8)>>, up = true,
 		   mask_len = Mask, metric = Metric,
-		   sub_tlv = []}]
+		   sub_tlv = SubTLV}]
 	  },
     update_frags(fun isis_protocol:delete_tlv/4, TLV, 0, State).
 

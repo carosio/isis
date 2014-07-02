@@ -288,7 +288,7 @@ handle_call({store, #isis_lsp{} = LSP},
     OldLSP = ets:lookup(State#state.db, LSP#isis_lsp.lsp_id),
     <<ID:6/binary, PN:8, Frag:8>> = LSP#isis_lsp.lsp_id,
     Reason = lists:flatten(
-	       io_lib:format("LSP ~16s.~2.16.0B-~2.16.0B updated",
+	       io_lib:format("LSP ~s.~2.16.0B-~2.16.0B updated",
 			     [isis_system:lookup_name(ID), PN, Frag])),
     %% io:format("SPF type required: ~p~nOld: ~p~nNew: ~p~n",
     %% 	      [spf_type_required(OldLSP, LSP), OldLSP, LSP]),
@@ -539,14 +539,14 @@ spf_type_required([OldLSP], NewLSP) ->
 %%--------------------------------------------------------------------
 -spec schedule_spf(full | partial | incremental, string(), tuple()) -> tuple().
 schedule_spf(Type, Reason, #state{spf_timer = undef} = State) ->
-    io:format("Scheduling ~p SPF due to ~s~n", [State#state.level, Reason]),
+    lager:warning("Scheduling ~p SPF due to ~s~n", [State#state.level, Reason]),
     Timer = erlang:start_timer(
 	      isis_protocol:jitter(?ISIS_SPF_DELAY, 10),
 	      self(), {run_spf, Type}),
     State#state{spf_timer = Timer, spf_reason = Reason};
 schedule_spf(_, Reason, State) ->
     %% Timer already primed...
-    io:format("SPF required due to ~s (but already scheduled)~n", [Reason]),
+    lager:warning("SPF required due to ~s (but already scheduled)~n", [Reason]),
     State.
 
 -spec start_timer(atom(), tuple()) -> integer() | ok.

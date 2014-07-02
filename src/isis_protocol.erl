@@ -615,49 +615,67 @@ encode_tlvs(TLVs, Encoder) ->
 %%%===================================================================
 %%% TLV updating
 %%% ===================================================================
-update_tlv(#isis_tlv_is_reachability{} = TLV, 
+do_update_tlv(#isis_tlv_is_reachability{} = TLV, 
 	   Node, Level, Frags) ->
     merge_array_tlv(TLV, Node, Level, Frags);
-update_tlv(#isis_tlv_extended_reachability{} = TLV, 
+do_update_tlv(#isis_tlv_extended_reachability{} = TLV, 
 	   Node, Level, Frags) ->
     merge_array_tlv(TLV, Node, Level, Frags);
-update_tlv(#isis_tlv_dynamic_hostname{} = TLV,
+do_update_tlv(#isis_tlv_dynamic_hostname{} = TLV,
 	  Node, Level, Frags) ->
     F = fun(T) -> element(1, T) =/= element(1, TLV) end,
     merge_whole_tlv(F, TLV, Node, Level, Frags);
-update_tlv(#isis_tlv_ipv6_reachability{} = TLV,
+do_update_tlv(#isis_tlv_ipv6_reachability{} = TLV,
 	   Node, Level, Frags) ->
     merge_array_tlv(TLV, Node, Level, Frags);
-update_tlv(#isis_tlv_ip_internal_reachability{} = TLV,
+do_update_tlv(#isis_tlv_ip_internal_reachability{} = TLV,
 	   Node, Level, Frags) ->
     merge_array_tlv(TLV, Node, Level, Frags);
-update_tlv(#isis_tlv_extended_ip_reachability{} = TLV,
+do_update_tlv(#isis_tlv_extended_ip_reachability{} = TLV,
 	   Node, Level, Frags) ->
     merge_array_tlv(TLV, Node, Level, Frags);
 %% Default merge..
-update_tlv(TLV, Node, Level, Frags) ->
+do_update_tlv(TLV, Node, Level, Frags) ->
     F = fun(T) -> element(1, T) =/= element(1, TLV) end,
     merge_whole_tlv(F, TLV, Node, Level, Frags).
+update_tlv(TLV, Node, Level, Frags) ->
+    lager:warning("Updating TLV for ~p PN ~B: ~p",
+		  [Level, Node, lager:pr(TLV, ?MODULE)]),
+    try do_update_tlv(TLV, Node, Level, Frags) of
+	F -> F
+    catch
+	Error -> lager:error("update_tlv: ~p", [Error])
+    end.	     
 
-delete_tlv(#isis_tlv_dynamic_hostname{} = TLV,
+
+do_delete_tlv(#isis_tlv_dynamic_hostname{} = TLV,
 	   Node, Level, Frags) ->
     delete_whole_tlv(fun(T) -> element(1, T) =/= element(1, TLV) end,
 		     Node, Level, Frags);
-delete_tlv(#isis_tlv_is_reachability{} = TLV,
+do_delete_tlv(#isis_tlv_is_reachability{} = TLV,
 	   Node, Level, Frags) ->
     delete_array_tlv(TLV, Node, Level, Frags);
-delete_tlv(#isis_tlv_extended_reachability{} = TLV,
+do_delete_tlv(#isis_tlv_extended_reachability{} = TLV,
 	   Node, Level, Frags) ->
     delete_array_tlv(TLV, Node, Level, Frags);
-delete_tlv(#isis_tlv_extended_ip_reachability{} = TLV,
+do_delete_tlv(#isis_tlv_extended_ip_reachability{} = TLV,
 	   Node, Level, Frags) ->
     delete_array_tlv(TLV, Node, Level, Frags);
-delete_tlv(#isis_tlv_ipv6_reachability{} = TLV,
+do_delete_tlv(#isis_tlv_ipv6_reachability{} = TLV,
 	   Node, Level, Frags) ->
     delete_array_tlv(TLV, Node, Level, Frags);
-delete_tlv(TLV, Node, Level, Frags) ->
+do_delete_tlv(TLV, Node, Level, Frags) ->
     delete_whole_tlv(fun(T) -> element(1, T) =/= element(1, TLV) end,
 		     Node, Level, Frags).
+delete_tlv(TLV, Node, Level, Frags) ->
+    lager:warning("Deleting TLV for ~p PN ~B: ~p",
+		  [Level, Node, lager:pr(TLV, ?MODULE)]),
+    try do_delete_tlv(TLV, Node, Level, Frags) of
+	F -> F
+    catch
+	Error -> lager:error("delete_tlv: ~p", [Error])
+    end.	     
+
 
 
 %%%===================================================================
