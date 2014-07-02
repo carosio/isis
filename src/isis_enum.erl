@@ -115,7 +115,7 @@
 
 -enum({subtlv_ipv6r,
        [{unknown, 0},
-	{srcdst, 255}      %% Not IANA defined yet!
+	{source_prefix, 255}      %% Not IANA defined yet!
        ]}).
 
 %%%

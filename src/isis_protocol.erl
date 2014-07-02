@@ -395,7 +395,7 @@ decode_tlvs(_, _,_,_) -> error.
 %%%===================================================================
 -spec encode_subtlv_ipv6r(isis_subtlv_ipv6r()) -> binary().
 encode_subtlv_ipv6r(#isis_subtlv_srcdst{prefix_length = PL, prefix = P}) ->
-    encode_tlv(srcdst, subtlv_ipv6r, <<PL:8, P/binary>>);
+    encode_tlv(source_prefix, subtlv_ipv6r, <<PL:8, P/binary>>);
 encode_subtlv_ipv6r(#isis_subtlv_unknown{type = T, value = V}) ->
     S = byte_size(V),
     <<T:8, S:8, V/binary>>.
