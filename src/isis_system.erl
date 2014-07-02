@@ -874,7 +874,7 @@ do_bump_lsp(Level, Node, Frag, SeqNo, State) ->
 %%% Add interface
 %%%===================================================================
 add_interface(#zclient_interface{
-		 name = Name, ifindex = Ifindex,
+		 name = Name, ifindex = Ifindex, flags = Flags,
 		 mtu = MTU, mtu6 = MTU6, mac = Mac}, State) ->
     {I, Autoconf} = 
 	case ets:lookup(State#state.interfaces, Name) of
@@ -883,6 +883,7 @@ add_interface(#zclient_interface{
 		  fun autoconf_interface/2}
 	end,
     Interface = I#isis_interface{ifindex = Ifindex,
+				 flags = Flags,
 				 mac = Mac,
 				 mtu = MTU,
 				 mtu6 = MTU6},

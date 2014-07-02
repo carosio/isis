@@ -19,6 +19,7 @@
 	   name :: string(),
 	   mac :: binary(),
 	   metric = 10 :: integer(),
+	   flags :: integer(),
 	   enabled = false :: atom(),
 	   pid :: pid(),
 	   addresses = [] :: [isis_address()],
