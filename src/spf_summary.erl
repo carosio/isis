@@ -16,7 +16,8 @@
 %% API
 -export([start_link/0,
 	 subscribe/1, unsubscribe/1,
-	 notify_subscribers/1]).
+	 notify_subscribers/1,
+	 last_run/1]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -25,8 +26,9 @@
 -define(SERVER, ?MODULE).
 
 -record(state, {
-	 subscribers,
-	 last_run = undef
+	  subscribers,
+	  last_run_level_1 = undef,
+	  last_run_level_2 = undef
 	 }).
 
 %%%===================================================================
@@ -40,6 +42,9 @@ unsubscribe(Pid) ->
 
 notify_subscribers(Summary) ->
     gen_server:call(?MODULE, {notify, Summary}).
+
+last_run(Level) ->
+    gen_server:call(?MODULE, {last_run, Level}).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -84,7 +89,8 @@ init([]) ->
 %%                                   {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_call({subscribe, Pid}, _From, #state{subscribers = Subscribers, last_run = LR} = State) ->
+handle_call({subscribe, Pid}, _From, #state{subscribers = Subscribers,
+					    last_run_level_1 = LR} = State) ->
     %% Monitor the subscribing process, so we know if they die
     erlang:monitor(process, Pid),
     NewDict = dict:store(Pid, [], Subscribers),
@@ -102,6 +108,14 @@ handle_call({notify, Summary}, _From, #state{subscribers = Subscribers} = State)
     notify_subscribers(Summary, Subscribers),
     {reply, ok, State};
 
+handle_call({last_run, level_1}, _From, #state{last_run_level_1 = LR} = State) ->
+    {reply, LR, State};
+handle_call({last_run, level_2}, _From, #state{last_run_level_2 = LR} = State) ->
+    {reply, LR, State};
+handle_call({last_run, _}, _From, State) ->
+    {reply, not_run, State};
+
+
 handle_call(_Request, _From, State) ->
     Reply = ok,
     {reply, Reply, State}.
@@ -116,8 +130,10 @@ handle_call(_Request, _From, State) ->
 %%                                  {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_cast({last_run, Message}, State) ->
-    {noreply, State#state{last_run = Message}};
+handle_cast({last_run, {_, level_1, _, _} = Message}, State) ->
+    {noreply, State#state{last_run_level_1 = Message}};
+handle_cast({last_run, {_, level_2, _, _} = Message}, State) ->
+    {noreply, State#state{last_run_level_2 = Message}};
 
 handle_cast(_Msg, State) ->
     {noreply, State}.

@@ -20,9 +20,10 @@
 	 %% Database examination
 	 show_database/0, show_database/1,
 	 %% Interface stuff
-	 show_interfaces/0
+	 show_interfaces/0,
 	 %% Neighbors
 	 %%show_adjacencies/0
+	 show_routes/1
 	]).
 
 %%%===================================================================
@@ -49,6 +50,44 @@ show_database() ->
     do_show_database(level_2).
 show_database(Level) ->
     do_show_database(Level).
+
+show_routes(Level) ->
+    {_Time, _Level, SPF, _Reason} = spf_summary:last_run(Level),
+    Interfaces = 
+	dict:from_list(
+	  lists:map(fun(#isis_interface{name = Name, ifindex = IFIndex}) -> {IFIndex, Name} end,
+		    isis_system:list_interfaces())),
+    SendRoute = 
+	fun({#isis_address{afi = AFI, mask = Mask} = A, _Source},
+	    NHs, Metric, Nodes) ->
+		{NHAfi, {NH, IFIndex}} = 
+		    case lists:nth(1, NHs) of
+			{ipv4, NHA} -> {ipv4, {NHA, no_ifindex}};
+			{ipv6, {NHA, NHI}} -> {ipv6, {NHA, NHI}}
+		    end,
+		AStr = isis_system:address_to_string(A),
+		NHStr = isis_system:address_to_string(NHAfi, NH),
+		InterfaceStr =
+		    case dict:find(IFIndex, Interfaces) of
+			{ok, Value} -> Value;
+			_ -> "unknown"
+		    end,
+		NodesStrList = lists:map(fun(N) -> isis_system:lookup_name(N) end, Nodes),
+		NodesStr = string:join(NodesStrList, ", "),
+		io:format("~s/~p via ~s (~s) path: ~s~n",
+			  [AStr, Mask, NHStr, InterfaceStr, NodesStr]),
+		false;
+	   (_, _, _, _) -> false
+	end,
+    UpdateRib =
+	fun({_RouteNode, _NexthopNode, NextHops, Metric,
+	     Routes, Nodes}) ->
+		lists:filtermap(fun(R) -> SendRoute(R, NextHops, Metric, Nodes) end,
+				Routes)
+	end,
+    lists:map(UpdateRib, SPF),
+    ok.
+
 
 pp_binary(B, Sep) ->
     pp_binary(B, Sep, []).
