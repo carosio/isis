@@ -394,7 +394,6 @@ handle_zclient_cmd(ipv6_route_delete,
 		   <<Type:8, Flags:8, Info:8, Mask:8, R0/binary>>,
 		   State) ->
     R = read_ipv6_route(Type, Flags, Info, Mask, R0),
-    lager:error("Deleting: ~p", [R]),
     NewRoutes = dict:erase({R#zclient_route.prefix,
 			    R#zclient_route.nexthops}, State#state.routes),
     update_listeners({redistribute_delete, R}, State),

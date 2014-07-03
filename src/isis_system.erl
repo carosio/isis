@@ -62,6 +62,7 @@
 		max_lsp_lifetime = ?ISIS_MAX_LSP_LIFETIME,
 		pseudonodes :: dict(),  %% PID -> Pseudonode mapping
 		interfaces,             %% Our 'state' per interface
+		redistributed_routes,
 		ignore_list = [],       %% Interfaces to ignore
 		system_ids :: dict(),   %% SID -> Neighbor address
 		refresh_timer = undef,
@@ -297,8 +298,11 @@ init(Args) ->
     process_flag(trap_exit, true),
     Interfaces = ets:new(isis_interfaces, [named_table, ordered_set,
 					   {keypos, #isis_interface.name}]),
+    Redist = ets:new(redistributed_routes, [named_table, bag,
+					    {keypos, #zclient_route.prefix}]),
     State = #state{system_ids = dict:new(),
 		   interfaces = Interfaces,
+		   redistributed_routes = Redist,
 		   pseudonodes = dict:new()},
     StartState = create_initial_frags(extract_args(Args, State)),
     StartState2 = refresh_lsps(StartState),
@@ -1002,15 +1006,19 @@ add_address(#zclient_prefix{afi = AFI, address = Address,
 	end,
     NewState.
 
-delete_address(#zclient_prefix{afi = AFI, address = Address, mask_length = Mask},
+delete_address(#zclient_prefix{afi = AFI, address = Address, mask_length = Mask} = R,
 	       Name, State) ->
     A = #isis_address{afi = AFI, address = Address, mask = Mask},
     case ets:lookup(State#state.interfaces, Name) of
 	[I] -> NewA = delete_from_list(A, I#isis_interface.addresses),
 	       ets:insert(State#state.interfaces, I#isis_interface{addresses = NewA}),
 	       case is_valid_interface(I#isis_interface.name, State) of
-		   true -> update_address_tlv(fun isis_protocol:delete_tlv/4,
-					      AFI, Address, Mask, State);
+		   true ->
+		       case should_withdraw_route(R, State) of
+			   true -> update_address_tlv(fun isis_protocol:delete_tlv/4,
+						      AFI, Address, Mask, State);
+			   _ -> State
+		       end;
 		   _ -> State
 	       end;
 	_ -> State
@@ -1018,7 +1026,8 @@ delete_address(#zclient_prefix{afi = AFI, address = Address, mask_length = Mask}
 
 add_redistribute(#zclient_route{prefix = #zclient_prefix{afi = ipv4, address = Address,
 						     mask_length = Mask},
-				metric = Metric}, State) ->
+				metric = Metric} = R, State) ->
+    ets:insert(State#state.redistributed_routes, R),
     TLV = #isis_tlv_extended_ip_reachability{
 	     reachability =
 		 [#isis_tlv_extended_ip_reachability_detail{
@@ -1032,7 +1041,7 @@ add_redistribute(#zclient_route{prefix = #zclient_prefix{afi = ipv6, address = A
 						     mask_length = Mask},
 				metric = Metric, source = Source, nexthops = NH} = R, State)
   when is_list(NH) ->
-    lager:warning("Redisting: ~p~n", [R]),
+    ets:insert(State#state.redistributed_routes, R),
     MaskLenBytes = erlang:trunc((Mask + 7) / 8),
     A = Address bsr (128 - Mask),
     SubTLV =
@@ -1060,7 +1069,8 @@ add_redistribute(R, State) ->
 
 delete_redistribute(#zclient_route{prefix = #zclient_prefix{afi = ipv4, address = Address,
 							    mask_length = Mask},
-				   metric = Metric}, State) ->
+				   metric = Metric} = R, State) ->
+    ets:delete_object(State#state.redistributed_routes, R),
     TLV = 
      	#isis_tlv_extended_ip_reachability{
 	   reachability = [#isis_tlv_extended_ip_reachability_detail{
@@ -1069,10 +1079,14 @@ delete_redistribute(#zclient_route{prefix = #zclient_prefix{afi = ipv4, address 
 			      metric = Metric,
 			      up = true,
 			      sub_tlv = []}]},
-    update_frags(fun isis_protocol:delete_tlv/4, TLV, 0, State);
+    case should_withdraw_route(R, State) of
+	true -> update_frags(fun isis_protocol:delete_tlv/4, TLV, 0, State);
+	_ -> State
+    end;
 delete_redistribute(#zclient_route{prefix = #zclient_prefix{afi = ipv6, address = Address,
 							    mask_length = Mask},
-				   metric = Metric, source = Source}, State) ->
+				   metric = Metric, source = Source} = R, State) ->
+    ets:delete_object(State#state.redistributed_routes, R),
     MaskLenBytes = erlang:trunc((Mask + 7) / 8),
     A = Address bsr (128 - Mask),
     SubTLV =
@@ -1091,7 +1105,10 @@ delete_redistribute(#zclient_route{prefix = #zclient_prefix{afi = ipv6, address 
 		   mask_len = Mask, metric = Metric,
 		   sub_tlv = SubTLV}]
 	  },
-    update_frags(fun isis_protocol:delete_tlv/4, TLV, 0, State).
+    case should_withdraw_route(R, State) of
+	true -> update_frags(fun isis_protocol:delete_tlv/4, TLV, 0, State);
+	_ -> State
+    end.
 
 update_router_id(#zclient_prefix{afi = ipv4, address = A},
 		 State) ->
@@ -1149,6 +1166,49 @@ address_to_string(#isis_address{afi = AFI, address = A, mask = M}) ->
 	end,
     address_to_string(AFI, SA).
 
+%%%===================================================================
+%% should_withdraw_route
+%%
+%% We should only remove the prefix from our TLVs if its not in either
+%% the redist list, or the interface address lists.
+%% In the case of #zclient_route{}, its been withdrawn from redist, so
+%% check the connected set.
+%% In the case of a #zclient_prefix{}, its a connected address being withdrawn
+%% so check the redist bag.
+%%%===================================================================
+should_withdraw_route(#zclient_route{
+			prefix = #zclient_prefix{
+				   afi = AFI,
+				   address = Address,
+				   mask_length = Mask},
+			source = undefined} = R, _State) ->
+    FindAddr = fun(_, true) -> true;
+		  (#isis_address{afi = AAFI, address = AAddress, mask = AMask}, false)
+		    when AAFI =:= AFI, AAddress =:= Address, AMask =:= Mask -> true;
+		  (_, false) -> false
+	       end,
+    CheckInt = fun(_, true) -> true;
+		  (#isis_interface{addresses = A}, false) -> lists:foldl(FindAddr, false, A)
+	       end,
+    Result = lists:foldl(CheckInt, false, isis_system:list_interfaces()),
+    lager:error("should_withdraw_route ~p: ~p", [R, Result]),
+    Result;
+should_withdraw_route(#zclient_prefix{
+			afi = AFI,
+			address = Address,
+			mask_length = Mask} = R, State) ->
+    Possibles = ets:lookup(State#state.redistributed_routes,
+			   #zclient_prefix{afi = AFI, address = Address, mask_length = Mask}),
+    FilterFun = fun(#zclient_route{source = undefined}) -> true;
+		   (_) -> false
+		end,
+    Result = length(lists:filter(FilterFun, Possibles)) > 0,
+    lager:error("should_withdraw_route ~p: ~p", [R, Result]),    
+    Result;
+should_withdraw_route(_, _) ->
+    true.
+
+    
 
 set_state([{lsp_lifetime, Value} | Vs], State) ->
     set_state(Vs, State#state{max_lsp_lifetime = Value});
