@@ -865,7 +865,7 @@ handle_lsp(#isis_lsp{lsp_id = ID, sequence_number = TheirSeq,
 		    1 -> [OurLSP] = L,
 			 OurSeq = OurLSP#isis_lsp.sequence_number,
 			 OurCSum = OurLSP#isis_lsp.checksum,
-			 case ((OurSeq < TheirSeq) or ((OurSeq =:= TheirSeq) and (OurCSum =/= TheirCSum))) of
+			 case (OurSeq < TheirSeq) of
 			     true -> isis_lspdb:store_lsp(State#state.level, LSP),
 				     lager:warning("Updated LSP, storing..~n", []),
 				     true;
