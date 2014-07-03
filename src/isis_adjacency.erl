@@ -10,6 +10,7 @@
 
 -behaviour(gen_fsm).
 
+-include("isis_system.hrl").
 -include("isis_protocol.hrl").
 
 %% API
@@ -31,6 +32,7 @@
 	  ip_addresses = [],  %% IP address of the neighbor
           ipv6_addresses = [], %% IPv6 address of the neighbor
 	  interface,     %% PID handling the interface
+	  interface_name,%% Name of our interface
 	  level_pid,     %% PID handling the level
 	  snpa,          %% Our SNPA
 	  timer          %% Hold timer for this adjacency
@@ -235,8 +237,9 @@ parse_args([{neighbor, Value} | T], State) ->
     parse_args(T, State#state{neighbor = Value});
 parse_args([{snpa, Value} | T], State) ->
     parse_args(T, State#state{snpa = Value});
-parse_args([{interface, Pid} | T], State) ->
-    parse_args(T, State#state{interface = Pid});
+parse_args([{interface, Pid, Name} | T], State) ->
+    parse_args(T, State#state{interface = Pid,
+			      interface_name = Name});
 parse_args([{level_pid, Pid} | T], State) ->
     parse_args(T, State#state{level_pid = Pid});
 parse_args([{level, level1_iih} | T], State) ->
@@ -286,7 +289,7 @@ update_adjacency(Direction, State) ->
 %% we'll have no nexthops for routes!
 verify_interface_addresses(IIH, #state{ip_addresses = IPAddresses,
 				       ipv6_addresses = IPv6Addresses} = State) ->
-    IfIndex = isis_interface:get_state(State#state.interface, undef, ifindex),
+    IfIndex = get_ifindex(State),
     V4 = isis_protocol:filter_tlvs(isis_tlv_ip_interface_address, IIH#isis_iih.tlv),
     V4Addresses =
 	lists:flatten(
@@ -310,3 +313,7 @@ verify_interface_addresses(IIH, #state{ip_addresses = IPAddresses,
     isis_system:delete_sid_addresses(IIH#isis_iih.source_id, V6Remove),
     {up, State#state{ip_addresses = V4Addresses,
 		     ipv6_addresses = V6Addresses}}.
+
+get_ifindex(#state{interface_name = Name}) ->
+    I = isis_system:get_interface(Name),
+    I#isis_interface.ifindex.

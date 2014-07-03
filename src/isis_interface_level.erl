@@ -304,7 +304,8 @@ handle_iih(From, IIH, #state{adj_handlers = Adjs} = State) ->
 		Adjs;
 	    _ ->
 		{ok, NewPid} = isis_adjacency:start_link([{neighbor, From},
-							  {interface, State#state.interface_ref},
+							  {interface, State#state.interface_ref,
+							   State#state.interface_name},
 							  {snpa, State#state.snpa},
 							  {level, IIH#isis_iih.pdu_type},
 							  {level_pid, self()}]),
