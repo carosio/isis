@@ -879,7 +879,7 @@ handle_lsp(#isis_lsp{lsp_id = ID, sequence_number = TheirSeq,
 			 OurCSum = OurLSP#isis_lsp.checksum,
 			 case (OurSeq < TheirSeq) of
 			     true -> isis_lspdb:store_lsp(State#state.level, LSP),
-				     lager:warning("Updated LSP, storing..~n", []),
+				     lager:warning("Updated LSP (~b vs ~b)~n", [OurSeq, TheirSeq]),
 				     true;
 			     _ -> false
 			 end;
@@ -1100,8 +1100,8 @@ flood_lsp(LSP, State) ->
     Is = isis_system:list_interfaces(),
     OutputIs = 
 	lists:filter(
-	  fun(#isis_interface{pid = P})
-		when P =/= State#state.interface_ref ->
+	  fun(#isis_interface{name = N})
+		when N =:= State#state.interface_name ->
 		  false;
 	     (_) -> true
 	  end, Is),
