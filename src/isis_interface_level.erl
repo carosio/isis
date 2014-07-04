@@ -334,7 +334,7 @@ handle_iih(From, IIH, #state{adj_handlers = Adjs} = State) ->
 handle_dis_election(From, 
 		    #isis_iih{priority = TheirP, dis = <<D:6/binary, DPN:8>> = DIS, source_id = SID},
 		    #state{priority = OurP, snpa = OurSNPA} = State)
-  when DPN > 0, TheirP > OurP; TheirP == OurP, From > OurSNPA ->
+  when DPN > 0, TheirP > OurP; DPN > 0, TheirP == OurP, From > OurSNPA ->
     %% io:format("handle_dis_election: They win~n", []),
     DIS_Priority = 
 	case D =:= SID of
