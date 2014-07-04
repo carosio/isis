@@ -335,41 +335,40 @@ handle_dis_election(From,
 		    #isis_iih{priority = TheirP, dis = <<D:6/binary, DPN:8>> = DIS, source_id = SID} = IIH,
 		    #state{priority = OurP, snpa = OurSNPA} = State)
   when TheirP > OurP; TheirP == OurP, From > OurSNPA ->
-    case DPN of
-	0 -> lager:error("IIH claiming DIS with 0 pseudonode: ~p (~p)",
-			 [lager:pr(IIH, isis_protocol), lager:pr(State, ?MODULE)]),
-	     State;
-	_ ->
-	    DIS_Priority = 
-		case D =:= SID of
-		    true -> TheirP;
-		    _ -> State#state.dis_priority
-		end,
-	    case State#state.dis =:= DIS of
-		false ->
-		    relinquish_dis(State),
-		    update_reachability_tlv(add, DIS, 0, State#state.metric, State);
-		_ ->
-	    ok
-	    end,
-	    State#state{dis = DIS, dis_priority = DIS_Priority, are_we_dis = false}
-    end;
-handle_dis_election(_From,
+    DIS_Priority = 
+	case D =:= SID of
+	    true -> TheirP;
+	    _ -> State#state.dis_priority
+	end,
+    case State#state.are_we_dis of
+	true -> relinquish_dis(State);
+	_ -> ok
+    end,
+    NewState = 
+	case DPN =:= 0 of
+	    true -> State#state{dis_priority = DIS_Priority, are_we_dis = false};
+	    _ -> case State#state.dis =:= DIS of
+		     false -> update_reachability_tlv(add, DIS, 0, State#state.metric, State);
+		     _ -> ok
+		 end,
+		 State#state{dis = DIS, dis_priority = DIS_Priority, are_we_dis = false}
+	end,
+    NewState;
+handle_dis_election(From,
 		    #isis_iih{priority = _TheirP, dis = DIS, source_id = _SID},
 		    #state{priority = _OurP, are_we_dis = Us} = State)
   when Us =:= false ->
     %% io:format("handle_dis_election: We win, assuming DIS if adj is up~n", []),
     <<D:6/binary, _D1:1/binary>> = DIS,
     NewState = 
-	case dict:find(D, State#state.adj_handlers) of
-	    {ok, _} -> State;
-	    _ -> assume_dis(State)
+	case dict:find(From, State#state.adj_handlers) of
+	    {ok, _} -> assume_dis(State);
+	    _ -> State
 	end,
     NewState;
 handle_dis_election(_From,
 		    #isis_iih{priority = _TheirP, dis = _DIS, source_id = _SID},
 		    #state{priority = _OurP, are_we_dis = _Us} = State) ->
-    %% io:format("handle_dis_election: no-op~n", []),
     State.
 
 assume_dis(State) ->
@@ -1145,10 +1144,8 @@ do_update_reachability_tlv(del, N, PN, Metric,
     isis_system:delete_tlv(TLV, PN, State#state.level).
 
 update_reachability_tlv(Dir, <<_:6/binary, PN:8>> = N, 0, Metric, State) when PN =:= 0 ->
-    lager:error("Updating reachability TLV ~s neighbor ~p (pseudonode ~B)",
+    lager:info("Updating reachability TLV ~s neighbor ~p (pseudonode ~B)",
 	       [Dir, N, 0]),
-    lager:error("Backtrace: ~p", [process_info(self(), backtrace)]),
-    lager:error("State: ~p", [State]),
     do_update_reachability_tlv(Dir, N, PN, Metric, State);
 update_reachability_tlv(Dir, N, PN, Metric, State) ->
     lager:info("Updating reachability TLV ~s neighbor ~p (pseudonode ~B)",
