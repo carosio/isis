@@ -1143,6 +1143,7 @@ update_reachability_tlv(Dir, <<_:6/binary, PN:8>> = N, 0, Metric, State) when PN
     lager:error("Updating reachability TLV ~s neighbor ~p (pseudonode ~B)",
 	       [Dir, N, 0]),
     lager:error("Backtrace: ~p", [process_info(self(), backtrace)]),
+    lager:error("State: ~p", [State]),
     do_update_reachability_tlv(Dir, N, PN, Metric, State);
 update_reachability_tlv(Dir, N, PN, Metric, State) ->
     lager:info("Updating reachability TLV ~s neighbor ~p (pseudonode ~B)",
