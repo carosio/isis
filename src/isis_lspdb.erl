@@ -37,7 +37,7 @@
 		name_db,          %% Dict for name mapping (may need this as ETS?)
 		level,            %% Our level
 		system_id = undefined, %% Our system id
-	        expiry_timer,     %% We expire LSPs based on this timer
+	        expiry_timer = undef,  %% We expire LSPs based on this timer
 		spf_timer = undef, %% Dijkestra timer
 		spf_reason = "",
 		hold_timer        %% SPF Hold timer
@@ -262,7 +262,7 @@ init([{table, Table_ID}]) ->
     process_flag(trap_exit, true),
     DB = ets:new(Table_ID, [ordered_set, {keypos, #isis_lsp.lsp_id}]),
     NameDB = dict:new(),
-    Timer = start_timer(expiry, #state{expiry_timer = undef}),
+    Timer = start_timer(expiry, #state{}),
     {ok, #state{db = DB, name_db = NameDB, level = Table_ID, 
 		expiry_timer = Timer, spf_timer = undef}}.
 
@@ -494,10 +494,11 @@ lsp_range(Start_ID, End_ID, DB) ->
 expire_lsps(#state{db = DB}) ->
     Now = isis_protocol:current_timestamp(),
     F = ets:fun2ms(fun(#isis_lsp{lsp_id = LSP_Id, remaining_lifetime = L,
-				 last_update = U, sequence_number = N, checksum = C})
-		      when (L - (Now - U)) < -?DEFAULT_LSP_AGEOUT ->
-			   true end),
-    ets:select_delete(DB, F).
+				 last_update = U, sequence_number = N, checksum = C}) ->
+			   (L - (Now - U)) < -?DEFAULT_LSP_AGEOUT end),
+    R = ets:select_delete(DB, F),
+    lager:info("Expired ~B LSPs~n", [R]).
+
 
 %%--------------------------------------------------------------------
 %% @private
@@ -550,10 +551,10 @@ schedule_spf(_, Reason, State) ->
     State.
 
 -spec start_timer(atom(), tuple()) -> integer() | ok.
-start_timer(expiry, #state{expiry_timer = T}) when T =/= undef ->
-    erlang:start_timer((?DEFAULT_EXPIRY_TIMER * 1000), self(), expiry);
-start_timer(spf, #state{spf_timer = S}) when S =/= undef ->
-    erlang:start_timer((?DEFAULT_SPF_DELAY * 1000), self(), spf);
+start_timer(expiry, #state{expiry_timer = T}) when T =:= undef ->
+    erlang:start_timer(isis_protocol:jitter((?DEFAULT_EXPIRY_TIMER * 1000), 10), self(), expiry);
+start_timer(spf, #state{spf_timer = S}) when S =:= undef ->
+    erlang:start_timer(isis_protocol:jitter((?DEFAULT_SPF_DELAY * 1000), 10), self(), spf);
 start_timer(_, _) ->
     ok.
 
