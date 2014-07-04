@@ -355,7 +355,7 @@ handle_cast(_Msg, State) ->
 handle_info({timeout, _Ref, expiry}, State) ->
     erlang:cancel_timer(State#state.expiry_timer),
     expire_lsps(State),
-    Timer = start_timer(expiry, State),
+    Timer = start_timer(expiry, State#state{expiry_timer = undef}),
     {noreply, State#state{expiry_timer = Timer}};
 handle_info({timeout, _Ref, {run_spf, _Type}}, State) ->
     %% Ignoring type for now...
