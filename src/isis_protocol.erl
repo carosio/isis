@@ -641,8 +641,9 @@ do_update_tlv(TLV, Node, Level, Frags) ->
     F = fun(T) -> element(1, T) =/= element(1, TLV) end,
     merge_whole_tlv(F, TLV, Node, Level, Frags).
 update_tlv(TLV, Node, Level, Frags) ->
-    lager:warning("Updating TLV for ~p PN ~B: ~p",
-		  [Level, Node, lager:pr(TLV, ?MODULE)]),
+    {TLVName, TLVDetails} = pp_tlv(TLV),
+    lager:warning("Updating TLV for ~p PN ~B: ~s: ~s",
+		  [Level, Node, TLVName, TLVDetails]),
     try do_update_tlv(TLV, Node, Level, Frags) of
 	F -> F
     catch
