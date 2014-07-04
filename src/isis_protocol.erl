@@ -1542,9 +1542,8 @@ do_pp_tlv(#isis_tlv_extended_reachability{reachability = R}) ->
 do_pp_tlv(#isis_tlv_extended_ip_reachability{reachability = R}) ->
     lists:map(fun(#isis_tlv_extended_ip_reachability_detail{prefix = P, mask_len = Mask, metric = Metric,
 							    sub_tlv = S}) ->
-		      IA = #isis_address{afi = ipv4, address = P, mask = Mask},
 		      lists:flatten(io_lib:format("~s/~B metric ~B ~p",
-						  [isis_system:address_to_string(IA),
+						  [isis_system:address_to_string(ipv4, P),
 						   Mask, Metric, S]))
 	     end, R);
 do_pp_tlv(T) ->
