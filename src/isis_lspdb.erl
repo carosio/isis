@@ -354,9 +354,9 @@ handle_cast(_Msg, State) ->
 %%--------------------------------------------------------------------
 handle_info({timeout, _Ref, expiry}, State) ->
     erlang:cancel_timer(State#state.expiry_timer),
-    expire_lsps(State),
-    Timer = start_timer(expiry, State#state{expiry_timer = undef}),
-    {noreply, State#state{expiry_timer = Timer}};
+    NewState = expire_lsps(State),
+    Timer = start_timer(expiry, NewState#state{expiry_timer = undef}),
+    {noreply, NewState#state{expiry_timer = Timer}};
 handle_info({timeout, _Ref, {run_spf, _Type}}, State) ->
     %% Ignoring type for now...
     erlang:cancel_timer(State#state.spf_timer),
@@ -490,7 +490,7 @@ lsp_range(Start_ID, End_ID, DB) ->
 %% @end
 %%--------------------------------------------------------------------
 -spec expire_lsps(tuple()) -> integer().
-expire_lsps(#state{db = DB, level = Level}) ->
+expire_lsps(#state{db = DB, level = Level} = State) ->
     Now = isis_protocol:current_timestamp(),
     F = ets:fun2ms(fun(#isis_lsp{lsp_id = LSP_Id, remaining_lifetime = L,
 				 last_update = U, sequence_number = N})
@@ -507,8 +507,10 @@ expire_lsps(#state{db = DB, level = Level}) ->
 						     [X || <<X:16>> <= SID] ++ [PN, Frag]))
 	  end, "", Deletes),
     case length(Deletes) of
-	0 -> lager:info("Expired 0 ~p LSPs~n", [Level]);
-	C -> lager:info("Expired ~B ~p LSPs (~s)~n", [C, Level, LSPs])
+	0 -> lager:info("Expired 0 ~p LSPs~n", [Level]),
+	     State;
+	C -> lager:info("Expired ~B ~p LSPs (~s)~n", [C, Level, LSPs]),
+	     schedule_spf(full, "LSPs deleted", State)
     end.
 
 %%--------------------------------------------------------------------
