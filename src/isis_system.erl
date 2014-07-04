@@ -934,8 +934,7 @@ autoconf_interface(#isis_interface{mac = Mac, name = Name} = I,
 	    isis_interface_level:set(LevelPid,
 				     [{encryption, text, <<"isis-autoconf">>},
 				      {metric, ?DEFAULT_AUTOCONF_METRIC},
-				      %%{priority, ?DEFAULT_PRIORITY}]),
-				      {priority, 4}]),
+				      {priority, ?DEFAULT_PRIORITY}]),
 	    State2;
 	_ ->
 	    State
