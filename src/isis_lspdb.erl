@@ -491,14 +491,27 @@ lsp_range(Start_ID, End_ID, DB) ->
 %% @end
 %%--------------------------------------------------------------------
 -spec expire_lsps(tuple()) -> integer().
-expire_lsps(#state{db = DB}) ->
+expire_lsps(#state{db = DB, level = Level}) ->
     Now = isis_protocol:current_timestamp(),
     F = ets:fun2ms(fun(#isis_lsp{lsp_id = LSP_Id, remaining_lifetime = L,
-				 last_update = U, sequence_number = N, checksum = C}) ->
-			   (L - (Now - U)) < -?DEFAULT_LSP_AGEOUT end),
-    R = ets:select_delete(DB, F),
-    lager:info("Expired ~B LSPs~n", [R]).
-
+				 last_update = U, sequence_number = N})
+			 when (L - (Now - U)) < -?DEFAULT_LSP_AGEOUT ->
+			   LSP_Id
+		   end),
+    Deletes = ets:select(DB, F),
+    LSPs = 
+	lists:foldl(
+	  fun(D, Acc) ->
+		  ets:delete(DB, D),
+		  io:format("D: ~p~n", [D]),
+		  <<SID:6/binary, PN:8, Frag:8>> = D,
+		  Acc ++ lists:flatten(io_lib:format("~4.16.0B.~4.16.0B.~4.16.0B-~2.16.0B-~2.16.0B ",
+						     [X || <<X:16>> <= SID] ++ [PN, Frag]))
+	  end, "", Deletes),
+    case length(Deletes) of
+	0 -> lager:info("Expired 0 ~p LSPs~n", [Level]);
+	C -> lager:info("Expired ~B ~p LSPs (~s)~n", [C, Level, LSPs])
+    end.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -553,8 +566,6 @@ schedule_spf(_, Reason, State) ->
 -spec start_timer(atom(), tuple()) -> integer() | ok.
 start_timer(expiry, #state{expiry_timer = T}) when T =:= undef ->
     erlang:start_timer(isis_protocol:jitter((?DEFAULT_EXPIRY_TIMER * 1000), 10), self(), expiry);
-start_timer(spf, #state{spf_timer = S}) when S =:= undef ->
-    erlang:start_timer(isis_protocol:jitter((?DEFAULT_SPF_DELAY * 1000), 10), self(), spf);
 start_timer(_, _) ->
     ok.
 
@@ -726,13 +737,20 @@ extract_reachability(D, From, TLV) ->
     D2 = populate_dict(D1, From, Normals),
     D2.
 
-populate_links(DB) ->    
+populate_links(DB) ->
+    Now = isis_protocol:current_timestamp(),
+    F = ets:fun2ms(fun(#isis_lsp{lsp_id = LSP_Id, remaining_lifetime = L,
+				 last_update = U, sequence_number = N, tlv = TLV})
+			 when (L - (Now - U)) >= 0 ->
+			   {LSP_Id, TLV}
+		   end),
+    ValidLSPs = ets:select(DB, F),
     Reachability =
-	fun(L, Acc) ->
-		<<Sys:7/binary, _/binary>> = L#isis_lsp.lsp_id,
-		extract_reachability(Acc, Sys, L#isis_lsp.tlv)
+	fun({LSP_Id, TLV}, Acc) ->
+		<<Sys:7/binary, _/binary>> = LSP_Id,
+		extract_reachability(Acc, Sys, TLV)
 	end,
-    Edges = ets:foldl(Reachability, dict:new(), DB),
+    Edges = lists:foldl(Reachability, dict:new(), ValidLSPs),
     Edges.
 
 extract_ip_addresses(#isis_tlv_ip_internal_reachability{ip_reachability = R}, Ts) ->
