@@ -59,12 +59,14 @@ function connectToSPFFeed() {
 		    "The last SPF run took " + NewState["Time"] + " &micro;seconds, due to: " + NewState["Reason"]
             }
             Rib = "";
-            for(var i = 0; i < NewState.rib[0].length; i++) {
-              Rib += NewState.rib[0][i].address + "/"
-                + NewState.rib[0][i].mask + " -> "
-		+ NewState.rib[0][i].nexthop + " via "
-                + NewState.rib[0][i].interface + " ("
-		+ NewState.rib[0][i].nodepath + ")<BR>";
+            if (NewState.rib[0] != undefined) {
+              for(var i = 0; i < NewState.rib[0].length; i++) {
+                Rib += NewState.rib[0][i].address + "/"
+                  + NewState.rib[0][i].mask + " -> "
+  		  + NewState.rib[0][i].nexthop + " via "
+                  + NewState.rib[0][i].interface + " ("
+		  + NewState.rib[0][i].nodepath + ")<BR>";
+	      }
             }
 	    document.getElementById('routingtable').innerHTML = Rib;
 
