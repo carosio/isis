@@ -52,8 +52,6 @@ start_link() ->
 %%--------------------------------------------------------------------
 init([]) ->
 
-    HWFingerPrint = <<1,2,3,4,0:(32*8)>>,
-
     RestartStrategy = one_for_one,
     MaxRestarts = 1000,
     MaxSecondsBetweenRestarts = 3600,
@@ -77,7 +75,7 @@ init([]) ->
 	    undefined -> [];
 	    {ok, Params} -> Params
 	end,
-    ISIS = {isis, {isis_system, start_link, [[{autoconf_fingerprint, HWFingerPrint}] ++ StartupParams]},
+    ISIS = {isis, {isis_system, start_link, [StartupParams]},
 	    Restart, Shutdown, Type, [isis_system, isis_protocol, isis_enum]},
     ISISRib = {isis_rib, {isis_rib, start_link, []},
 	       permanent, 10000, worker, []},
