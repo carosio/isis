@@ -212,19 +212,19 @@ handle_cast({update_adjacency, up, Pid, Sid}, State) ->
 	    update_reachability_tlv(add, <<Sid:6/binary, 0:8>>,
 				    State#state.pseudonode, 0, State);
 	_ ->
-	    update_reachability_tlv(add, <<Sid:6/binary, 0:8>>,
-				    0, State#state.metric, State)
+	    %% update_reachability_tlv(add, <<Sid:6/binary, 0:8>>,
+	    %% 			    0, State#state.metric, State)
+	    ok
     end,
     {noreply, State#state{up_adjacencies = D}};
 handle_cast({update_adjacency, down, Pid, Sid}, State) ->
     %% io:format("Adjacency with ~p now down~n", [Sid]),
     D = dict:erase(Pid, State#state.up_adjacencies),
-    PN = 
-	case State#state.are_we_dis of
-	true -> State#state.pseudonode;
-	    _ -> 0
+    case State#state.are_we_dis of
+	true -> update_reachability_tlv(del, <<Sid:6/binary, 0:8>>,
+				       State#state.pseudonode, 0, State);
+	_ -> ok
     end,
-    update_reachability_tlv(del, <<Sid:6/binary, 0:8>>, PN, 0, State),
     {noreply, State#state{up_adjacencies = D}};
 handle_cast(_Msg, State) ->
     {noreply, State}.
@@ -345,7 +345,7 @@ handle_dis_election(From,
     case State#state.dis =:= DIS of
 	false ->
 	    relinquish_dis(State),
-	    update_reachability_tlv(add, DIS, 0, 0, State);
+	    update_reachability_tlv(add, DIS, 0, State#state.metric, State);
 	_ ->
 	    ok
     end,
@@ -598,10 +598,14 @@ generate_csnp(Sys_ID, {Status, _}, Chunk_Size, Summary, State) ->
 		{TStart, TEnd}
 	end,
     Details = lists:map(fun({ID, Seq, Check, Lifetime}) ->
+				LF = case Lifetime > 0 of
+					 true -> Lifetime;
+					 _ -> 0
+				     end,
 				#isis_tlv_lsp_entry_detail{lsp_id = ID,
 							   sequence = Seq,
 							   checksum = Check,
-							   lifetime = Lifetime}
+							   lifetime = LF}
 			end, Summary),
     DetailPackageFun = fun(F) -> [#isis_tlv_lsp_entry{lsps = F}] end,
     TLVs = authentication_tlv(State)
@@ -853,6 +857,10 @@ handle_psnp(#isis_psnp{tlv = TLVs}, State) ->
 %% @end
 %%--------------------------------------------------------------------
 -spec handle_lsp(isis_lsp(), tuple()) -> tuple().
+handle_lsp(#isis_lsp{lsp_id = ID, remaining_lifetime = 0} = LSP, State) ->
+    %% Purging the lsp...
+    lager:info("Purging LSP ~p", [ID]),
+    isis_lspdb:store_lsp(State#state.level, LSP#isis_lsp{tlv = []});
 handle_lsp(#isis_lsp{lsp_id = ID, sequence_number = TheirSeq,
 		     checksum = TheirCSum} = LSP, State) ->
     <<RemoteSys:6/binary, _Rest/binary>> = ID,
@@ -1095,8 +1103,8 @@ flood_lsp(LSP, State) ->
 	  end, Is),
     isis_lspdb:flood_lsp(State#state.level, OutputIs, LSP).
 
-update_reachability_tlv(add, N, PN, Metric,
-			#state{metric_type = narrow} = State) ->
+do_update_reachability_tlv(add, N, PN, Metric,
+			   #state{metric_type = narrow} = State) ->
     TLV = #isis_tlv_is_reachability{
 	     virtual = false,
 	     is_reachability = [#isis_tlv_is_reachability_detail{
@@ -1105,8 +1113,8 @@ update_reachability_tlv(add, N, PN, Metric,
 								      metric = Metric,
 								      metric_type = internal}}]},
     isis_system:update_tlv(TLV, PN, State#state.level);
-update_reachability_tlv(del, N, PN, Metric,
-			#state{metric_type = narrow} = State) ->
+do_update_reachability_tlv(del, N, PN, Metric,
+			   #state{metric_type = narrow} = State) ->
     TLV = #isis_tlv_is_reachability{
 	     virtual = false,
 	     is_reachability = [#isis_tlv_is_reachability_detail{
@@ -1115,22 +1123,26 @@ update_reachability_tlv(del, N, PN, Metric,
 								      metric = Metric,
 								      metric_type = internal}}]},
     isis_system:delete_tlv(TLV, PN, State#state.level);
-update_reachability_tlv(add, N, PN, Metric,
-			#state{metric_type = wide} = State) ->
+do_update_reachability_tlv(add, N, PN, Metric,
+			   #state{metric_type = wide} = State) ->
     TLV = #isis_tlv_extended_reachability{
 	     reachability = [#isis_tlv_extended_reachability_detail{
 				neighbor = N,
 				metric = Metric,
 				sub_tlv = []}]},
     isis_system:update_tlv(TLV, PN, State#state.level);
-update_reachability_tlv(del, N, PN, Metric,
-			#state{metric_type = wide} = State) ->
+do_update_reachability_tlv(del, N, PN, Metric,
+			   #state{metric_type = wide} = State) ->
     TLV = #isis_tlv_extended_reachability{
 	     reachability = [#isis_tlv_extended_reachability_detail{
 				neighbor = N,
 				metric = Metric,
 				sub_tlv = []}]},
     isis_system:delete_tlv(TLV, PN, State#state.level).
+update_reachability_tlv(Dir, N, PN, Metric, State) ->
+    lager:info("Updating reachability TLV ~s neighbor ~p (pseudonode ~B)",
+	       [Dir, N, PN]),
+    do_update_reachability_tlv(Dir, N, PN, Metric, State).
 
 dump_config_fields(Name, Level,
 		   [{authentication_type, text} | Fs],

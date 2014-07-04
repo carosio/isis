@@ -476,8 +476,7 @@ lsp_range(Start_ID, End_ID, DB) ->
     Now = isis_protocol:current_timestamp(),
     F = ets:fun2ms(fun(#isis_lsp{lsp_id = LSP_Id, remaining_lifetime = L,
 				 last_update = U, sequence_number = N, checksum = C})
-		      when LSP_Id >= Start_ID, LSP_Id =< End_ID, (L - (Now - U)) > 0,
-			   (L - (Now - U)) > 0 ->
+		      when LSP_Id >= Start_ID, LSP_Id =< End_ID ->
 			   {LSP_Id, N, C, L - (Now - U)} end),
     ets:select(DB, F).
 
