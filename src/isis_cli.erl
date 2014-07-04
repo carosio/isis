@@ -208,7 +208,7 @@ pp_lsp_detail(LSP) ->
 					 [X || <<X:16>> <= ID])),
     LSPStr = io_lib:format("~s.~2.16.0B-~2.16.0B (~s)",
 			   [isis_system:lookup_name(ID), PN, Frag, SIDBin]),
-    io:format("~-30s  0x~8.16.0B ~6.10B~n",
+    io:format("~-45s  0x~8.16.0B ~6.10B~n",
 	      [LSPStr, LSP#isis_lsp.sequence_number, RL]),
     lists:map(
       fun({A, B}) ->
