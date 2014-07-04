@@ -502,7 +502,6 @@ expire_lsps(#state{db = DB, level = Level}) ->
 	lists:foldl(
 	  fun(D, Acc) ->
 		  ets:delete(DB, D),
-		  io:format("D: ~p~n", [D]),
 		  <<SID:6/binary, PN:8, Frag:8>> = D,
 		  Acc ++ lists:flatten(io_lib:format("~4.16.0B.~4.16.0B.~4.16.0B-~2.16.0B-~2.16.0B ",
 						     [X || <<X:16>> <= SID] ++ [PN, Frag]))

@@ -476,7 +476,6 @@ handle_cast({update_tlv, TLV, Node, Level},
     {noreply, State#state{frags = NewFrags}};
 handle_cast({delete_tlv, TLV, Node, Level},
 	    #state{frags = Frags} = State) ->
-    %% io:format("Deleting TLV: ~p~n", [TLV]),
     NewFrags = isis_protocol:delete_tlv(TLV, Node, Level, Frags),
     schedule_lsp_refresh(),
     {noreply, State#state{frags = NewFrags}};

@@ -332,11 +332,10 @@ handle_iih(From, IIH, #state{adj_handlers = Adjs} = State) ->
 %%--------------------------------------------------------------------
 -spec handle_dis_election(binary(), isis_iih(), tuple()) -> tuple().
 handle_dis_election(From, 
-		    #isis_iih{priority = TheirP, dis = DIS, source_id = SID},
+		    #isis_iih{priority = TheirP, dis = <<D:6/binary, DPN:8>> = DIS, source_id = SID},
 		    #state{priority = OurP, snpa = OurSNPA} = State)
-  when TheirP > OurP; TheirP == OurP, From > OurSNPA ->
+  when DPN > 0, TheirP > OurP; TheirP == OurP, From > OurSNPA ->
     %% io:format("handle_dis_election: They win~n", []),
-    <<D:6/binary, _:1/binary>> = DIS,
     DIS_Priority = 
 	case D =:= SID of
 	    true -> TheirP;
@@ -371,8 +370,8 @@ handle_dis_election(_From,
 assume_dis(State) ->
     %% Get pseudo-node here, create LSP etc..
     Node = isis_system:allocate_pseudonode(self(), State#state.level),
-    io:format("Allocated pseudo-node ~p to ~p ~s~n",
-	      [Node, State#state.level,  State#state.interface_name]),
+    lager:info("Allocated pseudo-node ~p to ~p ~s~n",
+	       [Node, State#state.level,  State#state.interface_name]),
     DIS_Timer = start_timer(dis, State),
     ID = isis_system:system_id(),
     SysID = <<ID:6/binary, 0:8>>,
@@ -499,8 +498,8 @@ remove_adj_by_pid(Pid, State) ->
     NewAdj = dict:filter(F, State#state.adj_handlers),
     case length(dict:fetch_keys(NewAdj)) of
 	0 -> remove_adjacency(State),
-	     relinquish_dis(State#state{adj_handlers = NewAdj,
-					dis = undef});
+	     NewState = relinquish_dis(State#state{adj_handlers = NewAdj}),
+	     NewState#state{dis = undef};
 	_ -> State#state{adj_handlers = NewAdj}
     end.
 
@@ -1139,6 +1138,12 @@ do_update_reachability_tlv(del, N, PN, Metric,
 				metric = Metric,
 				sub_tlv = []}]},
     isis_system:delete_tlv(TLV, PN, State#state.level).
+
+update_reachability_tlv(Dir, <<_:6/binary, PN:8>> = N, 0, Metric, State) when PN =:= 0 ->
+    io:format("~p~n", [erlang:get_stacktrace()]),
+    lager:error("Updating reachability TLV ~s neighbor ~p (pseudonode ~B)",
+	       [Dir, N, 0]),
+    do_update_reachability_tlv(Dir, N, PN, Metric, State);
 update_reachability_tlv(Dir, N, PN, Metric, State) ->
     lager:info("Updating reachability TLV ~s neighbor ~p (pseudonode ~B)",
 	       [Dir, N, PN]),
