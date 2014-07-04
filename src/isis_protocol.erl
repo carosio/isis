@@ -1546,6 +1546,8 @@ do_pp_tlv(#isis_tlv_extended_ip_reachability{reachability = R}) ->
 						  [isis_system:address_to_string(ipv4, P),
 						   Mask, Metric, S]))
 	     end, R);
+do_pp_tlv(#isis_tlv_te_router_id{router_id = ID}) ->
+    isis_system:address_to_string(ipv4, ID);
 do_pp_tlv(T) ->
     lists:flatten(io_lib:format("~p", [T])).
 
