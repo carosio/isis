@@ -5,7 +5,14 @@
     <title>ISIS Database</title>
 </head>
 <style>
+body {
+	background-color: #dddddd;
+	font-color: #111111;
+}
 
+tr:hover {
+	background-color: #eeeeff;
+}
 </style>
 <body>
 <div class="database">
@@ -39,13 +46,13 @@ dump_lsp(LSP) ->
 	  fun({A, B}) ->
 		  case io_lib:printable_list(B) of
 		      true -> {tr, [], [
-					{td, [], {p, [], A}},
-					{td, [], {p, [], B}}
+					{td, [], A},
+					{td, [], B}
 				       ]};
 		      _ -> lists:map(fun(C) ->
 					     {tr, [], [
-						       {td, [], {p, [], A}},
-						       {td, [], {p, [], C}}
+						       {td, [], A},
+						       {td, [], C}
 						      ]}
 				     end,
 				     B)
@@ -55,9 +62,9 @@ dump_lsp(LSP) ->
     [{table, [{width, "100%"}],
       [
        {tr, [{style, "font-weight: bold"}], [
-		 {td, [], {p, [], LSPStr}},
-		 {td, [], {p, [], io_lib:format("0x~8.16.0B", [LSP#isis_lsp.sequence_number])}},
-		 {td, [], {p, [], io_lib:format("~B", [RL])}}
+		 {td, [], LSPStr},
+		 {td, [], io_lib:format("0x~8.16.0B", [LSP#isis_lsp.sequence_number])},
+		 {td, [], io_lib:format("~B", [RL])}
 		]
 	}
        ]
