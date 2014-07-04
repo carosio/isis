@@ -10,6 +10,7 @@
 -author("Rick Payne <rickp@rossfell.co.uk>").
 
 -include("isis_protocol.hrl").
+-include("isis_system.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 %% API
@@ -17,7 +18,8 @@
 	 package_tlvs/3,
 	 current_timestamp/0, fixup_lifetime/1, filter_lifetime/1,
 	 filter_tlvs/2,
-	 update_tlv/4, create_new_frag/4]).
+	 update_tlv/4, create_new_frag/4,
+	 pp_tlv/1]).
 
 %% For debugging...
 -compile(export_all).
@@ -1491,6 +1493,61 @@ tlv_size([]) -> 0;
 tlv_size(TLV) ->
     TLVB = encode_tlv(TLV),
     binary_list_size(TLVB).
+
+%%%===================================================================
+%%% Pretty Print a TLV
+%%%===================================================================
+pp_tlv(T) ->
+    TLVName = lists:sublist(erlang:atom_to_list(hd(tuple_to_list(T))), 10, 100),
+    {TLVName, do_pp_tlv(T)}.
+
+do_pp_tlv(#isis_tlv_area_address{areas = As}) ->
+    AF = fun(A) -> isis_cli:pp_binary(A, ".") end,
+    AStr = lists:foldl(fun(A, Acc) -> Acc ++ " " ++ AF(A) end,
+		       "", As),
+    lists:flatten(io_lib:format("~s", [AStr]));
+do_pp_tlv(#isis_tlv_is_reachability{is_reachability = R}) ->
+    lists:map(fun(#isis_tlv_is_reachability_detail{neighbor = N, default = D}) ->
+		      <<SID:6/binary, PN:8>> = N,
+		      lists:flatten(io_lib:format("~s.~2.16.0B metric ~B",
+						  [isis_system:lookup_name(SID), PN,
+						   D#isis_metric_information.metric]))
+	      end, R);
+do_pp_tlv(#isis_tlv_dynamic_hostname{hostname = H}) ->
+    lists:flatten(io_lib:format("~s", [H]));
+do_pp_tlv(#isis_tlv_protocols_supported{protocols = Protocols}) ->
+    PStr = lists:foldl(fun(P, Acc) -> Acc ++ erlang:atom_to_list(P) ++ " " end,
+		       "", Protocols),
+    lists:flatten(io_lib:format("~s", [PStr]));
+do_pp_tlv(#isis_tlv_hardware_fingerprint{fingerprint = F}) ->
+    lists:flatten(io_lib:format("~s", [isis_cli:pp_binary(F, ".")]));
+do_pp_tlv(#isis_tlv_ipv6_interface_address{addresses = A}) ->
+    lists:map(fun(B) -> isis_system:address_to_string(ipv6, B) end, A);
+do_pp_tlv(#isis_tlv_ipv6_reachability{reachability = R}) ->
+    lists:map(fun(#isis_tlv_ipv6_reachability_detail{prefix = P, mask_len = Mask, metric = Metric,
+						     sub_tlv = S}) ->
+		      IA = #isis_address{afi = ipv6, address = P, mask = Mask},
+		      lists:flatten(io_lib:format("~s/~B metric ~B ~p",
+						  [isis_system:address_to_string(IA),
+						   Mask, Metric, S]))
+	      end, R);
+do_pp_tlv(#isis_tlv_extended_reachability{reachability = R}) ->
+    lists:map(fun(#isis_tlv_extended_reachability_detail{neighbor = N, metric = M}) ->
+		      <<SID:6/binary, PN:8>> = N,
+		      lists:flatten(io_lib:format("~s.~2.16.0B metric ~B",
+						  [isis_system:lookup_name(SID), PN,
+						   M]))
+	      end, R);
+do_pp_tlv(#isis_tlv_extended_ip_reachability{reachability = R}) ->
+    lists:map(fun(#isis_tlv_extended_ip_reachability_detail{prefix = P, mask_len = Mask, metric = Metric,
+							    sub_tlv = S}) ->
+		      IA = #isis_address{afi = ipv4, address = P, mask = Mask},
+		      lists:flatten(io_lib:format("~s/~B metric ~B ~p",
+						  [isis_system:address_to_string(IA),
+						   Mask, Metric, S]))
+	     end, R);
+do_pp_tlv(T) ->
+    lists:flatten(io_lib:format("~p", [T])).
 
 %%%===================================================================
 %%% EUnit tests

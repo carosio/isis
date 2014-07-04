@@ -1,0 +1,73 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01//EN">
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>ISIS Database</title>
+</head>
+<style>
+
+</style>
+<body>
+<div class="database">
+<B>Level 1</B><BR>
+<erl>
+-record (isis_lsp, {
+	   lsp_id,
+	   last_update,
+	   version,
+	   pdu_type,
+	   remaining_lifetime,
+	   sequence_number,
+	   checksum,
+	   partition,
+	   overload,
+	   isis_type,
+	   tlv
+	  }).
+-type isis_lsp() :: #isis_lsp{}.
+
+dump_lsp(LSP) ->
+    <<ID:6/binary, PN:8, Frag:8>> = LSP#isis_lsp.lsp_id,
+    Now = isis_protocol:current_timestamp(),
+    RL = LSP#isis_lsp.remaining_lifetime - (Now - LSP#isis_lsp.last_update),
+    SIDBin = lists:flatten(io_lib:format("~4.16.0B.~4.16.0B.~4.16.0B",
+					 [X || <<X:16>> <= ID])),
+    LSPStr = lists:flatten(io_lib:format("~s.~2.16.0B-~2.16.0B (~s)",
+					 [isis_system:lookup_name(ID), PN, Frag, SIDBin])),
+    TLVs = 
+	lists:map(
+	  fun({A, B}) ->
+		  case io_lib:printable_list(B) of
+		      true -> {tr, [], [
+					{td, [], {p, [], A}},
+					{td, [], {p, [], B}}
+				       ]};
+		      _ -> lists:map(fun(C) ->
+					     {tr, [], [
+						       {td, [], {p, [], A}},
+						       {td, [], {p, [], C}}
+						      ]}
+				     end,
+				     B)
+		  end
+	  end,
+	  lists:map(fun isis_protocol:pp_tlv/1, LSP#isis_lsp.tlv)),
+    [{table, [{width, "100%"}],
+      [
+       {tr, [{style, "font-weight: bold"}], [
+		 {td, [], {p, [], LSPStr}},
+		 {td, [], {p, [], io_lib:format("0x~8.16.0B", [LSP#isis_lsp.sequence_number])}},
+		 {td, [], {p, [], io_lib:format("~B", [RL])}}
+		]
+	}
+       ]
+     },
+     {table, [{width, "100%"}], TLVs}, {hr}].
+
+out(Arg) ->
+    LSPs = ets:tab2list(isis_lspdb:get_db(level_1)),
+    R = lists:map(fun dump_lsp/1, LSPs),
+    {ehtml, R}.
+</erl>
+</body>
+</html>

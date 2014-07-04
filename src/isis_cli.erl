@@ -19,11 +19,13 @@
 	 show_isis/0,
 	 %% Database examination
 	 show_database/0, show_database/1,
+	 show_database_detail/0, show_database_detail/1,
 	 %% Interface stuff
 	 show_interfaces/0,
 	 %% Neighbors
 	 %%show_adjacencies/0
-	 show_routes/1
+	 show_routes/1,
+	 pp_binary/2
 	]).
 
 %%%===================================================================
@@ -50,6 +52,12 @@ show_database() ->
     do_show_database(level_2).
 show_database(Level) ->
     do_show_database(Level).
+
+show_database_detail() ->
+    do_show_database_detail(level_1),
+    do_show_database_detail(level_2).
+show_database_detail(Level) ->
+    do_show_database_detail(Level).
 
 show_routes(Level) ->
     {_Time, _Level, SPF, _Reason} = spf_summary:last_run(Level),
@@ -162,6 +170,14 @@ show_interfaces() ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+do_show_database_detail(Level) ->
+    DB = isis_lspdb:get_db(Level),
+    LSPs = ets:tab2list(DB),
+    io:format("~s LSP Database~n", [erlang:atom_to_list(Level)]),
+    lists:map(fun pp_lsp_detail/1, LSPs),
+    io:format("~n", []),
+    ok.
+
 do_show_database(Level) ->
     DB = isis_lspdb:get_db(Level),
     LSPs = ets:tab2list(DB),
@@ -177,3 +193,32 @@ pp_lsp(LSP) ->
     io:format("   ~16s.~2.16.0B-~2.16.0B  0x~8.16.0B ~6.10B~n",
 	      [isis_system:lookup_name(ID), PN, Frag,
 	       LSP#isis_lsp.sequence_number, RL]).
+
+pp_lsp_strings({A, [B]}) when is_list(B) ->
+    lists:map(
+      fun(C) -> io:format("~-30s ~s~n", [A, C]) end, B);
+pp_lsp_strings({A, B}) ->
+    io:format("~-30s ~s~n", [A, B]).
+
+pp_lsp_detail(LSP) ->
+    <<ID:6/binary, PN:8, Frag:8>> = LSP#isis_lsp.lsp_id,
+    Now = isis_protocol:current_timestamp(),
+    RL = LSP#isis_lsp.remaining_lifetime - (Now - LSP#isis_lsp.last_update),
+    SIDBin = lists:flatten(io_lib:format("~4.16.0B.~4.16.0B.~4.16.0B",
+					 [X || <<X:16>> <= ID])),
+    LSPStr = io_lib:format("~s.~2.16.0B-~2.16.0B (~s)",
+			   [isis_system:lookup_name(ID), PN, Frag, SIDBin]),
+    io:format("~-30s  0x~8.16.0B ~6.10B~n",
+	      [LSPStr, LSP#isis_lsp.sequence_number, RL]),
+    lists:map(
+      fun({A, B}) ->
+	      case io_lib:printable_list(B) of
+		  true -> io:format("   ~-30s ~s~n", [A, B]);
+		  _ -> lists:map(fun(C) -> io:format("   ~-30s ~s~n", [A, C]) end,
+				 B)
+	      end
+      end,
+      lists:map(fun isis_protocol:pp_tlv/1, LSP#isis_lsp.tlv)).
+
+
+	      
