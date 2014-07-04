@@ -1140,9 +1140,9 @@ do_update_reachability_tlv(del, N, PN, Metric,
     isis_system:delete_tlv(TLV, PN, State#state.level).
 
 update_reachability_tlv(Dir, <<_:6/binary, PN:8>> = N, 0, Metric, State) when PN =:= 0 ->
-    io:format("~p~n", [erlang:get_stacktrace()]),
     lager:error("Updating reachability TLV ~s neighbor ~p (pseudonode ~B)",
 	       [Dir, N, 0]),
+    lager:error("Backtrace: ~p", [process_info(self(), backtrace)]),
     do_update_reachability_tlv(Dir, N, PN, Metric, State);
 update_reachability_tlv(Dir, N, PN, Metric, State) ->
     lager:info("Updating reachability TLV ~s neighbor ~p (pseudonode ~B)",
