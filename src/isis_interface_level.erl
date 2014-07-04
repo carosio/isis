@@ -332,23 +332,28 @@ handle_iih(From, IIH, #state{adj_handlers = Adjs} = State) ->
 %%--------------------------------------------------------------------
 -spec handle_dis_election(binary(), isis_iih(), tuple()) -> tuple().
 handle_dis_election(From, 
-		    #isis_iih{priority = TheirP, dis = <<D:6/binary, DPN:8>> = DIS, source_id = SID},
+		    #isis_iih{priority = TheirP, dis = <<D:6/binary, DPN:8>> = DIS, source_id = SID} = IIH,
 		    #state{priority = OurP, snpa = OurSNPA} = State)
-  when DPN > 0, TheirP > OurP; DPN > 0, TheirP == OurP, From > OurSNPA ->
-    %% io:format("handle_dis_election: They win~n", []),
-    DIS_Priority = 
-	case D =:= SID of
-	    true -> TheirP;
-	    _ -> State#state.dis_priority
-	end,
-    case State#state.dis =:= DIS of
-	false ->
-	    relinquish_dis(State),
-	    update_reachability_tlv(add, DIS, 0, State#state.metric, State);
+  when TheirP > OurP; TheirP == OurP, From > OurSNPA ->
+    case DPN of
+	0 -> lager:error("IIH claiming DIS with 0 pseudonode: ~p (~p)",
+			 [lager:pr(IIH, isis_protocol), lager:pr(State, ?MODULE)]),
+	     State;
 	_ ->
+	    DIS_Priority = 
+		case D =:= SID of
+		    true -> TheirP;
+		    _ -> State#state.dis_priority
+		end,
+	    case State#state.dis =:= DIS of
+		false ->
+		    relinquish_dis(State),
+		    update_reachability_tlv(add, DIS, 0, State#state.metric, State);
+		_ ->
 	    ok
-    end,
-    State#state{dis = DIS, dis_priority = DIS_Priority, are_we_dis = false};
+	    end,
+	    State#state{dis = DIS, dis_priority = DIS_Priority, are_we_dis = false}
+    end;
 handle_dis_election(_From,
 		    #isis_iih{priority = _TheirP, dis = DIS, source_id = _SID},
 		    #state{priority = _OurP, are_we_dis = Us} = State)
