@@ -311,10 +311,6 @@ handle_call({store, #isis_lsp{} = LSP},
     notify_subscribers(LSP, State),
     {reply, Result, NewState};
 
-handle_call({delete, LSP},
-	    _From, State) ->
-    {reply, ets:delete(State#state.db, LSP), State};
-
 handle_call({clear_db}, _From, State) ->
     ets:delete_all_objects(State#state.db),
     {reply, ok, State};
@@ -517,6 +513,7 @@ expire_lsps(#state{db = DB, level = Level} = State) ->
 	0 -> lager:info("Expired 0 ~p LSPs~n", [Level]),
 	     State;
 	C -> lager:info("Expired ~B ~p LSPs (~s)~n", [C, Level, LSPs]),
+	     lists:map(fun(BDel) -> notify_subscribers(BDel, State) end, Deletes),
 	     schedule_spf(full, "LSPs deleted", State)
     end.
 
@@ -805,7 +802,9 @@ build_message(#isis_lsp{lsp_id = LSP_Id, sequence_number = SN,
     SIDBin = lists:flatten(io_lib:format("~4.16.0B.~4.16.0B.~4.16.0B-~2.16.0B-~2.16.0B",
                                          [X || <<X:16>> <= ID] ++ [PN, Frag])),
     TLVAs = lists:map(fun isis_protocol:pp_tlv/1, TLV),
-    json2:encode({struct, [{"LSPId", SIDBin}, {"IDStr", LSPStr}, {"Sequence", SN}]}).
+    json2:encode({struct, [{"command", "add"}, 
+			   {"LSPId", SIDBin}, {"IDStr", LSPStr}, {"Sequence", SN},
+			   {"tlvs", {struct, TLVAs}}]}).
 
 notify_subscribers(#isis_lsp{} = LSP, #state{subscribers = Subscribers}) ->
     Message = build_message(LSP),
@@ -813,7 +812,17 @@ notify_subscribers(#isis_lsp{} = LSP, #state{subscribers = Subscribers}) ->
     lists:foreach(
       fun(Pid) -> notify_subscriber(Message, Pid) end, Pids),
     ok;
-notify_subscribers(_LSP_Id, #state{subscribers = Subscribers}) ->
+notify_subscribers(LSP_Id, #state{subscribers = Subscribers}) when is_binary(LSP_Id) ->
+    <<ID:6/binary, PN:8, Frag:8>> = LSP_Id,
+    LSPStr = lists:flatten(
+	       io_lib:format("~s.~2.16.0B-~2.16.0B",
+			   [isis_system:lookup_name(ID), PN, Frag])),
+    SIDBin = lists:flatten(io_lib:format("~4.16.0B.~4.16.0B.~4.16.0B-~2.16.0B-~2.16.0B",
+                                         [X || <<X:16>> <= ID] ++ [PN, Frag])),
+    Message = json2:encode({struct, [{"command", "delete"},
+			   {"LSPId", SIDBin}, {"IDStr", LSPStr}]}),
+    Pids = dict:fetch_keys(Subscribers),
+    lists:foreach(fun(Pid) -> notify_subscriber(Message, Pid) end, Pids),
     ok.
 
 notify_subscriber(Message, Pid) ->
