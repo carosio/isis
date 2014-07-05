@@ -34,16 +34,24 @@ div#lsps {
 
 #lsps .LSPId {
     white-space: nowrap;
+    text-align:center; 
+    vertical-align:middle;
 }
 #lsps .IDStr {
     white-space: nowrap;
     font-weight: bold;
+    text-align:center; 
+    vertical-align:middle;
 }
 #lsps .Sequence {
     white-space: nowrap;
+    text-align:center; 
+    vertical-align:middle;
 }
 #lsps .lifetime {
     white-space: nowrap;
+    text-align:center; 
+    vertical-align:middle;
 }
 </style>
 
@@ -55,6 +63,32 @@ div#lsps {
 
 var ws;
 var lspData = new Array();
+var lspTable, lspHead, lspBody;
+
+var columns = [
+    {name: 'LSPId', title: "LSP Id", },
+    {name: 'IDStr', title: "LSP Name", },
+    {name: 'Sequence', title: "Sequence Number", },
+    {name: 'lifetime', title: "Remaining Life", 
+     value: function(d) { 
+	 return(Math.floor(d.lifetime - ((Date.now() - d.lastUpdate) / 1000)));
+     }
+    },
+    {name: 'tlv', title: "TLVs decoded",
+     html: true,
+     value: function(d) {
+	 Res = Object.keys(d.tlvs).map(function(k) {
+	     return(k.toString() + ": " + d.tlvs[k].toString() + "<br>")
+	 });
+	 var Result = "";
+	 for(var i = 0; i < Res.length; i++) {
+	     Result += Res[i];
+	 }
+	 return(Result);
+     }
+    },
+];
+
 
 function connectToLSPDBFeed() {
     if ("WebSocket" in window) {
@@ -104,39 +138,14 @@ function connectToLSPDBFeed() {
 }
 
 function updateList(data) {
-    var lspBox = d3.select('#lsps');
 
     var sorted = data.sort(function(a, b) { return d3.ascending(a.LSPId, b.LSPId); });
 
-    var lsps = lspBox
+    var lsps = lspBody
         .selectAll('tr')
         .data(data, function(d) {
 	    return d.LSPId;
 	});
-
-    var columns = [
-	{name: 'LSPId', },
-	{name: 'IDStr', },
-	{name: 'Sequence', },
-	{name: 'lifetime',
-	 value: function(d) { 
-	     return(Math.floor(d.lifetime - ((Date.now() - d.lastUpdate) / 1000)));
-	 }
-	},
-	{name: 'tlv',
-	 html: true,
-	 value: function(d) {
-	     Res = Object.keys(d.tlvs).map(function(k) {
-		 return(k.toString() + ": " + d.tlvs[k].toString() + "<br>")
-	     });
-	     var Result = "";
-	     for(var i = 0; i < Res.length; i++) {
-		 Result += Res[i];
-	     }
-	     return(Result);
-	 }
-	},
-    ];
 
     var enterDiv = lsps.enter()
 	.append("tr");
@@ -177,6 +186,22 @@ function updateList(data) {
     }).style('background-color', '#ff0000').transition().duration(500).style('background-color', '#ffffff');
 
 }
+
+function ready() {
+    lspTable = d3.select('#lsps').append('table');
+    lspHead = lspTable.append('thead');
+    lspBody = lspTable.append('tbody');
+
+    var heads = lspHead.selectAll('th');
+    heads
+	.data(columns)
+	.enter().append('th').text(function (d) { return 'title' in d ? d.title : d.name; });
+}
+
+document.addEventListener( "DOMContentLoaded", function(){
+    document.removeEventListener( "DOMContentLoaded", arguments.callee, false );
+    ready();
+}, false );
 
 connectToLSPDBFeed();
 setInterval(function() {updateList(lspData)}, 1000);
