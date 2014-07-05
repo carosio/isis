@@ -365,6 +365,7 @@ handle_call({system_id}, _From,
 	    #state{system_id = ID} = State) ->
     {reply, ID, State};
 handle_call({set_system_id, undefined}, _From, State) ->
+    lager:info("System ID has been unset", []),
     isis_lspdb:set_system_id(level_1, undefined),
     isis_lspdb:set_system_id(level_2, undefined),
     NewState = purge_all_lsps(State),
@@ -372,6 +373,7 @@ handle_call({set_system_id, undefined}, _From, State) ->
 			       system_id_set = false}};
 handle_call({set_system_id, Id}, _From, State)
   when is_binary(Id), byte_size(Id) =:= 6 ->
+    lager:info("System ID set to ~p", [Id]),
     isis_lspdb:set_system_id(level_1, Id),
     isis_lspdb:set_system_id(level_2, Id),
     NewState = 
@@ -830,6 +832,7 @@ purge_lsps(MatchFun, State) ->
 %% @end
 %%--------------------------------------------------------------------
 purge_all_lsps(State) ->
+    lager:error("!!!!!!!!!!!!!! ALL LSPS PURGED! !!!!!!!!!!!!!!!!", []),
     NewFrags = purge_lsps(fun(_, _) -> true end, State),
     State#state{frags = NewFrags}.
 
@@ -840,14 +843,9 @@ purge_all_lsps(State) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
-purge_lsp(Ref, LSP, State) ->
-    case gen_server:call(Ref, {purge, LSP}) of
-	{ok, PurgedLSP} ->
-	    I = ets:tab2list(State#state.interfaces),
-	    isis_lspdb:flood_lsp(Ref, I, PurgedLSP),
-	    ok;
-	Result -> Result
-    end.
+purge_lsp(Level, LSP, _State) ->
+    lager:error("Purging LSP: ~p", [LSP]),
+    isis_lspdb:purge_lsp(Level, LSP).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -913,13 +911,14 @@ autoconf_interface(#isis_interface{mac = Mac, name = Name} = I,
     case is_valid_interface(Name, State) of
 	true ->
 	    State1 = 
-		case State#state.system_id_set of
+		case State#state.system_id_set =:= true of
 		    true -> State;
 		    _ -> <<ID:(6*8)>> = Mac,
 			 %%DynamicName = lists:flatten(io_lib:format("autoconf-~.16B", [ID])),
 			 {ok, DynamicName} = inet:gethostname(),
 			 isis_lspdb:set_system_id(level_1, Mac),
 			 isis_lspdb:set_system_id(level_2, Mac),
+			 lager:info("System ID set to ~p", [Mac]),
 			 NextState =
 			     set_tlv_hostname(DynamicName, State#state{system_id = Mac,
 								       system_id_set = true}),

@@ -18,7 +18,7 @@
 
 %% API
 -export([start_link/1, get_db/1,
-	 lookup_lsps/2, store_lsp/2, flood_lsp/3,
+	 lookup_lsps/2, store_lsp/2, flood_lsp/3, purge_lsp/2,
 	 lookup_lsps_by_node/2,
 	 summary/2, range/3,
 	 replace_tlv/3, update_reachability/3,
@@ -60,6 +60,25 @@
 %%--------------------------------------------------------------------
 store_lsp(Ref, LSP) ->
     gen_server:call(Ref, {store, LSP}).
+
+%%--------------------------------------------------------------------
+%% @doc
+%%
+%% Purge an LSP - mark it as deleted, and flood it so that our
+%% neighbors know.
+%%
+%% @end
+%%--------------------------------------------------------------------
+purge_lsp(Ref, LSP) ->
+    case gen_server:call(Ref, {purge, LSP}) of
+	{ok, PurgedLSP} ->
+	    I = isis_system:list_interfaces(),
+	    isis_lspdb:flood_lsp(Ref, I, PurgedLSP),
+	    ok;
+	_ ->
+	    ok
+    end.
+
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -197,6 +216,24 @@ update_reachability({AddDel, ER}, Level, #isis_lsp{tlv = TLVs} = LSP) ->
 	    NewLSP = LSP#isis_lsp{tlv = NewTLVs};
 	_ -> ok
     end.
+%%--------------------------------------------------------------------
+%% @doc
+%%
+%% Purge an LSP
+%%
+%% @end
+%%--------------------------------------------------------------------
+purge(LSP, State) ->
+    case ets:lookup(State#state.db, LSP) of
+	[OldLSP] ->
+	    PurgedLSP = OldLSP#isis_lsp{tlv = [], remaining_lifetime = 0, checksum = 0,
+					last_update = isis_protocol:current_timestamp(),
+					sequence_number = (OldLSP#isis_lsp.sequence_number + 1)},
+	    ets:insert(State#state.db, PurgedLSP),
+	    {ok, PurgedLSP};
+	_ ->
+	    missing_lsp
+    end.
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -314,6 +351,10 @@ handle_call({store, #isis_lsp{} = LSP},
 handle_call({clear_db}, _From, State) ->
     ets:delete_all_objects(State#state.db),
     {reply, ok, State};
+
+handle_call({purge, LSP}, _From, State) ->
+    Result = purge(LSP, State),
+    {reply, Result, State};
 
 handle_call(_Request, _From, State) ->
     Reply = ok,

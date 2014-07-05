@@ -16,7 +16,7 @@
 -include("isis_protocol.hrl").
 
 %% API
--export([start_link/1, get_state/2, set/2,
+-export([start_link/1, get_state/1, get_state/2, set/2,
 	 update_adjacency/3, clear_neighbors/1,
 	 dump_config/3]).
 
@@ -62,14 +62,17 @@
 handle_pdu(Pid, From, PDU) ->
     gen_server:cast(Pid, {received, From, PDU}).
 
+get_state(Pid) ->
+    gen_server:call(Pid, {get_state}).
+
 get_state(Pid, Item) ->
     gen_server:call(Pid, {get_state, Item}).
 
 set(Pid, Values) ->
     gen_server:call(Pid, {set, Values}).
 
-update_adjacency(Pid, Direction, Neighbor) ->
-    gen_server:cast(Pid, {update_adjacency, Direction, self(), Neighbor}).
+update_adjacency(Pid, Direction, {Neighbor, Mac, Priority}) ->
+    gen_server:cast(Pid, {update_adjacency, Direction, self(), {Neighbor, Mac, Priority}}).
 
 clear_neighbors(Pid) ->
     gen_server:call(Pid, {clear_neighbors}).
@@ -131,6 +134,9 @@ init(Args) ->
 handle_call({send_iih}, _From, State) ->
     send_iih(isis_system:system_id(), State),
     {reply,ok, State};
+
+handle_call({get_state}, _From, State) ->
+    {reply, State, State};
 
 handle_call({get_state, hello_interval}, _From, State) ->
     {reply, State#state.hello_interval, State};
@@ -204,9 +210,9 @@ handle_cast({set_database}, State) ->
     Timer = start_timer(iih, State),
     {noreply, State#state{database = DB, iih_timer = Timer}};
 
-handle_cast({update_adjacency, up, Pid, Sid}, State) ->
+handle_cast({update_adjacency, up, Pid, {Sid, SNPA, Priority}}, State) ->
     %% io:format("Adjacency with ~p now up~n", [Sid]),
-    D = dict:store(Pid, Sid, State#state.up_adjacencies),
+    D = dict:store(Pid, {Sid, SNPA, Priority}, State#state.up_adjacencies),
     case State#state.are_we_dis of
 	true ->
 	    update_reachability_tlv(add, <<Sid:6/binary, 0:8>>,
@@ -217,7 +223,7 @@ handle_cast({update_adjacency, up, Pid, Sid}, State) ->
 	    ok
     end,
     {noreply, State#state{up_adjacencies = D}};
-handle_cast({update_adjacency, down, Pid, Sid}, State) ->
+handle_cast({update_adjacency, down, Pid, {Sid, _, _}}, State) ->
     %% io:format("Adjacency with ~p now down~n", [Sid]),
     D = dict:erase(Pid, State#state.up_adjacencies),
     case State#state.are_we_dis of
@@ -297,11 +303,17 @@ code_change(_OldVsn, State, _Extra) ->
 %%% Internal functions
 %%%===================================================================
 handle_iih(From, IIH, #state{adj_handlers = Adjs} = State) ->
-    NewAdjs = 
+    {NewAdjs, NewUpAdjs, AdjPid} = 
 	case dict:find(From, Adjs) of
 	    {ok, Pid} ->
 		gen_fsm:send_event(Pid, {iih, IIH}),
-		Adjs;
+		UpAdj2 = 
+		    case dict:find(Pid, State#state.up_adjacencies) of
+			{ok, {A, B, P}} -> dict:store(Pid, {A, B, IIH#isis_iih.priority},
+						      State#state.up_adjacencies);
+			_ -> State#state.up_adjacencies
+		    end,
+		{Adjs, UpAdj2, Pid};
 	    _ ->
 		{ok, NewPid} = isis_adjacency:start_link([{neighbor, From},
 							  {interface, State#state.interface_ref,
@@ -311,16 +323,19 @@ handle_iih(From, IIH, #state{adj_handlers = Adjs} = State) ->
 							  {level_pid, self()}]),
 		erlang:monitor(process, NewPid),
 		gen_fsm:send_event(NewPid, {iih, IIH}),
-		dict:store(From, NewPid, Adjs)
+		{dict:store(From, NewPid, Adjs), State#state.up_adjacencies, NewPid}
 	end,
-    AdjState = State#state{adj_handlers = NewAdjs},
+    AdjState = State#state{adj_handlers = NewAdjs, up_adjacencies = NewUpAdjs},
     lager:debug("DIS Election on ~s: Us: ~B, Them: ~B From > Our: ~p (From: ~p, Our ~p)",
                [State#state.interface_name,
                 State#state.priority, IIH#isis_iih.priority,
                 (From > State#state.snpa),
                From, State#state.snpa]),
-    DISState = handle_dis_election(From, IIH, AdjState),
-    DISState.
+
+    case dict:find(AdjPid, AdjState#state.up_adjacencies) of
+	{ok, _} -> handle_dis_election(From, IIH, AdjState);
+	_ -> AdjState
+    end.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -338,7 +353,7 @@ handle_iih(From, IIH, #state{adj_handlers = Adjs} = State) ->
 -spec handle_dis_election(binary(), isis_iih(), tuple()) -> tuple().
 handle_dis_election(From, 
 		    #isis_iih{priority = TheirP, dis = <<D:6/binary, DPN:8>> = DIS, source_id = SID} = IIH,
-		    #state{priority = OurP, snpa = OurSNPA} = State)
+		    #state{priority = OurP, snpa = OurSNPA, dis = CurrentDIS} = State)
   when TheirP > OurP; TheirP == OurP, From > OurSNPA ->
     DIS_Priority = 
 	case D =:= SID of
@@ -353,7 +368,8 @@ handle_dis_election(From,
 	case DPN =:= 0 of
 	    true -> State#state{dis_priority = DIS_Priority, are_we_dis = false};
 	    _ -> case State#state.dis =:= DIS of
-		     false -> update_reachability_tlv(add, DIS, 0, State#state.metric, State);
+		     false -> update_reachability_tlv(add, DIS, 0, State#state.metric, State),
+			      update_reachability_tlv(del, CurrentDIS, 0, State#state.metric, State); 
 		     _ -> ok
 		 end,
 		 State#state{dis = DIS, dis_priority = DIS_Priority, are_we_dis = false}
@@ -361,21 +377,20 @@ handle_dis_election(From,
     NewState;
 handle_dis_election(From,
 		    #isis_iih{priority = _TheirP, dis = DIS, source_id = SID},
-		    #state{priority = _OurP, are_we_dis = Us} = State)
+		    #state{priority = OurP, are_we_dis = Us, snpa = OurM} = State)
   when Us =:= false ->
-    %% io:format("handle_dis_election: We win, assuming DIS if adj is up~n", []),
-    <<D:6/binary, _D1:1/binary>> = DIS,
-    case D =:= SID of
-	true ->
-	    %% They believe their DIS, lets disabuse them of that..
-	    NewState = 
-		case dict:find(From, State#state.adj_handlers) of
-		    {ok, _} -> assume_dis(State);
-		    _ -> State
-		end;
-	_ ->
-	    %% They think someone else is DIS, that may be true..
-	    State#state{dis = DIS}
+    %% Any one else likely to take over?
+    lager:debug("up_adj: ~p", [dict:to_list(State#state.up_adjacencies)]),
+    BetterAdj = dict:to_list(
+		  dict:filter(
+		    fun(_, {_, _, P}) when P > OurP -> true;
+		       (_, {_, M, P}) when P =:= OurP, M > OurM -> true;
+		       (_, {_, _, _}) -> false
+		    end, State#state.up_adjacencies)),
+    lager:debug("DIS Election: we beat adj, but not these: ~p", [BetterAdj]),
+    case length(BetterAdj) of
+	0 -> assume_dis(State);
+	_ -> State
     end;
 handle_dis_election(_From,
 		    #isis_iih{priority = _TheirP, dis = _DIS, source_id = _SID},
@@ -398,7 +413,7 @@ assume_dis(State) ->
     %% Remove our relationship with the old DIS, and link DIS to new node
     update_reachability_tlv(del, State#state.dis, 0, 0, State),
     update_reachability_tlv(add, SysID, Node, 0, State),
-    dict:map(fun(_, AdjID) -> 
+    dict:map(fun(_, {AdjID, _, _}) -> 
 		     update_reachability_tlv(add, <<AdjID:6/binary, 0:8>>, Node, 0, State)
 	     end, State#state.up_adjacencies),
     isis_system:schedule_lsp_refresh(),
@@ -641,6 +656,7 @@ process_pdu(From, #isis_iih{} = IIH, State) ->
 	false -> State
     end;
 process_pdu(_From, #isis_lsp{} = LSP, State) ->
+    lager:debug("Handling LSP: ~p", [LSP]),
     handle_lsp(LSP, State),
     State;
 process_pdu(_From, #isis_csnp{} = CSNP, State) ->
@@ -738,8 +754,7 @@ compare_lsp_entries([], [], {Request, Announce}) ->
 -spec announce_lsps(list(), tuple()) -> ok.
 announce_lsps(IDs, State) ->
     LSPs = isis_lspdb:lookup_lsps(lists:sort(IDs), State#state.database),
-    AliveLSPs = lists:filter(fun isis_protocol:filter_lifetime/1, LSPs),
-    send_lsps(AliveLSPs, State),
+    send_lsps(LSPs, State),
     ok.
 
 %%--------------------------------------------------------------------
@@ -874,7 +889,10 @@ handle_psnp(#isis_psnp{tlv = TLVs}, State) ->
 handle_lsp(#isis_lsp{lsp_id = ID, remaining_lifetime = 0} = LSP, State) ->
     %% Purging the lsp...
     lager:info("Purging LSP ~p", [ID]),
-    isis_lspdb:store_lsp(State#state.level, LSP#isis_lsp{tlv = []});
+    isis_lspdb:store_lsp(State#state.level,
+			 LSP#isis_lsp{tlv = [],
+				      remaining_lifetime = 0,
+				      last_update = isis_protocol:current_timestamp()});
 handle_lsp(#isis_lsp{lsp_id = ID, sequence_number = TheirSeq,
 		     checksum = TheirCSum} = LSP, State) ->
     <<RemoteSys:6/binary, _Rest/binary>> = ID,
@@ -906,7 +924,7 @@ handle_lsp(#isis_lsp{lsp_id = ID, sequence_number = TheirSeq,
     State.
 
 handle_old_lsp(#isis_lsp{lsp_id = ID, tlv = TLVs,
-			 sequence_number = SeqNo}, State) ->
+			 sequence_number = SeqNo} = LSP, State) ->
     case isis_system:check_autoconf_collision(TLVs) of
 	false ->
 	    case isis_lspdb:lookup_lsps([ID], State#state.database) of
@@ -917,8 +935,18 @@ handle_old_lsp(#isis_lsp{lsp_id = ID, tlv = TLVs,
 			    isis_system:bump_lsp(State#state.level, Node, Frag, SeqNo);
 			_ -> ok
 		    end;
-		_ -> %% Purge
-		    purge
+		_ ->
+		    lager:error("Purging an old LSP that claims to be from us: ~p",
+				[ID]),
+		    PLSP = LSP#isis_lsp{tlv = [],
+					remaining_lifetime = 0,
+					sequence_number = SeqNo + 1, checksum = 0,
+					last_update = isis_protocol:current_timestamp()},
+		    isis_lspdb:store_lsp(State#state.level, PLSP),
+		    isis_lspdb:flood_lsp(State#state.level,
+					 isis_system:list_interfaces(),
+					 PLSP),
+		    purged
 	    end;
 	_ -> ok
     end,
@@ -959,6 +987,7 @@ handle_csnp(#isis_csnp{start_lsp_id = Start,
 			    end
 		    end,
 		    [], TLVs),
+
     %% Compare the 2 lists, to get our announce/request sets
     {Request, Announce} = compare_lsp_entries(DB_LSPs, CSNP_LSPs, {[], []}),
     announce_lsps(Announce, State),

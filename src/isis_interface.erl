@@ -295,7 +295,7 @@ handle_info({_port, {data,
 		handle_pdu(From, DecodedPDU, State),
 		State;
 	    _ ->
-		%% io:format("Failed to decode: ~p~n", [PDU]),
+		lager:debug("Failed to decode: ~p", [PDU]),
 		State
 	end,
     {noreply, NewState};

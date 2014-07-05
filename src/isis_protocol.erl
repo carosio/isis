@@ -647,7 +647,7 @@ update_tlv(TLV, Node, Level, Frags) ->
     try do_update_tlv(TLV, Node, Level, Frags) of
 	F -> F
     catch
-	Error -> lager:error("update_tlv: ~p", [Error])
+	Error -> lager:info("update_tlv: ~p", [Error])
     end.	     
 
 
@@ -676,7 +676,7 @@ delete_tlv(TLV, Node, Level, Frags) ->
     try do_delete_tlv(TLV, Node, Level, Frags) of
 	F -> F
     catch
-	Error -> lager:error("delete_tlv: ~p", [Error])
+	Error -> lager:info("delete_tlv: ~p", [Error])
     end.	     
 
 
@@ -1208,7 +1208,14 @@ decode_common_lsp(<<PDU_Len:16, Lifetime:16,
 		    Partition:1, _ATT_Bits:4,
 		    Overload:1, Type:2,
 		    TLV_Binary/binary>>, PDU_Len_Received) ->
-    case decode_tlvs(TLV_Binary, tlv, fun decode_tlv/3, []) of
+    TrueTLVBin =
+	case PDU_Len < PDU_Len_Received of
+	    true -> Bytes = PDU_Len - ?ISIS_MIN_MSG_SIZE,
+		    <<TB:Bytes/binary, _/binary>> = TLV_Binary,
+		    TB;
+	    _ -> TLV_Binary
+	end,
+    case decode_tlvs(TrueTLVBin, tlv, fun decode_tlv/3, []) of
 	error -> error;
 	{ok, TLVS} ->
 	    LSP_ID = <<Sys_Id:6/binary, Pnode:8, Fragment:8>>,
@@ -1455,7 +1462,11 @@ current_timestamp() ->
 %%--------------------------------------------------------------------
 -spec fixup_lifetime( isis_lsp()) -> isis_lsp().
 fixup_lifetime(#isis_lsp{remaining_lifetime = L, last_update = U} = LSP) ->
-    Remaining = L - (current_timestamp() - U),
+    Remaining =
+	case (L - (current_timestamp() - U)) < 0 of
+	    true -> 0;
+	    _ -> L - (current_timestamp() - U)
+	end,
     LSP#isis_lsp{remaining_lifetime = Remaining}.
 
 -spec filter_lifetime(isis_lsp()) -> boolean().

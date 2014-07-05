@@ -29,6 +29,7 @@
 	  neighbor,      %% Neighbor's SNPA (ie. whom we're adjacent with)
 	  neighbor_id,   %% Neighbor ID
 	  lan_id,        %% Who the negihbor believes is DIS
+	  priority,      %% Priority it advertises
 	  ip_addresses = [],  %% IP address of the neighbor
           ipv6_addresses = [], %% IPv6 address of the neighbor
 	  interface,     %% PID handling the interface
@@ -106,7 +107,8 @@ init({iih, IIH}, State) ->
 	    true ->
 		NS = State#state{
 		       neighbor_id = IIH#isis_iih.source_id,
-		       lan_id = IIH#isis_iih.dis},
+		       lan_id = IIH#isis_iih.dis,
+		       priority = IIH#isis_iih.priority},
 		update_adjacency(up, NS),
 		{up, NS};
 	    _ -> {init, State}
@@ -283,7 +285,9 @@ seen_ourselves_tlv(_, _) ->
 update_adjacency(Direction, State) ->
     isis_interface_level:update_adjacency(State#state.level_pid,
 					  Direction,
-					  State#state.neighbor_id).
+					  {State#state.neighbor_id,
+					   State#state.neighbor,
+					   State#state.priority}).
 
 %% Ultimatley, this should verify that we share a subnet with the neighbor, or
 %% we'll have no nexthops for routes!
