@@ -115,6 +115,7 @@ function connectToLSPDBFeed() {
 		if (i == lspData.length) {
 		    lspData[i] = obj;
 		}
+		updateList();
 	    } else if(obj.command == "delete") {
 		var i;
 		for(var i = 0; i < lspData.length; i++) {
@@ -123,6 +124,7 @@ function connectToLSPDBFeed() {
 			break;
 		    }
 		}
+		updateList();
 	    }
 	    
 	    ws.onclose = function() {
