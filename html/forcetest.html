@@ -77,17 +77,42 @@ function connectToSPFFeed() {
               nodeLookup[nodes[i].id] = nodes[i];
             }
             NewState.links.forEach(function(link) {
-              if (!nodeLookup[link.source]) {
-                nodes.push({id: link.source, colour: (link.source.slice(-1) * 10)});
-                nodeLookup[link.source] = nodes[nodes.length-1];
-              }
-              nodeLookup[link.source].updated = true;
-              if (!nodeLookup[link.target]) {
-                nodes.push({id: link.target, colour: (link.target.slice(-1) * 10)});
-                nodeLookup[link.target] = nodes[nodes.length-1];
-              }
-              nodeLookup[link.target].updated = true;
+		if (!nodeLookup[link.source]) {
+		    var chosenColour;
+		    if (link.source_name.slice(-1) == ">") {
+			chosenColour = parseInt(link.source_name.slice(-3,-2)) * 10;
+		    } else {
+			chosenColour = link.source_name.slice(-1) * 10;
+		    }
+                    nodes.push({id: link.source,
+				colour: chosenColour});
+                    nodeLookup[link.source] = nodes[nodes.length-1];
+		}
+		if ("source_name" in link) {
+		    nodeLookup[link.source].name = link.source_name;
+		} else {
+		    nodeLookup[link.source].name = link.source;
+		}
+		nodeLookup[link.source].updated = true;
+		if (!nodeLookup[link.target]) {
+		    var chosenColour;
+		    if (link.target_name.slice(-1) == ">") {
+			chosenColour = parseInt(link.target_name.slice(-3,-2)) * 10;
+		    } else {
+			chosenColour = link.target_name.slice(-1) * 10;
+		    }
+                    nodes.push({id: link.target,
+				colour: chosenColour});
+                    nodeLookup[link.target] = nodes[nodes.length-1];
+		}
+		if ("target_name" in link) {
+		    nodeLookup[link.target].name = link.target_name;
+		} else {
+		    nodeLookup[link.target].name = link.target;
+		}
+		nodeLookup[link.target].updated = true;
             });
+	    console.log(nodeLookup);
             i = 0;
             while(i < nodes.length) {
 		if (nodes[i].updated === false) {
@@ -203,8 +228,8 @@ function start() {
 	.append("circle").attr("r", 5).style("fill", function(d){ return color(d.colour)});
   node.exit().remove();
 
-  label = label.data(force.nodes(), function(d) { return d.id;});
-  label.enter().append("text").attr("x", 12).attr("dy", ".35em").text(function(d) {return d.id;});
+  label = label.data(force.nodes(), function(d) { return d.id; });
+  label.enter().append("text").attr("x", 12).attr("dy", ".35em").text(function(d) { return d.name; });
   label.exit().remove();
 
  

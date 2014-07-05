@@ -19,7 +19,9 @@
 -export([handle_call/3, handle_info/2, handle_cast/2, code_change/3]).
 
 -record(link, {source,
+	       source_name,
 	       target,
+	       target_name,
 	       value}).
 
 out(A) ->
@@ -103,8 +105,10 @@ generate_update(Time, Level, SPF, Reason) ->
     SPFLinks = isis_lspdb:links(isis_lspdb:get_db(Level)),
     Links = lists:map(fun({{<<A:7/binary>>,
 			   <<B:7/binary>>}, Weight}) ->
-			      L = #link{source = isis_system:lookup_name(A),
-					target = isis_system:lookup_name(B),
+			      L = #link{source = lists:flatten(io_lib:format("~p", [A])),
+					source_name = isis_system:lookup_name(A),
+					target = lists:flatten(io_lib:format("~p", [B])),
+					target_name = isis_system:lookup_name(B),
 					value = Weight},
 			      {struct, lists:zip(record_info(fields, link),
 						 tl(tuple_to_list(L)))}
