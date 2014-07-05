@@ -1499,7 +1499,13 @@ tlv_size(TLV) ->
 %%% Pretty Print a TLV
 %%%===================================================================
 pp_tlv(T) ->
-    TLVName = lists:sublist(erlang:atom_to_list(hd(tuple_to_list(T))), 10, 100),
+    TLVName = 
+	case hd(tuple_to_list(T)) of
+	    isis_tlv_unknown ->
+		lists:flatten(io_lib:format("TLV#~B", [T#isis_tlv_unknown.type]));
+	    V ->
+		lists:sublist(erlang:atom_to_list(V), 10, 100)
+	end,
     {TLVName, do_pp_tlv(T)}.
 
 do_pp_tlv(#isis_tlv_area_address{areas = As}) ->
@@ -1528,9 +1534,13 @@ do_pp_tlv(#isis_tlv_ipv6_reachability{reachability = R}) ->
     lists:map(fun(#isis_tlv_ipv6_reachability_detail{prefix = P, mask_len = Mask, metric = Metric,
 						     sub_tlv = S}) ->
 		      IA = #isis_address{afi = ipv6, address = P, mask = Mask},
-		      lists:flatten(io_lib:format("~s/~B metric ~B ~p",
+		      SubTLV = lists:foldl(fun(ST, Acc) ->
+						   Acc ++ do_pp_subtlv_ipv6r(ST) ++ " "
+					   end,
+					   "", S),
+		      lists:flatten(io_lib:format("~s/~B metric ~B (~s)",
 						  [isis_system:address_to_string(IA),
-						   Mask, Metric, S]))
+						   Mask, Metric, SubTLV]))
 	      end, R);
 do_pp_tlv(#isis_tlv_extended_reachability{reachability = R}) ->
     lists:map(fun(#isis_tlv_extended_reachability_detail{neighbor = N, metric = M}) ->
@@ -1548,8 +1558,17 @@ do_pp_tlv(#isis_tlv_extended_ip_reachability{reachability = R}) ->
 	     end, R);
 do_pp_tlv(#isis_tlv_te_router_id{router_id = ID}) ->
     isis_system:address_to_string(ipv4, ID);
+do_pp_tlv(#isis_tlv_unknown{bytes = B}) ->
+    lists:flatten(io_lib:format("~p", [B]));
 do_pp_tlv(T) ->
     lists:flatten(io_lib:format("~p", [T])).
+
+do_pp_subtlv_ipv6r(#isis_subtlv_srcdst{prefix_length = PL, prefix = P}) ->
+    AI = #isis_address{afi = ipv6, address = P, mask = PL},
+    lists:flatten(io_lib:format("from: ~s/~B
+", [isis_system:address_to_string(AI), PL]));
+do_pp_subtlv_ipv6r(#isis_subtlv_unknown{type = T, value = V}) ->
+    lists:flatten(io_lib:format("TLV ~B (~p)", [T, V])).
 
 %%%===================================================================
 %%% EUnit tests
