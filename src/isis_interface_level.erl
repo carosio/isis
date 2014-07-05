@@ -314,6 +314,11 @@ handle_iih(From, IIH, #state{adj_handlers = Adjs} = State) ->
 		dict:store(From, NewPid, Adjs)
 	end,
     AdjState = State#state{adj_handlers = NewAdjs},
+    lager:debug("DIS Election on ~s: Us: ~B, Them: ~B From > Our: ~p (From: ~p, Our ~p)",
+               [State#state.interface_name,
+                State#state.priority, IIH#isis_iih.priority,
+                (From > State#state.snpa),
+               From, State#state.snpa]),
     DISState = handle_dis_election(From, IIH, AdjState),
     DISState.
 
@@ -355,17 +360,23 @@ handle_dis_election(From,
 	end,
     NewState;
 handle_dis_election(From,
-		    #isis_iih{priority = _TheirP, dis = DIS, source_id = _SID},
+		    #isis_iih{priority = _TheirP, dis = DIS, source_id = SID},
 		    #state{priority = _OurP, are_we_dis = Us} = State)
   when Us =:= false ->
     %% io:format("handle_dis_election: We win, assuming DIS if adj is up~n", []),
     <<D:6/binary, _D1:1/binary>> = DIS,
-    NewState = 
-	case dict:find(From, State#state.adj_handlers) of
-	    {ok, _} -> assume_dis(State);
-	    _ -> State
-	end,
-    NewState;
+    case D =:= SID of
+	true ->
+	    %% They believe their DIS, lets disabuse them of that..
+	    NewState = 
+		case dict:find(From, State#state.adj_handlers) of
+		    {ok, _} -> assume_dis(State);
+		    _ -> State
+		end;
+	_ ->
+	    %% They think someone else is DIS, that may be true..
+	    State#state{dis = DIS}
+    end;
 handle_dis_election(_From,
 		    #isis_iih{priority = _TheirP, dis = _DIS, source_id = _SID},
 		    #state{priority = _OurP, are_we_dis = _Us} = State) ->

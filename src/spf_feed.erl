@@ -117,13 +117,16 @@ generate_update(Time, Level, SPF, Reason) ->
     SendRoute = 
 	fun({#isis_address{afi = AFI, mask = Mask} = A, _Source},
 	    NHs, Metric, Nodes) ->
-		{NHAfi, {NH, IFIndex}} = 
+		{NHStr, IFIndex} = 
 		    case lists:keyfind(AFI, 1, NHs) of
-			{ipv4, NHA} -> {ipv4, {NHA, no_ifindex}};
-			{ipv6, {NHA, NHI}} -> {ipv6, {NHA, NHI}}
+			{ipv4, NHA} ->
+			    {isis_system:address_to_string(ipv4, NHA),
+			     no_ifindex};
+			{ipv6, {NHA, NHI}} ->
+			    {isis_system:address_to_string(ipv6, NHA), NHI};
+			false -> {"unknown nexthop", no_ifindex}
 		    end,
 		AStr = isis_system:address_to_string(A),
-		NHStr = isis_system:address_to_string(NHAfi, NH),
 		InterfaceStr =
 		    case dict:find(IFIndex, Interfaces) of
 			{ok, Value} -> Value;
