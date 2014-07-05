@@ -15,7 +15,8 @@ run() ->
     Docroot = "html",
     Webport = 8080,
     Appmods = {appmods, [
-			 {"/spf", spf_feed}
+			 {"/spf", spf_feed},
+			 {"/lspdb", lsp_feed}
 			]},
     SconfList = [
 		 [{servername, "isis"},

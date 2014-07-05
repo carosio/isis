@@ -25,7 +25,9 @@
 	 schedule_spf/2,
 	 links/1,
 	 clear_db/1,
-	 set_system_id/2]).
+	 set_system_id/2,
+	 %% Feed Details
+	 subscribe/2, unsubscribe/2, initial_state/2]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -40,7 +42,8 @@
 	        expiry_timer = undef,  %% We expire LSPs based on this timer
 		spf_timer = undef, %% Dijkestra timer
 		spf_reason = "",
-		hold_timer        %% SPF Hold timer
+		hold_timer,        %% SPF Hold timer
+		subscribers
 	       }).
 
 %%%===================================================================
@@ -126,6 +129,24 @@ lookup_lsps(Ids, DB) ->
 %%--------------------------------------------------------------------
 summary(Args, DB) ->
     lsp_summary(Args, DB).
+
+%%--------------------------------------------------------------------
+%% @doc
+%%
+%% Subscriber management
+%%
+%% @end
+%%--------------------------------------------------------------------
+subscribe(Level, Pid) ->
+    gen_server:cast(Level, {subscribe, Pid}).
+
+unsubscribe(Level, Pid) ->
+    gen_server:cast(Level, {unsubscribe, Pid}).
+
+initial_state(Level, Pid) ->
+    DB = isis_lspdb:get_db(Level),
+    lists:map(fun(L) -> notify_subscriber(build_message(L), Pid) end,
+	      ets:tab2list(DB)).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -264,7 +285,8 @@ init([{table, Table_ID}]) ->
     NameDB = dict:new(),
     Timer = start_timer(expiry, #state{}),
     {ok, #state{db = DB, name_db = NameDB, level = Table_ID, 
-		expiry_timer = Timer, spf_timer = undef}}.
+		expiry_timer = Timer, spf_timer = undef,
+		subscribers = dict:new()}}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -307,6 +329,7 @@ handle_call({store, #isis_lsp{} = LSP},
 		isis_system:add_name(SysID, NameT#isis_tlv_dynamic_hostname.hostname);
 	_ -> ok
     end,
+    notify_subscribers(LSP, State),
     {reply, Result, NewState};
 
 handle_call({delete, LSP},
@@ -339,6 +362,15 @@ handle_cast({schedule_spf, Reason}, State) ->
     {noreply, schedule_spf(full, Reason, State)};
 handle_cast({set_system_id, ID}, State) ->
     {noreply, State#state{system_id = ID}};
+
+handle_cast({subscribe, Pid}, #state{subscribers = S} = State) ->
+    erlang:monitor(process, Pid),
+    {noreply, State#state{subscribers =
+			      dict:store(Pid, [], S)}};
+
+handle_cast({unsubscribe, Pid}, State) ->
+    {noreply, remove_subscriber(Pid, State)};
+
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
@@ -788,3 +820,36 @@ extract_source(SubTLVs, Afi) ->
 	    %% Just take the first...
 	    lists:nth(1, S)
     end.
+
+build_message(#isis_lsp{lsp_id = LSP_Id, sequence_number = SN,
+			     tlv = TLV}) ->
+    <<ID:6/binary, PN:8, Frag:8>> = LSP_Id,
+    LSPStr = lists:flatten(
+	       io_lib:format("~s.~2.16.0B-~2.16.0B",
+			   [isis_system:lookup_name(ID), PN, Frag])),
+    SIDBin = lists:flatten(io_lib:format("~4.16.0B.~4.16.0B.~4.16.0B-~2.16.0B-~2.16.0B",
+                                         [X || <<X:16>> <= ID] ++ [PN, Frag])),
+    TLVAs = lists:map(fun isis_protocol:pp_tlv/1, TLV),
+    json2:encode({struct, [{"LSPId", SIDBin}, {"IDStr", LSPStr}, {"Sequence", SN}]}).
+
+notify_subscribers(#isis_lsp{} = LSP, #state{subscribers = Subscribers}) ->
+    Message = build_message(LSP),
+    Pids = dict:fetch_keys(Subscribers),
+    lists:foreach(
+      fun(Pid) -> notify_subscriber(Message, Pid) end, Pids),
+    ok;
+notify_subscribers(_LSP_Id, #state{subscribers = Subscribers}) ->
+    ok.
+
+notify_subscriber(Message, Pid) ->
+    Pid ! {lsp_update, list_to_binary(Message)}.
+
+remove_subscriber(Pid, #state{subscribers = Subscribers} = State) ->
+    NewSubscribers =
+	case dict:find(Pid, Subscribers) of
+	    {ok, _Value} ->
+		
+		dict:erase(Pid, Subscribers);
+	    error ->Subscribers
+	end,
+    State#state{subscribers = NewSubscribers}.

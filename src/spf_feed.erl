@@ -46,7 +46,7 @@ handle_message({close, Status, _Reason}) ->
     {close, Status};
 
 handle_message(Any) ->
-    error_logger:error_msg("Received ~p", [Any]),
+    error_logger:error_msg("Received at spf_feed ~p ", [Any]),
     noreply.
 
 terminate(_Reason, _State) ->

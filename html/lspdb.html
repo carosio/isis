@@ -1,0 +1,122 @@
+<!DOCTYPE HTML PUBLIC "-//IETF//DTD HTML//EN">
+<html><head>
+<title>LSPDB</title>
+</head>
+
+<style>
+body
+{
+}
+div#lsps {
+    width:95%;
+    margin:2% 2%;
+    background-color:#ffffff;
+    border:1px solid black;
+    opacity:0.5;
+    filter:alpha(opacity=60); /* For IE8 and earlier */
+}
+.lspdiv {
+    border-width: 1px;
+    margin-bottom: 1px;
+    display: table-row;
+}
+</style>
+
+<body id="body">
+
+<div id="div"></div>
+<script type="text/javascript">
+
+var ws;
+var ShipData = new Array();
+
+function connectToLSPDBFeed() {
+    if ("WebSocket" in window) {
+    // make sure yaws is listening on the URL  
+    ws = new WebSocket("ws://" + document.location.host + "/lspdb"); 
+
+  ws.onopen = function() {
+              ws.send("start level_1");
+  };
+    ws.onmessage = function (evt) { 
+      var received_msg = evt.data;
+      var obj = JSON.parse(received_msg);
+      console.log(obj);
+
+      ws.onclose = function() {
+        setTimeout(function() { connectToLSPDBFeed()}, 1000);
+      }; 
+
+      ws.onerror = function() {
+        document.writeln("ERROR");
+      };
+    }
+  }
+  return false;
+}
+
+// function updateList(data) {
+//     var aisBox = d3.select('#ships');
+
+//     var sorted = data.sort(function(a, b) { return d3.ascending(a.mmsi, b.mmsi); });
+    
+//     var ais = aisBox
+//         .selectAll('.shipdiv')
+//         .data(sorted, function(d) { return d.mmsi; });
+    
+//     var enterDiv = ais.enter()
+//         .append("div")
+//         .attr("class", "shipdiv")
+// 		       .attr("id", function(d) { return d.mmsi })
+//         .style("opacity", 0);
+//     enterDiv.append("div")
+//         .attr("class", "mmsi")
+//         .text(function(d) { return d.mmsi });
+//     enterDiv.append("div")
+//         .attr("class", "class")
+//         .text(function(d) { return d.class });
+//     enterDiv.append("div")
+//         .attr("class", "vesselname");
+//     enterDiv.append("div")
+//         .attr("class", "callsign")
+//         .text(function(d) { return d.callsign });
+//     enterDiv.append("div")
+//         .attr("class", "latitude");
+//     enterDiv.append("div")
+//         .attr("class", "longitude");
+//     enterDiv.append("div")
+//         .attr("class", "sog");
+//     enterDiv.append("div")
+//         .attr("class", "cog");
+//     enterDiv.append("div")
+//         .attr("class", "heading")
+//         .html(function(d) { return d.heading });
+//     enterDiv.append("div")
+//         .attr("class", "dimensions")
+//         .html(function(d) { 
+// 		           if (d.length > 0) {
+//     return d.length + "m by "+ d.beam +"m"
+//         } else {
+//             return ""
+//         }
+//     });
+
+//     ais.transition()
+//     .delay(50)
+//     .style("opacity", 1);
+//     ais.exit()
+//     .transition()
+//     .duration(50)
+//     .style("opacity", 0)
+//     .remove();
+// }
+
+connectToLSPDBFeed();
+// setInterval(function() {updateList(ShipData)}, 1000);
+
+</script>
+
+<body>
+<H1> Experimental LSPDB service</H1>
+<div id="lsps"></div>
+</body>
