@@ -33,13 +33,17 @@ div#lsps {
 }
 
 #lsps .LSPId {
+    white-space: nowrap;
 }
 #lsps .IDStr {
+    white-space: nowrap;
     font-weight: bold;
 }
 #lsps .Sequence {
+    white-space: nowrap;
 }
 #lsps .lifetime {
+    white-space: nowrap;
 }
 </style>
 
@@ -129,7 +133,6 @@ function updateList(data) {
 	     for(var i = 0; i < Res.length; i++) {
 		 Result += Res[i];
 	     }
-	     console.log(Result);
 	     return(Result);
 	 }
 	},
@@ -163,8 +166,12 @@ function updateList(data) {
     cells.filter(function (d) { return !d.html } )
 	.text(function (d) { return d.value; });
 
+    d3.selectAll("tr")
+	.style("background-color", function(d, i) {
+	    return i % 2 ? "#fff" : "#eee";
+	});
+
     // Flash updated rows
-    lsps.style('background', 'white');
     lsps.filter(function (d) {
 	return d.lastUpdate > (Date.now() - 1500);
     }).style('background-color', '#ff0000').transition().duration(500).style('background-color', '#ffffff');
