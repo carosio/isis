@@ -1565,8 +1565,7 @@ do_pp_tlv(T) ->
 
 do_pp_subtlv_ipv6r(#isis_subtlv_srcdst{prefix_length = PL, prefix = P}) ->
     AI = #isis_address{afi = ipv6, address = P, mask = PL},
-    lists:flatten(io_lib:format("from: ~s/~B
-", [isis_system:address_to_string(AI), PL]));
+    lists:flatten(io_lib:format("from: ~s/~B", [isis_system:address_to_string(AI), PL]));
 do_pp_subtlv_ipv6r(#isis_subtlv_unknown{type = T, value = V}) ->
     lists:flatten(io_lib:format("TLV ~B (~p)", [T, V])).
 

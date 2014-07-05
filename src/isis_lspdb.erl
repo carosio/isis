@@ -794,8 +794,12 @@ extract_source(SubTLVs, Afi) ->
     end.
 
 build_message(#isis_lsp{lsp_id = LSP_Id, sequence_number = SN,
-			     tlv = TLV}) ->
+			last_update = U, remaining_lifetime = L,
+			checksum = CSum,
+			tlv = TLV}) ->
     <<ID:6/binary, PN:8, Frag:8>> = LSP_Id,
+    Now = isis_protocol:current_timestamp(),
+    RL = (L - (Now - U)),
     LSPStr = lists:flatten(
 	       io_lib:format("~s.~2.16.0B-~2.16.0B",
 			   [isis_system:lookup_name(ID), PN, Frag])),
@@ -804,6 +808,7 @@ build_message(#isis_lsp{lsp_id = LSP_Id, sequence_number = SN,
     TLVAs = lists:map(fun isis_protocol:pp_tlv/1, TLV),
     json2:encode({struct, [{"command", "add"}, 
 			   {"LSPId", SIDBin}, {"IDStr", LSPStr}, {"Sequence", SN},
+			   {"lifetime", RL}, {"checksum", CSum},
 			   {"tlvs", {struct, TLVAs}}]}).
 
 notify_subscribers(#isis_lsp{} = LSP, #state{subscribers = Subscribers}) ->

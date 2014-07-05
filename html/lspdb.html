@@ -1,6 +1,9 @@
-<!DOCTYPE HTML PUBLIC "-//IETF//DTD HTML//EN">
+<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01//EN">
+<html lang="en">
 <html><head>
-<title>LSPDB</title>
+    <meta charset="utf-8">
+    <title>LSPDB</title>
+    <script type="text/javascript" src="d3/d3.js"></script>
 </head>
 
 <style>
@@ -9,18 +12,37 @@ body
 }
 div#lsps {
     width:95%;
-    margin:2% 2%;
-    background-color:#ffffff;
+    margin:2px 2px;
+    background-color: rgba(255,255,255,.5)
     border:1px solid black;
-    opacity:0.5;
+/*    opacity:0.5;*/
     filter:alpha(opacity=60); /* For IE8 and earlier */
+    font: 8pt Verdana;
 }
-.lspdiv {
-    border-width: 1px;
-    margin-bottom: 1px;
-    display: table-row;
+
+#lsps th {
+    padding-bottom: 2px;
+    cursor: pointer;
+    background: black;
+    color: white;
+    font-weight: bold;
+}
+
+#lsps td {
+  padding-left: 5px;
+}
+
+#lsps .LSPId {
+}
+#lsps .IDStr {
+    font-weight: bold;
+}
+#lsps .Sequence {
+}
+#lsps .lifetime {
 }
 </style>
+
 
 <body id="body">
 
@@ -28,91 +50,129 @@ div#lsps {
 <script type="text/javascript">
 
 var ws;
-var ShipData = new Array();
+var lspData = new Array();
 
 function connectToLSPDBFeed() {
     if ("WebSocket" in window) {
-    // make sure yaws is listening on the URL  
-    ws = new WebSocket("ws://" + document.location.host + "/lspdb"); 
+	// make sure yaws is listening on the URL  
+	ws = new WebSocket("ws://" + document.location.host + "/lspdb"); 
+	
+	ws.onopen = function() {
+	    ws.send("start level_1");
+	};
+	ws.onmessage = function (evt) { 
+	    var received_msg = evt.data;
+	    var obj = JSON.parse(received_msg);
 
-  ws.onopen = function() {
-              ws.send("start level_1");
-  };
-    ws.onmessage = function (evt) { 
-      var received_msg = evt.data;
-      var obj = JSON.parse(received_msg);
-      console.log(obj);
-
-      ws.onclose = function() {
-        setTimeout(function() { connectToLSPDBFeed()}, 1000);
-      }; 
-
-      ws.onerror = function() {
-        document.writeln("ERROR");
-      };
+	    var LSPId = obj.LSPId;
+	    if (obj.command == "add") {
+		var i;
+		obj.lastUpdate = Date.now();
+		for(var i = 0; i < lspData.length; i++) {
+		    if (lspData[i].LSPId == LSPId) {
+			lspData[i] = obj;
+			break;
+		    }
+		}
+		if (i == lspData.length) {
+		    lspData[i] = obj;
+		}
+	    } else if(obj.command == "delete") {
+		var i;
+		for(var i = 0; i < lspData.length; i++) {
+		    if (lspData[i].LSPId == LSPId) {
+			lspData.splice(i, 1);
+			break;
+		    }
+		}
+	    }
+	    
+	    ws.onclose = function() {
+		setTimeout(function() { connectToLSPDBFeed()}, 1000);
+	    }; 
+	    
+	    ws.onerror = function() {
+		document.writeln("ERROR");
+	    };
+	}
     }
-  }
-  return false;
+    return false;
 }
 
-// function updateList(data) {
-//     var aisBox = d3.select('#ships');
+function updateList(data) {
+    var lspBox = d3.select('#lsps');
 
-//     var sorted = data.sort(function(a, b) { return d3.ascending(a.mmsi, b.mmsi); });
-    
-//     var ais = aisBox
-//         .selectAll('.shipdiv')
-//         .data(sorted, function(d) { return d.mmsi; });
-    
-//     var enterDiv = ais.enter()
-//         .append("div")
-//         .attr("class", "shipdiv")
-// 		       .attr("id", function(d) { return d.mmsi })
-//         .style("opacity", 0);
-//     enterDiv.append("div")
-//         .attr("class", "mmsi")
-//         .text(function(d) { return d.mmsi });
-//     enterDiv.append("div")
-//         .attr("class", "class")
-//         .text(function(d) { return d.class });
-//     enterDiv.append("div")
-//         .attr("class", "vesselname");
-//     enterDiv.append("div")
-//         .attr("class", "callsign")
-//         .text(function(d) { return d.callsign });
-//     enterDiv.append("div")
-//         .attr("class", "latitude");
-//     enterDiv.append("div")
-//         .attr("class", "longitude");
-//     enterDiv.append("div")
-//         .attr("class", "sog");
-//     enterDiv.append("div")
-//         .attr("class", "cog");
-//     enterDiv.append("div")
-//         .attr("class", "heading")
-//         .html(function(d) { return d.heading });
-//     enterDiv.append("div")
-//         .attr("class", "dimensions")
-//         .html(function(d) { 
-// 		           if (d.length > 0) {
-//     return d.length + "m by "+ d.beam +"m"
-//         } else {
-//             return ""
-//         }
-//     });
+    var sorted = data.sort(function(a, b) { return d3.ascending(a.LSPId, b.LSPId); });
 
-//     ais.transition()
-//     .delay(50)
-//     .style("opacity", 1);
-//     ais.exit()
-//     .transition()
-//     .duration(50)
-//     .style("opacity", 0)
-//     .remove();
-// }
+    var lsps = lspBox
+        .selectAll('tr')
+        .data(data, function(d) {
+	    return d.LSPId;
+	});
+
+    var columns = [
+	{name: 'LSPId', },
+	{name: 'IDStr', },
+	{name: 'Sequence', },
+	{name: 'lifetime',
+	 value: function(d) { 
+	     return(Math.floor(d.lifetime - ((Date.now() - d.lastUpdate) / 1000)));
+	 }
+	},
+	{name: 'tlv',
+	 html: true,
+	 value: function(d) {
+	     Res = Object.keys(d.tlvs).map(function(k) {
+		 return(k.toString() + ": " + d.tlvs[k].toString() + "<br>")
+	     });
+	     var Result = "";
+	     for(var i = 0; i < Res.length; i++) {
+		 Result += Res[i];
+	     }
+	     console.log(Result);
+	     return(Result);
+	 }
+	},
+    ];
+
+    var enterDiv = lsps.enter()
+	.append("tr");
+
+    lsps.exit()
+	.transition()
+	.duration(50)
+	.style("opacity", 0)
+	.remove();
+
+    var cells = lsps.selectAll('td')
+	.data(function (row) {
+	    return columns.map(function (column) {
+		return {
+		    column: column.name,
+		    html: ('html' in column) && column.html,
+		    value: 'value' in column ? column.value(row, column) : row[column.name]
+		};
+	    });
+	});
+    
+    cells.enter()
+        .append('td')
+	.attr('class', function(d) { return d.column; })
+    cells.filter(function (d) { return d.html } )
+	.html(function (d) { return d.value; });
+    cells.filter(function (d) { return !d.html } )
+	.text(function (d) { return d.value; });
+
+    // Flash updated rows
+    lsps.style('background', 'white');
+    lsps.filter(function (d) {
+	return d.lastUpdate > (Date.now() - 1500);
+    }).style('background-color', '#ff0000').transition().duration(500).style('background-color', '#ffffff');
+
+}
 
 connectToLSPDBFeed();
-// setInterval(function() {updateList(ShipData)}, 1000);
+setInterval(function() {updateList(lspData)}, 1000);
 
 </script>
 
