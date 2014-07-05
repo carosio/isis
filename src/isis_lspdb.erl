@@ -18,7 +18,7 @@
 
 %% API
 -export([start_link/1, get_db/1,
-	 lookup_lsps/2, store_lsp/2, delete_lsp/2, flood_lsp/3,
+	 lookup_lsps/2, store_lsp/2, flood_lsp/3,
 	 lookup_lsps_by_node/2,
 	 summary/2, range/3,
 	 replace_tlv/3, update_reachability/3,
@@ -60,16 +60,6 @@
 %%--------------------------------------------------------------------
 store_lsp(Ref, LSP) ->
     gen_server:call(Ref, {store, LSP}).
-
-%%--------------------------------------------------------------------
-%% @doc
-%%
-%% Given an LSP-Id, delete its from the LSP DB
-%%
-%% @end
-%%--------------------------------------------------------------------
-delete_lsp(Ref, LSP) ->
-    gen_server:call(Ref, {delete, LSP}).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -211,21 +201,10 @@ update_reachability({AddDel, ER}, Level, #isis_lsp{tlv = TLVs} = LSP) ->
 %%--------------------------------------------------------------------
 %% @doc
 %%
-%% Purge an LSP
+%% Flood an LSP
 %%
 %% @end
 %%--------------------------------------------------------------------
-purge(LSP, State) ->
-    case ets:lookup(State#state.db, LSP) of
-	[OldLSP] ->
-	    PurgedLSP = OldLSP#isis_lsp{tlv = [], remaining_lifetime = 0, checksum = 0,
-					last_update = isis_protocol:current_timestamp()},
-	    ets:insert(State#state.db, PurgedLSP),
-	    {ok, PurgedLSP};
-	_ -> missing_lsp
-    end.
-	    
-
 flood_lsp(Level, Interfaces, LSP) ->
     case isis_protocol:encode(LSP) of
 	{ok, Packet, Size} ->
@@ -339,10 +318,6 @@ handle_call({delete, LSP},
 handle_call({clear_db}, _From, State) ->
     ets:delete_all_objects(State#state.db),
     {reply, ok, State};
-
-handle_call({purge, LSP}, _From, State) ->
-    Result = purge(LSP, State),
-    {reply, Result, State};
 
 handle_call(_Request, _From, State) ->
     Reply = ok,
