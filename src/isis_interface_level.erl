@@ -433,7 +433,8 @@ relinquish_dis(State) ->
 
 remove_adjacency(#state{are_we_dis = false,
 			dis = DIS,
-			level = Level})
+			level = Level,
+			interface_name = Interface})
   when DIS =/= undef ->
     TLV = 
 	#isis_tlv_extended_reachability{
@@ -441,7 +442,7 @@ remove_adjacency(#state{are_we_dis = false,
 			      neighbor = DIS,
 			      metric = 0,
 			      sub_tlv = []}]},
-    isis_system:delete_tlv(TLV, 0, Level);
+    isis_system:delete_tlv(TLV, 0, Level, Interface);
 remove_adjacency(_) ->
     ok.
 
@@ -966,7 +967,7 @@ handle_csnp(_, #state{database = DB} = State) when DB =:= undef ->
     State;
 handle_csnp(#isis_csnp{start_lsp_id = Start,
 		       end_lsp_id = End,
-		       tlv = TLVs}, State) ->
+		       tlv = TLVs} = CSNP, State) ->
     %% Extract and create lsp_entry_detail records for the range from
     %% our datbase
     DB_LSPs = 
@@ -991,6 +992,9 @@ handle_csnp(#isis_csnp{start_lsp_id = Start,
     %% Compare the 2 lists, to get our announce/request sets
     {Request, Announce} = compare_lsp_entries(DB_LSPs, CSNP_LSPs, {[], []}),
     announce_lsps(Announce, State),
+    lager:debug("CSNP on ~s: ~p", [State#state.interface_name, lager:pr(CSNP, isis_protocol)]),
+    lager:debug("DB: ~p", [lager:pr(DB_LSPs, isis_protocol)]),
+    lager:debug("Announce: ~p, Request: ~p", [Announce, Request]),
     NewState = update_ssn(Request, State),
     NewState.
 
@@ -1155,7 +1159,7 @@ do_update_reachability_tlv(add, N, PN, Metric,
 				   default = #isis_metric_information{metric_supported = true,
 								      metric = Metric,
 								      metric_type = internal}}]},
-    isis_system:update_tlv(TLV, PN, State#state.level);
+    isis_system:update_tlv(TLV, PN, State#state.level, State#state.interface_name);
 do_update_reachability_tlv(del, N, PN, Metric,
 			   #state{metric_type = narrow} = State) ->
     TLV = #isis_tlv_is_reachability{
@@ -1165,7 +1169,7 @@ do_update_reachability_tlv(del, N, PN, Metric,
 				   default = #isis_metric_information{metric_supported = true,
 								      metric = Metric,
 								      metric_type = internal}}]},
-    isis_system:delete_tlv(TLV, PN, State#state.level);
+    isis_system:delete_tlv(TLV, PN, State#state.level, State#state.interface_name);
 do_update_reachability_tlv(add, N, PN, Metric,
 			   #state{metric_type = wide} = State) ->
     TLV = #isis_tlv_extended_reachability{
@@ -1173,7 +1177,7 @@ do_update_reachability_tlv(add, N, PN, Metric,
 				neighbor = N,
 				metric = Metric,
 				sub_tlv = []}]},
-    isis_system:update_tlv(TLV, PN, State#state.level);
+    isis_system:update_tlv(TLV, PN, State#state.level, State#state.interface_name);
 do_update_reachability_tlv(del, N, PN, Metric,
 			   #state{metric_type = wide} = State) ->
     TLV = #isis_tlv_extended_reachability{
@@ -1181,15 +1185,15 @@ do_update_reachability_tlv(del, N, PN, Metric,
 				neighbor = N,
 				metric = Metric,
 				sub_tlv = []}]},
-    isis_system:delete_tlv(TLV, PN, State#state.level).
+    isis_system:delete_tlv(TLV, PN, State#state.level, State#state.interface_name).
 
 update_reachability_tlv(Dir, <<_:6/binary, PN:8>> = N, 0, Metric, State) when PN =:= 0 ->
-    lager:info("Updating reachability TLV ~s neighbor ~p (pseudonode ~B)",
-	       [Dir, N, 0]),
+    lager:info("Updating reachability TLV ~s neighbor ~p (pseudonode ~B) ~s",
+	       [Dir, N, 0, State#state.interface_name]),
     do_update_reachability_tlv(Dir, N, PN, Metric, State);
 update_reachability_tlv(Dir, N, PN, Metric, State) ->
-    lager:info("Updating reachability TLV ~s neighbor ~p (pseudonode ~B)",
-	       [Dir, N, PN]),
+    lager:info("Updating reachability TLV ~s neighbor ~p (pseudonode ~B) ~s",
+	       [Dir, N, PN, State#state.interface_name]),
     do_update_reachability_tlv(Dir, N, PN, Metric, State).
 
 dump_config_fields(Name, Level,

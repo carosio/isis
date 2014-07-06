@@ -36,7 +36,7 @@
 	 check_autoconf_collision/1, schedule_lsp_refresh/0, process_spf/1,
 	 bump_lsp/4,
 	 %% TLV Update routines
-	 update_tlv/3, delete_tlv/3,
+	 update_tlv/4, delete_tlv/4,
 	 %% System Name handling
 	 add_name/2, delete_name/1, lookup_name/1,
 	 %% Handle System ID mapping
@@ -61,6 +61,7 @@
 		frags = [] :: [#lsp_frag{}],
 		max_lsp_lifetime = ?ISIS_MAX_LSP_LIFETIME,
 		pseudonodes :: dict(),  %% PID -> Pseudonode mapping
+		reachability :: dict(),
 		interfaces,             %% Our 'state' per interface
 		redistributed_routes,
 		ignore_list = [],       %% Interfaces to ignore
@@ -197,14 +198,14 @@ check_autoconf_collision(TLVs) ->
 schedule_lsp_refresh() ->
     gen_server:cast(?MODULE, {schedule_lsp_refresh}).
 
-update_tlv(TLV, Node, Level) ->
+update_tlv(TLV, Node, Level, Interface) ->
     %% io:format("Updating TLVs for node ~p ~p~n~p~n~p~n",
     %%  	      [Node, Level, TLV,
     %% 	       element(2, process_info(self(), backtrace))]),
-    gen_server:cast(?MODULE, {update_tlv, TLV, Node, Level}).
+    gen_server:cast(?MODULE, {update_tlv, TLV, Node, Level, Interface}).
 
-delete_tlv(TLV, Node, Level) ->
-    gen_server:cast(?MODULE, {delete_tlv, TLV, Node, Level}).
+delete_tlv(TLV, Node, Level, Interface) ->
+    gen_server:cast(?MODULE, {delete_tlv, TLV, Node, Level, Interface}).
 
 %% Return the areas we're in
 areas() ->
@@ -303,7 +304,8 @@ init(Args) ->
     State = #state{system_ids = dict:new(),
 		   interfaces = Interfaces,
 		   redistributed_routes = Redist,
-		   pseudonodes = dict:new()},
+		   pseudonodes = dict:new(),
+		   reachability = dict:new()},
     StartState = create_initial_frags(extract_args(Args, State)),
     StartState2 = refresh_lsps(StartState),
     zclient:subscribe(self()),
@@ -469,18 +471,12 @@ handle_cast({schedule_lsp_refresh},
     {noreply, State#state{refresh_timer = Timer}};
 handle_cast({schedule_lsp_refresh}, State) ->
     {noreply, State};
-handle_cast({update_tlv, TLV, Node, Level},
-	    #state{frags = Frags} = State) ->
-    NewFrags = isis_protocol:update_tlv(TLV, Node, Level, Frags),
-    schedule_lsp_refresh(),
-    isis_lspdb:schedule_spf(level_1, "Self-originated TLV change"),
-    isis_lspdb:schedule_spf(level_2, "Self-originated TLV change"),
-    {noreply, State#state{frags = NewFrags}};
-handle_cast({delete_tlv, TLV, Node, Level},
-	    #state{frags = Frags} = State) ->
-    NewFrags = isis_protocol:delete_tlv(TLV, Node, Level, Frags),
-    schedule_lsp_refresh(),
-    {noreply, State#state{frags = NewFrags}};
+handle_cast({update_tlv, TLV, Node, Level, Interface}, State) ->
+    update_tlv(TLV, Node, Level, Interface, State);
+
+handle_cast({delete_tlv, TLV, Node, Level, Interface}, State) ->
+    delete_tlv(TLV, Node, Level, Interface, State);
+
 handle_cast({add_sid, SID, Addresses}, #state{system_ids = IDs} = State) ->
     D1 = case dict:find(SID, IDs) of
 	     error -> dict:store(SID, Addresses, IDs);
@@ -767,6 +763,69 @@ create_frag(PN, Level) when PN > 0, PN =< 255 ->
 create_frag(PN, Level) ->
     io:format("Tried to create PN ~p for ~p~n", [PN, Level]),
     error.
+
+update_tlv(#isis_tlv_extended_reachability{reachability =
+					       [#isis_tlv_extended_reachability_detail{
+						   neighbor = D}
+						]} = TLV,
+	   Node, Level, Interface,
+	   #state{frags = Frags, reachability = Reachability} = State) ->
+    {NewD, NewIs} = 
+	case dict:find({Node, Level, D}, Reachability) of
+	    {ok, Is} ->
+		case lists:member(Interface, Is) of
+		    true -> {Reachability, Is};
+		    _ -> {dict:store({Node, Level, D}, [Interface | Is], Reachability),
+			  [Interface | Is]}
+		end;
+	    _ -> {dict:store({Node, Level, D}, [Interface], Reachability), [Interface]}
+	end,
+    lager:debug("Reachability for {~p, ~p, ~p} now via ~p", [Node, Level, D, NewIs]),
+    NewFrags = isis_protocol:update_tlv(TLV, Node, Level, Frags),
+    schedule_lsp_refresh(),
+    isis_lspdb:schedule_spf(level_1, "Self-originated TLV change"),
+    isis_lspdb:schedule_spf(level_2, "Self-originated TLV change"),
+    {noreply, State#state{frags = NewFrags, reachability = NewD}};
+update_tlv(TLV, Node, Level, Interface, #state{frags = Frags} = State) ->
+    NewFrags = isis_protocol:update_tlv(TLV, Node, Level, Frags),
+    schedule_lsp_refresh(),
+    isis_lspdb:schedule_spf(level_1, "Self-originated TLV change"),
+    isis_lspdb:schedule_spf(level_2, "Self-originated TLV change"),
+    {noreply, State#state{frags = NewFrags}}.
+
+delete_tlv(#isis_tlv_extended_reachability{reachability =
+					       [#isis_tlv_extended_reachability_detail{
+						   neighbor = D}
+						]} = TLV,
+	   Node, Level, Interface,
+	   #state{frags = Frags, reachability = Reachability} = State) ->
+    {NewD, NewIs} = 
+	case dict:find({Node, Level, D}, Reachability) of
+	    {ok, Is} -> TIs = lists:filter(fun(TI) -> TI =/= Interface end, Is),
+			case length(TIs) =:= length(Is) of
+			    true -> {Reachability, TIs};
+			    _ -> {dict:store({Node, Level, D}, TIs, Reachability), TIs}
+			end;
+	    _ -> %% Removing something we don't know about?
+		lager:error("Removing {~p, ~p, ~p} for ~s but we have no state!",
+			    [Node, Level, D, Interface]),
+		{Reachability, []}
+	end,
+    lager:debug("Reachability for {~p, ~p, ~p} now via ~p", [Node, Level, D, NewIs]),
+    {NewD2, NewFrags} = 
+	case length(NewIs) =:= 0 of
+	    true ->
+		D2 = dict:erase({Node, Level, D}, NewD),
+		TF = isis_protocol:delete_tlv(TLV, Node, Level, Frags),
+		schedule_lsp_refresh(),
+		{D2, TF};
+	_ -> {NewD, Frags}
+    end,
+    {noreply, State#state{frags = NewFrags, reachability = NewD2}};
+delete_tlv(TLV, Node, Level, Interface, #state{frags = Frags} = State) ->
+    NewFrags = isis_protocol:delete_tlv(TLV, Node, Level, Frags),
+    schedule_lsp_refresh(),
+    {noreply, State#state{frags = NewFrags}}.
 
 set_tlv_hostname(Name, State) ->
     TLV = #isis_tlv_dynamic_hostname{hostname = Name},
@@ -1216,6 +1275,8 @@ set_state([], State) ->
 
 extract_state(lsp_lifetime, State) ->
     State#state.max_lsp_lifetime;
+extract_state(reachability, State) ->
+    State#state.reachability;
 extract_state(_, State) ->
     unknown_item.
 
