@@ -52,6 +52,9 @@ start_link() ->
 %%--------------------------------------------------------------------
 init([]) ->
 
+    <<A:32,B:32,C:32>> = crypto:rand_bytes(12),
+    random:seed({A, B, C}),
+
     RestartStrategy = one_for_one,
     MaxRestarts = 1000,
     MaxSecondsBetweenRestarts = 3600,

@@ -841,8 +841,10 @@ allocate_pseudonode(Pid, Level, #state{frags = Frags} = State) ->
 	end,
     S1 = sets:from_list(lists:filtermap(F, Frags)),
     S2 = sets:from_list(lists:seq(1, 255)),
-    L = sets:to_list(sets:subtract(S2, S1)),
-    NewPN = lists:nth(1, lists:sort(L)),
+    %% Look away now - shuffle the available set of Pseudonodes
+    L = [X||{_,X} <- lists:sort([ {random:uniform(), N} ||
+				    N <- sets:to_list(sets:subtract(S2, S1))])],
+    NewPN = lists:nth(1, L),
     NewDict = dict:store(Pid, {Level, NewPN}, State#state.pseudonodes),
     NewFrag = create_frag(NewPN, Level),
     {NewPN, State#state{pseudonodes = NewDict,
@@ -861,8 +863,14 @@ deallocate_pseudonode(Node, Level, State) ->
     G = fun(_, {L, PN}) when L =:= Level, PN =:= Node -> false;
 	   (_, _) -> false
 	end,
-    NewDict = dict:filter(G, State#state.pseudonodes),
-    {ok, State#state{frags = NewFrags, pseudonodes = NewDict}}.
+    H = fun({Node, Level, _}, _) -> false;
+	   ({_, _, _}, _) -> false
+	end,
+    NewPNDict = dict:filter(G, State#state.pseudonodes),
+    NewRDict = dict:filter(H, State#state.reachability),
+    {ok, State#state{frags = NewFrags,
+		     pseudonodes = NewPNDict,
+		     reachability = NewRDict}}.
 
 %%--------------------------------------------------------------------
 %% @doc
