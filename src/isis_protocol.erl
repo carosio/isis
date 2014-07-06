@@ -1187,8 +1187,15 @@ create_new_frag(TLV, Node, Level, Frags) ->
 -spec decode_lan_iih(binary(), integer()) -> {ok, isis_iih()} | error.
 decode_lan_iih(<<_Res1:6, Circuit_Type:2, Source_ID:6/binary,
 		 Holding_Time:16, PDU_Len:16, _Res2:1, Priority:7,
-		 DIS:7/binary, TLV_Binary/binary>>, PDU_Len) ->
-    case decode_tlvs(TLV_Binary, tlv, fun decode_tlv/3, []) of
+		 DIS:7/binary, TLV_Binary/binary>>, PDU_Len_Received) ->
+    TrueTLVBin =
+	case PDU_Len < PDU_Len_Received of
+	    true -> Bytes = byte_size(TLV_Binary) - (PDU_Len_Received - PDU_Len),
+		    <<TB:Bytes/binary, _/binary>> = TLV_Binary,
+		    TB;
+	    _ -> TLV_Binary
+	end,
+    case decode_tlvs(TrueTLVBin, tlv, fun decode_tlv/3, []) of
 	error -> error;
 	{ok, TLVS} ->
 	    CT = isis_enum:to_atom(istype, Circuit_Type),
@@ -1210,7 +1217,7 @@ decode_common_lsp(<<PDU_Len:16, Lifetime:16,
 		    TLV_Binary/binary>>, PDU_Len_Received) ->
     TrueTLVBin =
 	case PDU_Len < PDU_Len_Received of
-	    true -> Bytes = PDU_Len - ?ISIS_MIN_MSG_SIZE,
+	    true -> Bytes = byte_size(TLV_Binary) - (PDU_Len_Received - PDU_Len),
 		    <<TB:Bytes/binary, _/binary>> = TLV_Binary,
 		    TB;
 	    _ -> TLV_Binary
@@ -1235,8 +1242,15 @@ decode_common_lsp(_, _) -> error.
 
 -spec decode_common_csnp(binary(), integer()) -> {ok, isis_csnp()} | error.
 decode_common_csnp(<<PDU_Len:16, Source:7/binary, Start:8/binary,
-		     End:8/binary, TLV_Binary/binary>>, PDU_Len) ->
-    case decode_tlvs(TLV_Binary, tlv, fun decode_tlv/3, []) of
+		     End:8/binary, TLV_Binary/binary>>, PDU_Len_Received) ->
+    TrueTLVBin =
+	case PDU_Len < PDU_Len_Received of
+	    true -> Bytes = byte_size(TLV_Binary) - (PDU_Len_Received - PDU_Len),
+		    <<TB:Bytes/binary, _/binary>> = TLV_Binary,
+		    TB;
+	    _ -> TLV_Binary
+	end,
+    case decode_tlvs(TrueTLVBin, tlv, fun decode_tlv/3, []) of
 	error -> error;
 	{ok, TLVS} ->
 	    {ok, #isis_csnp{source_id = Source,
@@ -1249,8 +1263,15 @@ decode_common_csnp(_, _) -> error.
 
 -spec decode_common_psnp(binary(), integer()) -> {ok, isis_psnp()} | error.
 decode_common_psnp(<<PDU_Len:16, Source:7/binary,
-		     TLV_Binary/binary>>, PDU_Len) ->
-    case decode_tlvs(TLV_Binary, tlv, fun decode_tlv/3, []) of
+		     TLV_Binary/binary>>, PDU_Len_Received) ->
+    TrueTLVBin =
+	case PDU_Len < PDU_Len_Received of
+	    true -> Bytes = byte_size(TLV_Binary) - (PDU_Len_Received - PDU_Len),
+		    <<TB:Bytes/binary, _/binary>> = TLV_Binary,
+		    TB;
+	    _ -> TLV_Binary
+	end,
+    case decode_tlvs(TrueTLVBin, tlv, fun decode_tlv/3, []) of
 	error -> error;
 	{ok, TLVS} ->
 	    {ok, #isis_psnp{source_id = Source,
