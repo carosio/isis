@@ -131,15 +131,22 @@ up({iih, IIH}, State) ->
 	verify_interface_addresses(IIH, NewState),
     {next_state, NextState, NewState2};
 up({timeout}, State) ->
+    lager:debug("Timeout on adjacency with ~p", 
+		[State#state.neighbor_id]),
     NewState = start_timer(State),
     {next_state, down, NewState};
 up(stop, State) ->
     update_adjacency(down, State),
     {stop, normal, State}.
 
-down({iih, _}, State) ->
-    NewState = start_timer(State),
-    {next_state, init, NewState};
+down({iih, IIH}, State) ->
+    case seen_ourselves(IIH, State) of
+	true ->
+	    NewState = start_timer(State),
+	    {next_state, init, NewState};
+	_ ->
+	    {next_state, down, State}
+    end;
 down({timeout}, State) ->
     cancel_timer(State),
     update_adjacency(down, State),
@@ -216,8 +223,8 @@ handle_info({timeout, _Ref, trigger}, StateName, State) ->
 %% @end
 %%--------------------------------------------------------------------
 terminate(_Reason, _StateName, State) ->
-    io:format("Adjacency with ~p ~p down due to timeout~n",
-	      [State#state.neighbor, State#state.level]),
+    lager:info("Adjacency with ~p ~p down due to timeout",
+	       [State#state.neighbor, State#state.level]),
     ok.
 
 %%--------------------------------------------------------------------
@@ -272,14 +279,15 @@ cancel_timer(State) ->
 %% @end
 %%--------------------------------------------------------------------
 seen_ourselves(#isis_iih{tlv = TLVs}, State) ->
-    R = lists:map(fun(A) -> seen_ourselves_tlv(A, State) end,
+    R = lists:filter(fun(A) -> seen_ourselves_tlv(A, State) end,
 		  TLVs),
+    lager:debug("R: ~p", [R]),
     length(R) > 0.
 
 seen_ourselves_tlv(#isis_tlv_is_neighbors{neighbors = N}, State) ->
-    lists:filter(fun(A) -> A =:= State#state.snpa end, N);
+    length(lists:filter(fun(A) -> A =:= State#state.snpa end, N)) > 0;
 seen_ourselves_tlv(_, _) ->
-    [].
+    false.
 
 -spec update_adjacency(up | down, tuple()) -> atom().
 update_adjacency(Direction, State) ->
