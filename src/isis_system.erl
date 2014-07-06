@@ -1233,13 +1233,8 @@ address_to_string(#isis_address{afi = AFI, address = A, mask = M})
 		    T bsl (128 - M)
 	end,
     address_to_string(AFI, SA);
-address_to_string(#isis_address{afi = AFI, address = A, mask = M}) ->
-    SA = 
-	case AFI of
-	    ipv4 -> A bsl (32 - M);
-	    ipv6 -> A bsl (128 - M)
-	end,
-    address_to_string(AFI, SA).
+address_to_string(#isis_address{afi = AFI, address = A}) ->
+    address_to_string(AFI, A).
 
 %%%===================================================================
 %% should_withdraw_route
