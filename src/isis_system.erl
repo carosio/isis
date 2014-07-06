@@ -1260,7 +1260,7 @@ should_withdraw_route(#zclient_route{
     CheckInt = fun(_, true) -> true;
 		  (#isis_interface{addresses = A}, false) -> lists:foldl(FindAddr, false, A)
 	       end,
-    Result = lists:foldl(CheckInt, false, isis_system:list_interfaces()),
+    Result = not lists:foldl(CheckInt, false, isis_system:list_interfaces()),
     lager:error("should_withdraw_route ~p: ~p", [R, Result]),
     Result;
 should_withdraw_route(#zclient_prefix{
@@ -1272,7 +1272,7 @@ should_withdraw_route(#zclient_prefix{
     FilterFun = fun(#zclient_route{source = undefined}) -> true;
 		   (_) -> false
 		end,
-    Result = length(lists:filter(FilterFun, Possibles)) > 0,
+    Result = not (length(lists:filter(FilterFun, Possibles)) > 0),
     lager:error("should_withdraw_route ~p: ~p", [R, Result]),    
     Result;
 should_withdraw_route(_, _) ->
