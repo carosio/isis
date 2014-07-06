@@ -839,7 +839,18 @@ allocate_pseudonode(Pid, Level, #state{frags = Frags} = State) ->
 		{true, PN};
 	   (_) -> false
 	end,
-    S1 = sets:from_list(lists:filtermap(F, Frags)),
+    S0 = sets:from_list(lists:filtermap(F, Frags)),
+    %% Any lasting PN in our DB?
+    SID = State#state.system_id,
+    InUseFrags = 
+	lists:filtermap(
+	  fun(#isis_lsp{lsp_id = <<LSID:6/binary, LPN:8, _:8>>}) ->
+		  case LSID =:= SID of
+		      true -> {true, LPN};
+		      _ -> false
+		  end
+	  end, ets:tab2list(isis_lspdb:get_db(Level))),
+    S1 = sets:union(S0, sets:from_list(InUseFrags)),
     S2 = sets:from_list(lists:seq(1, 255)),
     %% Look away now - shuffle the available set of Pseudonodes
     L = [X||{_,X} <- lists:sort([ {random:uniform(), N} ||
