@@ -230,6 +230,7 @@ purge(LSP, State) ->
 					last_update = isis_protocol:current_timestamp(),
 					sequence_number = (OldLSP#isis_lsp.sequence_number + 1)},
 	    ets:insert(State#state.db, PurgedLSP),
+	    notify_subscribers(PurgedLSP, State),
 	    {ok, PurgedLSP};
 	_ ->
 	    missing_lsp
