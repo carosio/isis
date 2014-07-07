@@ -25,6 +25,7 @@
 	 %% Neighbors
 	 %%show_adjacencies/0
 	 show_routes/1,
+	 show_nexthops/0,
 	 pp_binary/2
 	]).
 
@@ -68,13 +69,16 @@ show_routes(Level) ->
     SendRoute = 
 	fun({#isis_address{afi = AFI, mask = Mask} = A, _Source},
 	    NHs, Metric, Nodes) ->
-		{NHAfi, {NH, IFIndex}} = 
+		{NHStr, IFIndex} = 
 		    case lists:keyfind(AFI, 1, NHs) of
-			{ipv4, NHA} -> {ipv4, {NHA, no_ifindex}};
-			{ipv6, {NHA, NHI}} -> {ipv6, {NHA, NHI}}
+			{ipv4, NHA} ->
+			    {isis_system:address_to_string(ipv4, NHA),
+			     no_ifindex};
+			{ipv6, {NHA, NHI}} ->
+			    {isis_system:address_to_string(ipv6, NHA), NHI};
+			false -> {"unknown nexthop", no_ifindex}
 		    end,
 		AStr = isis_system:address_to_string(A),
-		NHStr = isis_system:address_to_string(NHAfi, NH),
 		InterfaceStr =
 		    case dict:find(IFIndex, Interfaces) of
 			{ok, Value} -> Value;
@@ -159,6 +163,28 @@ show_interfaces() ->
     I = isis_system:list_interfaces(),
     lists:map(fun show_interfaces_fun/1, I),
     ok.
+
+show_nexthops() ->
+    Interfaces = 
+	dict:from_list(
+	  lists:map(fun(#isis_interface{name = Name, ifindex = IFIndex}) -> {IFIndex, Name} end,
+		    isis_system:list_interfaces())),
+
+    lists:map(fun({SID, Addresses}) ->
+		      io:format("System: ~s (~p)~n", [isis_system:lookup_name(SID), SID]),
+		      lists:map(fun({ipv4, A}) ->
+					io:format("     ~s~n", [isis_system:address_to_string(ipv4, A)]);
+				   ({ipv6, {A, NH}}) ->
+					InterfaceStr =
+					    case dict:find(NH, Interfaces) of
+						{ok, Value} -> Value;
+						_ -> "unknown"
+					    end,
+					io:format("     ~s (~s)~n",
+						  [isis_system:address_to_string(ipv6, A), InterfaceStr])
+				end, Addresses)
+	      end, dict:to_list(isis_system:get_state(system_ids))).
+					   
 		      
 
 %%--------------------------------------------------------------------
@@ -219,6 +245,3 @@ pp_lsp_detail(LSP) ->
 	      end
       end,
       lists:map(fun isis_protocol:pp_tlv/1, LSP#isis_lsp.tlv)).
-
-
-	      
