@@ -160,7 +160,7 @@ process_spf(SPF, State) ->
 			  end,
 		%% FIX zclient to handle multiple nexthops..
 		{Nexthops, IfIndexes} = lists:foldl(
-					  fun({NHAfi,{A, I}}, {TNHs, TIFs})
+					  fun({NHAfi,{A, I, _Pid}}, {TNHs, TIFs})
 						when NHAfi =:= AFI -> {[A | TNHs], [I | TIFs]};
 					     (_, Acc) -> Acc
 					  end, {[], []}, NHs),

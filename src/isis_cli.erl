@@ -71,7 +71,7 @@ show_routes(Level) ->
 	    NHs, Metric, Nodes) ->
 		{NHStr, IFIndex} = 
 		    case lists:keyfind(AFI, 1, NHs) of
-			{AFI, {NHA, NHI}} ->
+			{AFI, {NHA, NHI, _Pid}} ->
 			    {isis_system:address_to_string(AFI, NHA), NHI};
 			false -> {"unknown nexthop", no_ifindex}
 		    end,
@@ -169,18 +169,17 @@ show_nexthops() ->
 
     lists:map(fun({SID, Addresses}) ->
 		      io:format("System: ~s (~p)~n", [isis_system:lookup_name(SID), SID]),
-		      lists:map(fun({ipv4, A}) ->
-					io:format("     ~s~n", [isis_system:address_to_string(ipv4, A)]);
-				   ({ipv6, {A, NH}}) ->
+		      lists:map(fun({AFI, {A, NH, _Pid}}) ->
 					InterfaceStr =
 					    case dict:find(NH, Interfaces) of
 						{ok, Value} -> Value;
 						_ -> "unknown"
 					    end,
 					io:format("     ~s (~s)~n",
-						  [isis_system:address_to_string(ipv6, A), InterfaceStr])
+						  [isis_system:address_to_string(AFI, A), InterfaceStr])
 				end, Addresses)
-	      end, dict:to_list(isis_system:get_state(system_ids))).
+	      end, dict:to_list(isis_system:get_state(system_ids))),
+    ok.
 					   
 		      
 

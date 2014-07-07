@@ -119,7 +119,7 @@ generate_update(Time, Level, SPF, Reason) ->
 	    NHs, Metric, Nodes) ->
 		{NHStr, IFIndex} = 
 		    case lists:keyfind(AFI, 1, NHs) of
-			{AFI, {NHA, NHI}} ->
+			{AFI, {NHA, NHI, _Pid}} ->
 			    {isis_system:address_to_string(AFI, NHA), NHI};
 			false -> {"unknown nexthop", no_ifindex}
 		    end,

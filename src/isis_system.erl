@@ -40,7 +40,7 @@
 	 %% System Name handling
 	 add_name/2, delete_name/1, lookup_name/1,
 	 %% Handle System ID mapping
-	 add_sid_addresses/2, delete_sid_addresses/2,
+	 add_sid_addresses/2, delete_sid_addresses/2, delete_all_sid_addresses/1,
 	 %% pseudonodes
 	 allocate_pseudonode/2, deallocate_pseudonode/2,
 	 %% Misc
@@ -236,6 +236,9 @@ delete_sid_addresses(_, []) ->
     ok;
 delete_sid_addresses(SID, Addresses) ->
     gen_server:cast(?MODULE, {delete_sid, SID, Addresses}).
+
+delete_all_sid_addresses(Pid) ->
+    gen_server:cast(?MODULE, {delete_all_sid, Pid}).
 
 add_name(SID, Name) ->
     gen_server:cast(?MODULE, {add_name, SID, Name}).
@@ -493,6 +496,13 @@ handle_cast({delete_sid, SID, Addresses}, State) ->
 		 dict:store(SID, NewAs, State#state.system_ids)
 	 end,
     {noreply, State#state{system_ids = D1}};
+handle_cast({delete_all_sid, Pid}, #state{system_ids = IDs} = State) ->
+    NewIDs = 
+	dict:filter(fun(_Key, Items) -> length(Items) > 0 end,
+		    dict:map(fun(_Key, Items) ->
+				     lists:filter(fun({_AFI, {_A, _I, DPid}}) -> DPid =/= Pid end, Items)
+			     end, IDs)),
+    {noreply, State#state{system_ids = NewIDs}};
 handle_cast({process_spf, {Level, Time, SPF, Reason}}, State) ->
     Table = 
 	lists:filtermap(
