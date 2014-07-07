@@ -71,11 +71,8 @@ show_routes(Level) ->
 	    NHs, Metric, Nodes) ->
 		{NHStr, IFIndex} = 
 		    case lists:keyfind(AFI, 1, NHs) of
-			{ipv4, NHA} ->
-			    {isis_system:address_to_string(ipv4, NHA),
-			     no_ifindex};
-			{ipv6, {NHA, NHI}} ->
-			    {isis_system:address_to_string(ipv6, NHA), NHI};
+			{AFI, {NHA, NHI}} ->
+			    {isis_system:address_to_string(AFI, NHA), NHI};
 			false -> {"unknown nexthop", no_ifindex}
 		    end,
 		AStr = isis_system:address_to_string(A),

@@ -159,14 +159,15 @@ process_spf(SPF, State) ->
 			      _ -> undefined
 			  end,
 		%% FIX zclient to handle multiple nexthops..
-		case lists:keyfind(AFI, 1, NHs) of
-		    {_, NH} ->
-			{IfIndexes, Nexthops} = 
-			    case AFI of
-				ipv4 -> {[], [NH]};
-				ipv6 -> {NHa, NHi} = NH,
-					{[NHi], [NHa]}
-			    end,
+		{Nexthops, IfIndexes} = lists:foldl(
+					  fun({NHAfi,{A, I}}, {TNHs, TIFs})
+						when NHAfi =:= AFI -> {[A | TNHs], [I | TIFs]};
+					     (_, Acc) -> Acc
+					  end, {[], []}, NHs),
+		case {Nexthops, IfIndexes} of
+		    {[], []} ->
+			Added;
+		    {_, _} ->
 			P = #zclient_prefix{afi = AFI, address = Address, mask_length = Mask},
 			R = #zclient_route{prefix = P, nexthops = Nexthops, ifindexes = IfIndexes,
 					   metric = Metric, source = SourceP},
