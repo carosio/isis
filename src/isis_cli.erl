@@ -23,9 +23,9 @@
 	 %% Interface stuff
 	 show_interfaces/0,
 	 %% Neighbors
-	 %%show_adjacencies/0
 	 show_routes/1,
 	 show_nexthops/0,
+	 show_adjacencies/1,
 	 pp_binary/2
 	]).
 
@@ -181,7 +181,27 @@ show_nexthops() ->
 	      end, dict:to_list(isis_system:get_state(system_ids))),
     ok.
 					   
-		      
+show_adjacencies(Level) ->
+    Is = isis_system:list_interfaces(),
+    lists:map(
+      fun(#isis_interface{name = Name, pid = IP}) when is_pid(IP) ->
+	      io:format("Adjacencies State for Interface ~s~n",
+			[Name]),
+	      LPid = isis_interface:get_level_pid(IP, Level),
+	      case is_pid(LPid) of
+		  true ->
+		      AH = dict:to_list(isis_interface_level:get_state(LPid, adjacencies)),
+		      lists:map(fun({Mac, {Sid, AdjPid}}) ->
+					{_, _, _, [_, _, _, _, Misc]} = sys:get_status(AdjPid),
+					Status = proplists:get_value("StateName", proplists:get_value(data, Misc)),
+					io:format("~s (~p mac ~p): ~p~n",
+						  [isis_system:lookup_name(Sid), Sid, Mac, Status])
+				end, AH);
+		  _ -> ok
+	      end;
+	 (_) -> ok
+      end, Is),
+    ok.
 
 %%--------------------------------------------------------------------
 %% @doc

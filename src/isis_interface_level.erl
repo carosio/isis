@@ -144,6 +144,8 @@ handle_call({get_state, hold_time}, _From, State) ->
     {reply, State#state.hold_time, State};
 handle_call({get_state, metric}, _From, State) ->
     {reply, State#state.metric, State};
+handle_call({get_state, adjacencies}, _From, State) ->
+    {reply, State#state.adj_handlers, State};
 handle_call({get_state, up_adjacencies}, _From, State) ->
     {reply, State#state.up_adjacencies, State};
 handle_call({get_state, priority}, _From, State) ->
@@ -305,7 +307,7 @@ code_change(_OldVsn, State, _Extra) ->
 handle_iih(From, IIH, #state{adj_handlers = Adjs} = State) ->
     {NewAdjs, NewUpAdjs, AdjPid} = 
 	case dict:find(From, Adjs) of
-	    {ok, Pid} ->
+	    {ok, {_SID, Pid}} ->
 		gen_fsm:send_event(Pid, {iih, IIH}),
 		UpAdj2 = 
 		    case dict:find(Pid, State#state.up_adjacencies) of
@@ -323,7 +325,7 @@ handle_iih(From, IIH, #state{adj_handlers = Adjs} = State) ->
 							  {level_pid, self()}]),
 		erlang:monitor(process, NewPid),
 		gen_fsm:send_event(NewPid, {iih, IIH}),
-		{dict:store(From, NewPid, Adjs), State#state.up_adjacencies, NewPid}
+		{dict:store(From, {IIH#isis_iih.source_id, NewPid}, Adjs), State#state.up_adjacencies, NewPid}
 	end,
     AdjState = State#state{adj_handlers = NewAdjs, up_adjacencies = NewUpAdjs},
     lager:debug("DIS Election on ~s: Us: ~B, Them: ~B From > Our: ~p (From: ~p, Our ~p)",
@@ -522,7 +524,7 @@ send_iih(SID, State) ->
 %% @end
 %%--------------------------------------------------------------------
 remove_adj_by_pid(Pid, State) ->
-    F = fun(_, P) when P =:= Pid ->
+    F = fun(_, {_,P}) when P =:= Pid ->
 		false;
 	   (_, _) -> true
 	end,
