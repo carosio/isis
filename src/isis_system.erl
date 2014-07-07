@@ -40,7 +40,7 @@
 	 %% System Name handling
 	 add_name/2, delete_name/1, lookup_name/1,
 	 %% Handle System ID mapping
-	 add_sid_addresses/2, delete_sid_addresses/2, dump_sid_addresses/0,
+	 add_sid_addresses/2, delete_sid_addresses/2,
 	 %% pseudonodes
 	 allocate_pseudonode/2, deallocate_pseudonode/2,
 	 %% Misc
@@ -237,9 +237,6 @@ delete_sid_addresses(_, []) ->
 delete_sid_addresses(SID, Addresses) ->
     gen_server:cast(?MODULE, {delete_sid, SID, Addresses}).
 
-dump_sid_addresses() ->
-    gen_server:call(?MODULE, {dump_sid_addresses}).
-
 add_name(SID, Name) ->
     gen_server:cast(?MODULE, {add_name, SID, Name}).
 delete_name(SID) ->
@@ -428,9 +425,6 @@ handle_call({lsps}, _From, #state{frags = Frags} = State) ->
 
 handle_call({hostname, Name}, _From, State) ->
     {reply, ok, set_tlv_hostname(Name, State)};
-
-handle_call({dump_sid_addresses}, _From, State) ->
-    {reply, State#state.system_ids, State};
 
 handle_call({allocate_pseudonode, Pid, Level}, _From, State) ->
     {PN, NewState} = allocate_pseudonode(Pid, Level, State),
@@ -1291,6 +1285,8 @@ extract_state(lsp_lifetime, State) ->
     State#state.max_lsp_lifetime;
 extract_state(reachability, State) ->
     State#state.reachability;
+extract_state(system_ids, State) ->
+    State#state.system_ids;
 extract_state(_, State) ->
     unknown_item.
 
