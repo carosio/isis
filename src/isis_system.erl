@@ -1231,6 +1231,11 @@ address_to_string(#isis_address{afi = AFI, address = A, mask = M})
 address_to_string(#isis_address{afi = AFI, address = A}) ->
     address_to_string(AFI, A).
 
+address_apply_mask(ipv4, Address, Mask) ->
+    (Address bsr (32 - Mask)) bsl (32 - Mask);
+address_apply_mask(ipv6, Address, Mask) ->
+    (Address bsr (128 - Mask)) bsl (128 - Mask).
+
 %%%===================================================================
 %% should_withdraw_route
 %%
@@ -1247,10 +1252,11 @@ should_withdraw_route(#zclient_route{
 				   address = Address,
 				   mask_length = Mask},
 			source = undefined} = R, _State) ->
+    AddressClean = address_apply_mask(AFI, Address, Mask),
     FindAddr = fun(_, true) -> true;
-		  (#isis_address{afi = AAFI, address = AAddress, mask = AMask}, false)
-		    when AAFI =:= AFI, AAddress =:= Address, AMask =:= Mask -> true;
-		  (_, false) -> false
+		  (#isis_address{afi = AAFI, address = AAddress, mask = AMask}, false) ->
+		    AAddressClean = address_apply_mask(AAFI, AAddress, AMask),
+		    AAFI =:= AFI andalso AAddressClean =:= AddressClean andalso AMask =:= Mask
 	       end,
     CheckInt = fun(_, true) -> true;
 		  (#isis_interface{addresses = A}, false) -> lists:foldl(FindAddr, false, A)
@@ -1262,8 +1268,9 @@ should_withdraw_route(#zclient_prefix{
 			afi = AFI,
 			address = Address,
 			mask_length = Mask} = R, State) ->
+    AddressClean = address_apply_mask(AFI, Address, Mask),
     Possibles = ets:lookup(State#state.redistributed_routes,
-			   #zclient_prefix{afi = AFI, address = Address, mask_length = Mask}),
+			   #zclient_prefix{afi = AFI, address = AddressClean, mask_length = Mask}),
     FilterFun = fun(#zclient_route{source = undefined}) -> true;
 		   (_) -> false
 		end,
