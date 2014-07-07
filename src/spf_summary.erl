@@ -17,7 +17,8 @@
 -export([start_link/0,
 	 subscribe/1, unsubscribe/1,
 	 notify_subscribers/1,
-	 last_run/1]).
+	 last_run/1,
+	 resend_last/0]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -45,6 +46,9 @@ notify_subscribers(Summary) ->
 
 last_run(Level) ->
     gen_server:call(?MODULE, {last_run, Level}).
+
+resend_last() ->
+    gen_server:call(?MODULE, {resend_last}).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -115,6 +119,9 @@ handle_call({last_run, level_2}, _From, #state{last_run_level_2 = LR} = State) -
 handle_call({last_run, _}, _From, State) ->
     {reply, not_run, State};
 
+handle_call({resend_last}, _From, #state{last_run_level_1 = LR} = State) ->
+    notify_subscribers(LR, State#state.subscribers),
+    {reply, ok, State};
 
 handle_call(_Request, _From, State) ->
     Reply = ok,

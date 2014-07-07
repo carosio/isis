@@ -516,6 +516,7 @@ handle_cast({process_spf, {Level, Time, SPF, Reason}}, State) ->
 handle_cast({add_name, SID, Name}, State) ->
     N = #isis_name{system_id = SID, name = Name},
     ets:insert(State#state.names, N),
+    spf_summary:resend_last(),
     {noreply, State};
 handle_cast({delete_name, SID}, State) ->
     N = #isis_name{system_id = SID},
