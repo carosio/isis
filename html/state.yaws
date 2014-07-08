@@ -1,0 +1,31 @@
+<erl>
+%% Be better if we found how to include these in the distribution...
+-record (isis_interface, {
+	   name :: string(),
+	   mac :: binary(),
+	   metric = 10 :: integer(),
+	   flags :: integer(),
+	   enabled = false :: atom(),
+	   pid :: pid(),
+	   addresses = [] :: [],
+	   ifindex :: integer(),
+	   mtu :: integer(),
+	   mtu6 :: integer()
+	  }).
+
+out(Arg) ->
+    %% Strip PIDs from interface list, as file:consult does not like them..
+    Is = lists:map(fun(I) -> I#isis_interface{pid = undefined} end,
+		   isis_system:list_interfaces()),
+    Send = 
+	[{interfaces, Is},
+	 {lspdb_level_1, ets:tab2list(isis_lspdb:get_db(level_1))},
+	 {lspdb_level_2, ets:tab2list(isis_lspdb:get_db(level_2))}
+	],
+    SendBin = erlang:list_to_binary(
+		io_lib:format("~p.~n", [Send])),
+
+    [{header, {"Content-Disposition", "attachment; filename=\"isis.state\""}},
+     {content, "application/octet-stream", SendBin}].
+</erl>
+	

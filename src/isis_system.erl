@@ -44,7 +44,9 @@
 	 %% pseudonodes
 	 allocate_pseudonode/2, deallocate_pseudonode/2,
 	 %% Misc
-	 address_to_string/1, address_to_string/2, dump_config/0]).
+	 address_to_string/1, address_to_string/2, dump_config/0,
+	 %% Debug
+	 load_state/1]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -1343,3 +1345,21 @@ dump_config(State) ->
     S = lists:zip(record_info(fields, state),
 		  tl(erlang:tuple_to_list(State))),
     dump_config_fields(S, State).
+
+%%
+%% Debug stuff
+%%
+load_state(File) ->
+    {ok, [State]} = file:consult(File),
+    
+    %% Insert the loaded LSPs into our database
+    Now = isis_protocol:current_timestamp(),
+    StoreFun = fun(Level, LSP) ->
+		       isis_lspdb:store_lsp(Level, LSP#isis_lsp{last_update = Now})
+	       end,
+    lists:map(fun(#isis_lsp{} = L) -> StoreFun(level_1, L) end,
+	      proplists:get_value(lspdb_level_1, State)),
+    lists:map(fun(#isis_lsp{} = L) -> StoreFun(level_2, L) end,
+	      proplists:get_value(lspdb_level_2, State)).
+    
+		      
