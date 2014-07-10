@@ -1287,7 +1287,7 @@ should_withdraw_route(#zclient_prefix{
 		   (_) -> false
 		end,
     Result = not (length(lists:filter(FilterFun, Possibles)) > 0),
-    lager:error("should_withdraw_route ~p: ~p", [R, Result]),    
+    lager:error("should_withdraw_route ~p: ~p (possibles: ~p)", [R, Result, Possibles]),
     Result;
 should_withdraw_route(_, _) ->
     true.
