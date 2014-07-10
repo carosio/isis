@@ -13,6 +13,7 @@
 
 -include("isis_system.hrl").
 -include("isis_protocol.hrl").
+-include("zclient.hrl").
 
 %% API
 -export([
@@ -23,7 +24,8 @@
 	 %% Interface stuff
 	 show_interfaces/0,
 	 %% Neighbors
-	 show_routes/1,
+	 show_routes/1,     % Output of SPF
+	 show_rib/0,        % What we think we've already sent
 	 show_nexthops/0,
 	 show_adjacencies/1,
 	 pp_binary/2
@@ -96,6 +98,54 @@ show_routes(Level) ->
 	end,
     lists:map(UpdateRib, SPF),
     ok.
+
+show_rib() ->
+    Interfaces = 
+	dict:from_list(
+	  lists:map(fun(#isis_interface{name = Name, ifindex = IFIndex}) -> {IFIndex, Name} end,
+		    isis_system:list_interfaces())),
+    IFIndexToName = fun(I) ->
+			    case dict:find(I, Interfaces) of
+				{ok, Value} -> Value;
+				_ -> "unknown"
+			    end
+		    end,
+    RibDB = isis_rib:get_rib_table(),
+    RE = ets:tab2list(RibDB),
+    PR =
+	fun(#zclient_route{
+	       prefix = #zclient_prefix{afi = AFI,
+					address = A,
+					mask_length = Mask},
+	       source = Source,
+	       nexthops = Nexthops,
+	       ifindexes = IfIndexes,
+	       metric = Metric}) ->
+		
+		NHs = lists:zip(Nexthops, IfIndexes),
+		NHsStr = 
+		    lists:foldl(fun(A, Acc) -> Acc ++ A ++ ", " end, "",
+				lists:map(fun({NH, IF}) -> lists:flatten(io_lib:format("(~s, ~s)",
+										       [isis_system:address_to_string(AFI, NH),
+											IFIndexToName(IF)])) end,
+					  NHs)),
+		FromStr = 
+		    case Source of
+			undefined -> "";
+			#zclient_prefix{afi = SAFI, address = SAddress, mask_length = SMask} ->
+			    lists:flatten(io_lib:format(" from ~s/~b",
+							[isis_system:address_to_string(#isis_address{afi = SAFI,
+												     address = SAddress,
+												     mask = SMask}),
+							 SMask]))
+		    end,
+		io:format("~s/~b (~b) ~s - via ~s~n",
+			  [isis_system:address_to_string(#isis_address{afi = AFI, address = A, mask = Mask}),
+			   Mask, Metric, FromStr, NHsStr])
+	end,
+    lists:map(PR, RE),
+    ok.
+			    
 
 
 pp_binary(B, Sep) ->
