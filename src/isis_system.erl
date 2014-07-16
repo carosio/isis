@@ -1330,11 +1330,11 @@ dump_config_fields([{max_lsp_lifetime, V} | Fs], State)
     io:format("isis_system:set_state([{lsp_lifetime, ~p}]).~n", [V]),
     dump_config_fields(Fs, State);
 dump_config_fields([{interfaces, I} | Fs], State) ->
-    dict:map(fun(Name, #isis_interface{enabled = true, pid = Pid}) ->
-		     io:format("isis_system:add_interface(\"~s\").~n", [Name]),
-		     isis_interface:dump_config(Pid);
-		(_, _) -> false
-	     end, I),
+    lists:map(fun(#isis_interface{enabled = true, pid = Pid, name = Name}) ->
+		      io:format("isis_system:add_interface(\"~s\").~n", [Name]),
+		      isis_interface:dump_config(Pid);
+		 (_) -> ok
+	      end, ets:tab2list(I)),
     dump_config_fields(Fs, State);
 dump_config_fields([_ | Fs], State) ->
     dump_config_fields(Fs, State);
