@@ -69,7 +69,7 @@ get_state(Pid, Item) ->
     gen_server:call(Pid, {get_state, Item}).
 
 set(Pid, Values) ->
-    gen_server:call(Pid, {set, Values}).
+    gen_server:cast(Pid, {set, Values}).
 
 update_adjacency(Pid, Direction, {Neighbor, Mac, Priority}) ->
     gen_server:cast(Pid, {update_adjacency, Direction, self(), {Neighbor, Mac, Priority}}).
@@ -156,10 +156,6 @@ handle_call({get_state, authentication}, _From, State) ->
     {reply, {State#state.authentication_type,
 	     State#state.authentication_key}, State};
 
-handle_call({set, Values}, _From, State) ->
-    NewState = set_values(Values, State),
-    {reply, ok, NewState};
-
 handle_call({clear_neighbors}, _From, State) ->
     dict:map(fun(_, Pid) ->
 		     gen_fsm:send_event(Pid, stop)
@@ -187,6 +183,10 @@ handle_call(Request, _From, State) ->
 %%                                  {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
+handle_cast({set, Values}, State) ->
+    NewState = set_values(Values, State),
+    {noreply, NewState};
+
 handle_cast(stop, #state{adj_handlers = Adjs,
 			 iih_timer = IIHTimerRef,
 			 ssn_timer = SSNTimerRef,
@@ -196,7 +196,8 @@ handle_cast(stop, #state{adj_handlers = Adjs,
     %% Notify our adjacencies
     dict:map(fun(_From, Pid) -> gen_fsm:send_event(Pid, stop) end,
 	     Adjs),
-    {stop, normal, State};
+    NewState = relinquish_dis(State),
+    {stop, normal, NewState};
 
 handle_cast({received, From, PDU}, State) ->
     NewState = 
