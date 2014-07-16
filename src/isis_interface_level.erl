@@ -1239,10 +1239,13 @@ dump_config_state(Name, Level, State) ->
     dump_config_fields(Name, Level, S, State).
 
 get_addresses(State, Family) ->
-    Interface = isis_system:get_interface(State#state.interface_name),
     Matcher = fun(#isis_address{afi = F, address = A})
- 		    when F =:= Family -> {true, A};
+		    when F =:= Family -> {true, A};
  		 (_) -> false
  	      end,
-    lists:filtermap(Matcher,
-		    Interface#isis_interface.addresses).
+    case isis_system:get_interface(State#state.interface_name) of
+	unknown -> [];
+	Interface -> 
+	    lists:filtermap(Matcher,
+			    Interface#isis_interface.addresses)
+    end.
