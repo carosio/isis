@@ -610,20 +610,19 @@ send_route(#zclient_route{prefix =
 	   State) ->
     Type = zclient_enum:to_int(zebra_route, isis),
     Unicast = zclient_enum:to_int(safi, unicast),
-    {IfIndexPresent, NHBin} = 
+    NHBin =
 	case AFI of
 	    ipv4 ->
-		NHT = zclient_enum:to_int(nexthop, ipv4),
+		NHT = zclient_enum:to_int(nexthop, ipv4_ifindex),
 		Count = length(NH),
-		NHB = << <<X:32>> || X <- NH >>,
-		{0, <<Count:8, NHT:8, NHB/binary>>};
+		NHB = << <<NHT:8, G:32, I:32>> || {G, I} <- lists:zip(NH, IFs) >>,
+		<<Count:8, NHB/binary>>;
 	    ipv6 ->
 		NHT1 = zclient_enum:to_int(nexthop, ipv6),
 		NHT2 = zclient_enum:to_int(nexthop, ifindex),
 		HCount  = length(NH) * 2,
-		HB = << <<X/binary>> || X <- NH >>,
-		IB = << <<I:32>> || I <- IFs >>,
-		{1, <<HCount:8, NHT1:8, HB/binary, NHT2:8, IB/binary>>}
+		NHB = << <<NHT1:8, G/binary, NHT2:8, I:32>> || {G,I} <- lists:zip(NH, IFs) >>,
+		<<HCount:8, NHB/binary>>
 	end,
     {SrcPresent, SrcBin} =
 	case Source of
@@ -649,7 +648,7 @@ send_route(#zclient_route{prefix =
           SrcPresent:1,
 	  1:1, %% Metric present
 	  1:1, %% Distance present
-	  IfIndexPresent:1, %% Ifindex present
+	  0:1, %% Ifindex present (unused)
 	  1:1, %% Nexthop present
 	  Unicast:16,
 	  Mask:8,
