@@ -397,7 +397,8 @@ handle_enable_level(level_2, #state{level2 = Level_2} = State) ->
 	    undef ->
 		{ok, Pid} = isis_interface_level:start_link([{level, level_2},
 							     {snpa, State#state.mac},
-							     {interface, State#state.name, self()}]),
+							     {interface, State#state.name, self(),
+							      State#state.mtu}]),
 		Pid;
 	    _ -> Level_2
 	end,
