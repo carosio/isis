@@ -194,8 +194,7 @@ process_spf(SPF, State) ->
 					zclient:add(R)
 				end
 			end,
-			sets:add_element(P, Added);
-		    _ -> Added
+			sets:add_element(P, Added)
 		end
 	end,
     UpdateRib =
@@ -207,5 +206,11 @@ process_spf(SPF, State) ->
     Installed = lists:foldl(UpdateRib, sets:new(), SPF),
     Present = sets:from_list(extract_prefixes(State)),
     Delete = sets:subtract(Present, Installed),
-    lists:map(fun(P) -> zclient:delete(P) end, sets:to_list(Delete)),
+    %% lager:debug("Installing: ~p", [sets:to_list(Installed)]),
+    %% lager:debug("Present: ~p", [sets:to_list(Present)]),
+    %% lager:debug("Withdraw set: ~p", [sets:to_list(Delete)]),
+    lists:map(fun(P) ->
+		      zclient:delete(P),
+		      ets:delete(State#state.rib, P)
+	      end, sets:to_list(Delete)),
     State.
