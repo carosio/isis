@@ -1307,6 +1307,8 @@ extract_state(reachability, State) ->
     State#state.reachability;
 extract_state(system_ids, State) ->
     State#state.system_ids;
+extract_state(hostname, State) ->
+    State#state.hostname;
 extract_state(_, State) ->
     unknown_item.
 
