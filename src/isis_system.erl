@@ -302,7 +302,7 @@ init(Args) ->
     Interfaces = ets:new(isis_interfaces, [named_table, ordered_set,
 					   {keypos, #isis_interface.name}]),
     Redist = ets:new(redistributed_routes, [named_table, bag,
-					    {keypos, #zclient_route.prefix}]),
+					    {keypos, #zclient_route.route}]),
     State = #state{system_ids = dict:new(),
 		   interfaces = Interfaces,
 		   redistributed_routes = Redist,
@@ -1106,8 +1106,10 @@ delete_address(#zclient_prefix{afi = AFI, address = Address, mask_length = Mask}
 	_ -> State
     end.
 
-add_redistribute(#zclient_route{prefix = #zclient_prefix{afi = ipv4, address = Address,
-						     mask_length = Mask},
+add_redistribute(#zclient_route{route =
+				    #zclient_route_key{prefix = #zclient_prefix{afi = ipv4, address = Address,
+										mask_length = Mask},
+						      source = undefined},
 				metric = Metric} = R, State) ->
     ets:insert(State#state.redistributed_routes, R),
     TLV = #isis_tlv_extended_ip_reachability{
@@ -1119,9 +1121,11 @@ add_redistribute(#zclient_route{prefix = #zclient_prefix{afi = ipv4, address = A
 		     up = true,
 		     sub_tlv = []}]},
     update_frags(fun isis_protocol:update_tlv/4, TLV, 0, State);
-add_redistribute(#zclient_route{prefix = #zclient_prefix{afi = ipv6, address = Address,
-						     mask_length = Mask},
-				metric = Metric, source = Source, nexthops = NH} = R, State)
+add_redistribute(#zclient_route{route = #zclient_route_key{
+					   prefix = #zclient_prefix{afi = ipv6, address = Address,
+								    mask_length = Mask},
+					   source = Source},
+				metric = Metric, nexthops = NH} = R, State)
   when is_list(NH) ->
     ets:insert(State#state.redistributed_routes, R),
     MaskLenBytes = erlang:trunc((Mask + 7) / 8),
@@ -1149,8 +1153,10 @@ add_redistribute(R, State) ->
     io:format("Ignoring redistributed route: ~p~n", [R]),
     State.
 
-delete_redistribute(#zclient_route{prefix = #zclient_prefix{afi = ipv4, address = Address,
-							    mask_length = Mask},
+delete_redistribute(#zclient_route{route = #zclient_route_key{
+					      prefix = #zclient_prefix{afi = ipv4, address = Address,
+								       mask_length = Mask},
+					      source = undefined},
 				   metric = Metric} = R, State) ->
     ets:delete_object(State#state.redistributed_routes, R),
     TLV = 
@@ -1165,9 +1171,11 @@ delete_redistribute(#zclient_route{prefix = #zclient_prefix{afi = ipv4, address 
 	true -> update_frags(fun isis_protocol:delete_tlv/4, TLV, 0, State);
 	_ -> State
     end;
-delete_redistribute(#zclient_route{prefix = #zclient_prefix{afi = ipv6, address = Address,
-							    mask_length = Mask},
-				   metric = Metric, source = Source} = R, State) ->
+delete_redistribute(#zclient_route{route = #zclient_route_key{
+					      prefix = #zclient_prefix{afi = ipv6, address = Address,
+								       mask_length = Mask},
+					      source = Source},
+				   metric = Metric} = R, State) ->
     ets:delete_object(State#state.redistributed_routes, R),
     MaskLenBytes = erlang:trunc((Mask + 7) / 8),
     A = Address bsr (128 - Mask),
@@ -1259,11 +1267,13 @@ address_apply_mask(ipv6, Address, Mask) ->
 %% so check the redist bag.
 %%%===================================================================
 should_withdraw_route(#zclient_route{
-			prefix = #zclient_prefix{
-				   afi = AFI,
-				   address = Address,
-				   mask_length = Mask},
-			source = undefined} = R, _State) ->
+			 route = #zclient_route_key{
+				    prefix = #zclient_prefix{
+						afi = AFI,
+						address = Address,
+						mask_length = Mask},
+				    source = undefined}}
+		      = R, _State) ->
     AddressClean = address_apply_mask(AFI, Address, Mask),
     FindAddr = fun(_, true) -> true;
 		  (#isis_address{afi = AAFI, address = AAddress, mask = AMask}, false) ->
@@ -1283,7 +1293,7 @@ should_withdraw_route(#zclient_prefix{
     AddressClean = address_apply_mask(AFI, Address, Mask),
     Possibles = ets:lookup(State#state.redistributed_routes,
 			   #zclient_prefix{afi = AFI, address = AddressClean, mask_length = Mask}),
-    FilterFun = fun(#zclient_route{source = undefined}) -> true;
+    FilterFun = fun(#zclient_route{route = #zclient_route_key{source = undefined}}) -> true;
 		   (_) -> false
 		end,
     Result = not (length(lists:filter(FilterFun, Possibles)) > 0),

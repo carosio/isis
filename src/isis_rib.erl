@@ -67,7 +67,7 @@ get_rib_table() ->
 init([]) ->
     spf_summary:subscribe(self()),
     Table = ets:new(isis_rib, [ordered_set,
-			       {keypos, #zclient_route.prefix}]),
+			       {keypos, #zclient_route.route}]),
     {ok, #state{rib = Table}}.
 
 %%--------------------------------------------------------------------
@@ -149,8 +149,8 @@ code_change(_OldVsn, State, _Extra) ->
 %%% Internal functions
 %%%===================================================================
 extract_prefixes(State) ->
-    F = ets:fun2ms(fun(#zclient_route{prefix = P}) ->
-			   P
+    F = ets:fun2ms(fun(#zclient_route{route = R}) ->
+			   R
 		   end),
     ets:select(State#state.rib, F).
 
@@ -176,8 +176,9 @@ process_spf(SPF, State) ->
 			Added;
 		    {_, _} ->
 			P = #zclient_prefix{afi = AFI, address = Address, mask_length = Mask},
-			R = #zclient_route{prefix = P, nexthops = Nexthops, ifindexes = IfIndexes,
-					   metric = Metric, source = SourceP},
+			K = #zclient_route_key{prefix = P, source = SourceP},
+			R = #zclient_route{route = K, nexthops = Nexthops, ifindexes = IfIndexes,
+					   metric = Metric},
 			case ets:lookup(State#state.rib, R) of
 			    [] ->
 				%% No prior route, so install into the RIB
@@ -194,7 +195,7 @@ process_spf(SPF, State) ->
 					zclient:add(R)
 				end
 			end,
-			sets:add_element(P, Added)
+			sets:add_element(K, Added)
 		end
 	end,
     UpdateRib =
@@ -209,8 +210,8 @@ process_spf(SPF, State) ->
     %% lager:debug("Installing: ~p", [sets:to_list(Installed)]),
     %% lager:debug("Present: ~p", [sets:to_list(Present)]),
     %% lager:debug("Withdraw set: ~p", [sets:to_list(Delete)]),
-    lists:map(fun(P) ->
-		      zclient:delete(P),
-		      ets:delete(State#state.rib, P)
+    lists:map(fun(R) ->
+		      zclient:delete(R),
+		      ets:delete(State#state.rib, R)
 	      end, sets:to_list(Delete)),
     State.

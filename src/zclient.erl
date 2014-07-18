@@ -368,7 +368,7 @@ handle_zclient_cmd(ipv4_route_add,
 		   State) ->
     io:format("Type: ~p, Flags: ~p, Info: ~p~n", [Type, Flags, Info]),
     R = read_ipv4_route(Type, Flags, Info, Mask, R0),
-    NewRoutes = dict:store({R#zclient_route.prefix,
+    NewRoutes = dict:store({R#zclient_route.route,
 			    R#zclient_route.nexthops},
 			   R, State#state.routes),
     update_listeners({redistribute_add, R}, State),
@@ -377,7 +377,7 @@ handle_zclient_cmd(ipv4_route_delete,
 		   <<Type:8, Flags:8, Info:8, Mask:8, R0/binary>>,
 		   State) ->
     R = read_ipv4_route(Type, Flags, Info, Mask, R0),
-    NewRoutes = dict:erase({R#zclient_route.prefix,
+    NewRoutes = dict:erase({R#zclient_route.route,
 			    R#zclient_route.nexthops}, State#state.routes),
     update_listeners({redistribute_delete, R}, State),
     State#state{routes = NewRoutes};
@@ -385,7 +385,7 @@ handle_zclient_cmd(ipv6_route_add,
 		   <<Type:8, Flags:8, Info:8, Mask:8, R0/binary>>,
 		   State) ->
     R = read_ipv6_route(Type, Flags, Info, Mask, R0),
-    NewRoutes = dict:store({R#zclient_route.prefix,
+    NewRoutes = dict:store({R#zclient_route.route,
 			    R#zclient_route.nexthops},
 			   R, State#state.routes),
     update_listeners({redistribute_add, R}, State),
@@ -394,7 +394,7 @@ handle_zclient_cmd(ipv6_route_delete,
 		   <<Type:8, Flags:8, Info:8, Mask:8, R0/binary>>,
 		   State) ->
     R = read_ipv6_route(Type, Flags, Info, Mask, R0),
-    NewRoutes = dict:erase({R#zclient_route.prefix,
+    NewRoutes = dict:erase({R#zclient_route.route,
 			    R#zclient_route.nexthops}, State#state.routes),
     update_listeners({redistribute_delete, R}, State),
     State#state{routes = NewRoutes};
@@ -504,11 +504,11 @@ read_ipv4_route(_Type, _Flags, Info, MaskLen, R0) ->
 	    _ -> {0, R4}
 	end,
     P = #zclient_prefix{afi = ipv4, address = Address, mask_length = MaskLen},
-    R = #zclient_route{prefix = P,
+    K = #zclient_route_key{prefix = P, source = SrcPfx},
+    R = #zclient_route{route = K,
 		       nexthops = Nexthop,
 		       ifindexes = Ifindex,
-		       metric = Metric,
-		       source = SrcPfx}, 
+		       metric = Metric},
     R.
 
 read_ipv6_route(_Type, _Flags, Info, MaskLen, R0) ->
@@ -557,11 +557,11 @@ read_ipv6_route(_Type, _Flags, Info, MaskLen, R0) ->
 	    _ -> {0, R4}
 	end,
     P = #zclient_prefix{afi = ipv6, address = Address, mask_length = MaskLen},
-    R = #zclient_route{prefix = P,
+    K = #zclient_route_key{prefix = P, source = SrcPfx},
+    R = #zclient_route{route = K,
 		       nexthops = Nexthop,
 		       ifindexes = Ifindex,
-		       metric = Metric,
-		       source = SrcPfx},
+		       metric = Metric},
     R.
 
 remove_client(Pid, #state{listeners = Clients} = State) ->
@@ -602,10 +602,11 @@ send_current_state(Pid, #state{router_id = RouterIDs,
 	end,
     lists:map(F, I).
 				  
-send_route(#zclient_route{prefix =
-			      #zclient_prefix{afi = AFI, address = Address,
-					      mask_length = Mask},
-			  source = Source,
+send_route(#zclient_route{route =
+			      #zclient_route_key{prefix = 
+						     #zclient_prefix{afi = AFI, address = Address,
+								     mask_length = Mask},
+						 source = Source},
 			  nexthops = NH, ifindexes = IFs, metric = Metric},
 	   State) ->
     Type = zclient_enum:to_int(zebra_route, isis),

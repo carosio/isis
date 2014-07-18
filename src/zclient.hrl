@@ -34,9 +34,14 @@
 	  }).
 -type zclient_prefix() :: #zclient_prefix{}.
 
+-record (zclient_route_key, {
+	   prefix :: zclient_prefix,
+	   source = undefined :: zclient_prefix() | undefined
+	  }).
+-type zclient_route_key() :: #zclient_route_key{}.
+
 -record (zclient_route, {
-	   prefix :: zclient_prefix(),
-	   source = undefined :: zclient_prefix() | undefined,
+	   route :: zclient_route_key(),
 	   nexthops = [] :: [integer()],
 	   ifindexes = [] :: [integer()],
 	   metric :: integer()

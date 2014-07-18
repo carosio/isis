@@ -114,10 +114,11 @@ show_rib() ->
     RE = ets:tab2list(RibDB),
     PR =
 	fun(#zclient_route{
-	       prefix = #zclient_prefix{afi = AFI,
-					address = A,
-					mask_length = Mask},
-	       source = Source,
+	       route = #zclient_route_key{
+			  prefix = #zclient_prefix{afi = AFI,
+						   address = A,
+						   mask_length = Mask},
+			  source = Source},
 	       nexthops = Nexthops,
 	       ifindexes = IfIndexes,
 	       metric = Metric}) ->
