@@ -65,12 +65,14 @@ unsubscribe(Pid) ->
 
 add(#zclient_route{} = Route) ->
     gen_server:call(?MODULE, {send_route, Route});
-add(_) ->
+add(Unknown) ->
+    lager:error("zclient:add called with unknown argument ~p", [Unknown]),
     unknown.
 
-delete(#zclient_prefix{} = Prefix) ->
-    gen_server:call(?MODULE, {delete_route, Prefix});
-delete(_) ->
+delete(#zclient_route_key{} = K) ->
+    gen_server:call(?MODULE, {delete_route, K});
+delete(Unknown) ->
+    lager:error("zclient:delete called with unknown argument ~p", [Unknown]),
     unknown.
 
 request_redist(Type) ->
