@@ -69,8 +69,13 @@ function connectToSPFFeed() {
             Rib = "";
             if (NewState.rib[0] != undefined) {
 		for(var i = 0; i < NewState.rib[0].length; i++) {
+		    if (NewState.rib[0][i].from.length > 0) {
+			 From = " source " + NewState.rib[0][i].from
+		    } else {
+			 From = ""
+		    }
                     Rib += NewState.rib[0][i].address + "/"
-			+ NewState.rib[0][i].mask + " -> "
+			+ NewState.rib[0][i].mask + From + " -> "
   			+ NewState.rib[0][i].nexthop + " via "
 			+ NewState.rib[0][i].interface + " ("
 			+ NewState.rib[0][i].nodepath + ")<BR>";

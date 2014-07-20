@@ -115,7 +115,7 @@ generate_update(Time, Level, SPF, Reason) ->
 		      end, dict:to_list(SPFLinks)),
 
     SendRoute = 
-	fun({#isis_address{afi = AFI, mask = Mask} = A, _Source},
+	fun({#isis_address{afi = AFI, mask = Mask} = A, Source},
 	    NHs, Metric, Nodes) ->
 		{NHStr, IFIndex} = 
 		    case lists:keyfind(AFI, 1, NHs) of
@@ -129,11 +129,22 @@ generate_update(Time, Level, SPF, Reason) ->
 			{ok, Value} -> Value;
 			_ -> "unknown"
 		    end,
+		FromStr = 
+		    case Source of
+			undefined -> "";
+			#isis_address{afi = SAFI, address = SAddress, mask = SMask} ->
+			    lists:flatten(io_lib:format("~s/~b",
+							[isis_system:address_to_string(#isis_address{afi = SAFI,
+												     address = SAddress,
+												     mask = SMask}),
+							 SMask]))
+		    end,
 		NodesStrList = lists:map(fun(N) -> isis_system:lookup_name(N) end, Nodes),
 		NodesStr = string:join(NodesStrList, ", "),
 		{true, {struct, [{"afi", atom_to_list(AFI)},
 				 {"address", AStr},
 				 {"mask", Mask},
+				 {"from", FromStr},
 				 {"nexthop", NHStr},
 				 {"interface", InterfaceStr},
 				 {"nodepath", NodesStr}]}};
