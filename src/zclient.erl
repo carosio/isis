@@ -666,8 +666,11 @@ send_route(#zclient_route{route =
     Message = create_header(MessageType, RouteMessage),
     send_message(Message, State).
 
-delete_route(#zclient_prefix{afi = AFI, address = Address,
-			     mask_length = Mask},
+delete_route(#zclient_route_key{
+		prefix = 
+		    #zclient_prefix{afi = AFI, address = Address,
+				    mask_length = Mask},
+		source = Source},
 	     State) ->
     Type = zclient_enum:to_int(zebra_route, isis),
     Unicast = zclient_enum:to_int(safi, unicast),
@@ -681,13 +684,23 @@ delete_route(#zclient_prefix{afi = AFI, address = Address,
 				<<A:ASize>>
 		       end
 	   end,
+    {SourcePresent, SourceBin} = 
+	case Source of
+	    undefined -> {0, <<>>};
+	    #zclient_prefix{address = SAddress,
+			    mask_length = SMask} ->
+		{1, <<SMask:8, SAddress/binary>>}
+	end,
     RouteMessage = 
 	<<Type:8,
-	  0:8, %% 'Flags'
+	  0:3,
+	  SourcePresent:1,
+	  0:4,
 	  0:8, %% unsed
 	  Unicast:16,
 	  Mask:8,
-	  ABin/binary>>,
+	  ABin/binary,
+	  SourceBin/binary>>,
     MessageType
 	= case AFI of
 	      ipv4 -> ipv4_route_delete;
