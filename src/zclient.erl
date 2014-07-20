@@ -69,8 +69,8 @@ add(Unknown) ->
     lager:error("zclient:add called with unknown argument ~p", [Unknown]),
     unknown.
 
-delete(#zclient_route_key{} = K) ->
-    gen_server:call(?MODULE, {delete_route, K});
+delete(#zclient_route_key{} = RouteKey) ->
+    gen_server:call(?MODULE, {delete_route, RouteKey});
 delete(Unknown) ->
     lager:error("zclient:delete called with unknown argument ~p", [Unknown]),
     unknown.
@@ -136,8 +136,8 @@ handle_call({unsubscribe, Pid}, _From, State) ->
 handle_call({send_route, Route}, _From, State) ->
     send_route(Route, State),
     {reply, ok, State};
-handle_call({delete_route, Prefix}, _From, State) ->
-    delete_route(Prefix, State),
+handle_call({delete_route, RouteKey}, _From, State) ->
+    delete_route(RouteKey, State),
     {reply, ok, State};
 handle_call({request_redist, Type}, _From, State) ->
     request_redistribution(Type, State),
@@ -695,10 +695,10 @@ delete_route(#zclient_route_key{
 	end,
     RouteMessage = 
 	<<Type:8,
+	  0:8, %% Flags(unused)
 	  0:3,
 	  SourcePresent:1,
 	  0:4,
-	  0:8, %% unsed
 	  Unicast:16,
 	  Mask:8,
 	  ABin/binary,
