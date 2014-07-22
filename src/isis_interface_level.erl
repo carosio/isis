@@ -157,7 +157,7 @@ handle_call({get_state, authentication}, _From, State) ->
 	     State#state.authentication_key}, State};
 
 handle_call({clear_neighbors}, _From, State) ->
-    dict:map(fun(_, Pid) ->
+    dict:map(fun(_, {_, Pid}) ->
 		     gen_fsm:send_event(Pid, stop)
 	     end,
 	     State#state.adj_handlers),
@@ -194,7 +194,7 @@ handle_cast(stop, #state{adj_handlers = Adjs,
     %% Cancel our timer
     cancel_timers([IIHTimerRef, SSNTimerRef, DISTimerRef]),
     %% Notify our adjacencies
-    dict:map(fun(_From, Pid) -> gen_fsm:send_event(Pid, stop) end,
+    dict:map(fun(_From, {_, Pid}) -> gen_fsm:send_event(Pid, stop) end,
 	     Adjs),
     NewState = relinquish_dis(State),
     {stop, normal, NewState};
