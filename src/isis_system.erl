@@ -1231,9 +1231,12 @@ delete_from_list(Item, List) ->
 address_to_string(ipv4, Address) ->
     inet_parse:ntoa(
       erlang:list_to_tuple([X || <<X:8>> <= <<Address:32>>]));
-address_to_string(ipv6, Address) when is_binary(Address) ->
+address_to_string(ipv6, Address) when is_bitstring(Address) ->
+    BitLen = bit_size(Address),
+    <<A1:BitLen>> = Address,
+    A2 = A1 bsl (128 - BitLen),
     inet_parse:ntoa(
-      erlang:list_to_tuple([X || <<X:16>> <= Address]));
+      erlang:list_to_tuple([X || <<X:16>> <= <<A2:128>>]));
 address_to_string(ipv6, Address) when is_integer(Address) ->
     inet_parse:ntoa(
       erlang:list_to_tuple([X || <<X:16>> <= <<Address:128>>])).
