@@ -19,7 +19,8 @@
 	 %% Subscription to updates...
 	 subscribe/1, unsubscribe/1,
 	 %% Sending information to the RIB
-	 add/1, delete/1, request_redist/1]).
+	 add/1, delete/1, request_redist/1,
+	 get_redistributed_routes/0]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -77,6 +78,9 @@ delete(Unknown) ->
 
 request_redist(Type) ->
     gen_server:call(?MODULE, {request_redist, Type}).
+
+get_redistributed_routes() ->
+    gen_server:call(?MODULE, {get_redistributed_routes}).
 
 %%--------------------------------------------------------------------
 %% @private
@@ -142,6 +146,8 @@ handle_call({delete_route, RouteKey}, _From, State) ->
 handle_call({request_redist, Type}, _From, State) ->
     request_redistribution(Type, State),
     {reply, ok, State};
+handle_call({get_redistributed_routes}, _From, State) ->
+    {reply, State#state.routes, State};
 handle_call(_Request, _From, State) ->
     Reply = ok,
     {reply, Reply, State}.

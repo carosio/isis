@@ -55,7 +55,8 @@ out(Arg) ->
 	 {rib, ets:tab2list(isis_rib:get_rib_table())},
 	 {spf_level_1, format_last_run(spf_summary:last_run(level_1))},
 	 {spf_level_2, format_last_run(spf_summary:last_run(level_1))},
-	 {frags, isis_system:lsps()}
+	 {frags, isis_system:lsps()},
+	 {redistributed_routes, dict:to_list(zclient:get_redistributed_routes())}
 	],
     SendBin = erlang:list_to_binary(
 		io_lib:format("~p.~n", [Send])),
