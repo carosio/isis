@@ -48,12 +48,14 @@ out(Arg) ->
     Is = lists:map(fun(I) -> I#isis_interface{pid = undefined} end,
 		   isis_system:list_interfaces()),
     Send = 
-	[{interfaces, Is},
+	[{system_id, isis_system:system_id()},
+	 {interfaces, Is},
 	 {lspdb_level_1, fixup_lsps(ets:tab2list(isis_lspdb:get_db(level_1)))},
 	 {lspdb_level_2, fixup_lsps(ets:tab2list(isis_lspdb:get_db(level_2)))},
 	 {rib, ets:tab2list(isis_rib:get_rib_table())},
 	 {spf_level_1, format_last_run(spf_summary:last_run(level_1))},
-	 {spf_level_2, format_last_run(spf_summary:last_run(level_1))}
+	 {spf_level_2, format_last_run(spf_summary:last_run(level_1))},
+	 {frags, isis_system:lsps()}
 	],
     SendBin = erlang:list_to_binary(
 		io_lib:format("~p.~n", [Send])),
