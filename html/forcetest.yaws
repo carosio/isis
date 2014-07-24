@@ -93,10 +93,12 @@ function connectToSPFFeed() {
 		if (!nodeLookup[link.source]) {
 		    var chosenColour;
 		    if (link.source_name.slice(-1) == ">") {
-			chosenColour = parseInt(link.source_name.slice(-3,-2)) * 10;
+			chosenColour = parseInt(link.source_name.slice(link.source_name.lastIndexOf(',')+1,-2),10);
 		    } else {
-			chosenColour = link.source_name.slice(-1) * 10;
+			chosenColour = parseInt(link.source_name.slice(-2),16);
 		    }
+		if (chosenColour != 0)
+			chosenColour = 1;
                     nodes.push({id: link.source,
 				colour: chosenColour});
                     nodeLookup[link.source] = nodes[nodes.length-1];
@@ -118,10 +120,12 @@ function connectToSPFFeed() {
 		if (!nodeLookup[link.target]) {
 		    var chosenColour;
 		    if (link.target_name.slice(-1) == ">") {
-			chosenColour = parseInt(link.target_name.slice(-3,-2)) * 10;
+			chosenColour = parseInt(link.target_name.slice(link.target_name.lastIndexOf(',')+1,-2),10);
 		    } else {
-			chosenColour = link.target_name.slice(-1) * 10;
+			chosenColour = parseInt(link.target_name.slice(-2),16);
 		    }
+		if (chosenColour != 0)
+			chosenColour = 1;
                     nodes.push({id: link.target,
 				colour: chosenColour});
                     nodeLookup[link.target] = nodes[nodes.length-1];
@@ -274,7 +278,7 @@ function start() {
     
     node = node.data(force.nodes(), function(d) { return d.id;});
     node.enter().append("g").attr("class", "node").call(force.drag)
-	.append("circle").attr("r", 5).style("fill", function(d){ return color(d.colour)});
+	.append("circle").attr("r", function(d){ return (d.colour == 0) ? 8 : 5}).style("fill", function(d){ return color(d.colour)});
     node.exit().remove();
     
     label = label.data(force.nodes(), function(d) { return d.id; });
