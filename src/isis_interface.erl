@@ -34,7 +34,7 @@
 	 terminate/2, code_change/3]).
 
 -define(SERVER, ?MODULE).
--define(ETH_P_802_2, 16#0400).
+-define(ETH_P_802_2, 16#0004).
 
 -record(state, {
 	  name,            %% Interface name
@@ -435,19 +435,31 @@ set_values([], State) ->
 %%--------------------------------------------------------------------
 %% @private
 %% @doc
+%%
+%%
+%%
+%% @end
+%%--------------------------------------------------------------------
+-spec htons(integer()) -> integer().
+htons(I) ->
+	<<HI:16/native>> = <<I:16>>,
+	HI.
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
 %% 
 %%
 %%
 %% @end
 %%--------------------------------------------------------------------
-
 -spec create_port(string()) -> {integer(), binary(), integer(), integer(), port()} | error.
 create_port(Name) ->
     {ok, S} = procket:open(0,
 			   [{progname, "sudo /usr/local/bin/procket"},
 			    {family, packet},
 			    {type, raw},
-			    {protocol, ?ETH_P_802_2},
+			    {protocol, htons(?ETH_P_802_2)},
 			    {interface, Name},
 			    {isis}]),
     {Ifindex, Mac, MTU} = interface_details(S, Name),
@@ -491,7 +503,7 @@ send_packet(Pdu, Pdu_Size, Level, State) ->
 -spec create_sockaddr_ll(integer()) -> binary().
 create_sockaddr_ll(Ifindex) ->
     Family = procket:family(packet),
-    <<Family:16/native, ?ETH_P_802_2:16/native, Ifindex:32/native,
+    <<Family:16/native, ?ETH_P_802_2:16, Ifindex:32/native,
       0:16, 0:8, 0:8, 0:8/unit:8>>.
 
 %%
