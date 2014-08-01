@@ -510,7 +510,7 @@ interface_details(Socket, Name) ->
 					       ?SIOCGIFMTU, Req),
 	    <<_:16/binary, I:32/native, _/binary>> = Ifindex_Response,
 	    <<_:18/binary, Mac:6/binary, _/binary>> = Mac_Response,
-	    <<_:16/binary, MTU:16/native, _/binary>> = MTU_Response,
+	    <<_:16/binary, MTU:32/native, _/binary>> = MTU_Response,
 	    %% Req2 = <<N/binary, 0:(8*(16 - byte_size(N))), I:16/native,
 	    %%   	     16#01, 16#80, 16#c2, 0, 0, 16#14, 0:128>>,
 	    %% Req3 = <<N/binary, 0:(8*(16 - byte_size(N))), I:16/native,
