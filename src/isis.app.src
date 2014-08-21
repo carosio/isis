@@ -8,7 +8,8 @@
 		  stdlib,
 		  crypto,
 		  procket,
-		  lager
+		  lager,
+		  gen_netlink
 		  ]},
   {mod, { isis_app, []}},
   {env, []}
