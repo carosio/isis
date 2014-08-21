@@ -12,7 +12,6 @@
 
 -include("isis_system.hrl").
 -include("isis_protocol.hrl").
--include("zclient.hrl").
 
 %% API
 -export([start_link/1,
@@ -70,7 +69,8 @@
 		system_ids :: dict(),   %% SID -> Neighbor address
 		refresh_timer = undef,
 		periodic_refresh,
-		names}).
+		names,
+		rib_api :: atom()}).
 
 %%%===================================================================
 %%% API
@@ -302,7 +302,7 @@ init(Args) ->
     Interfaces = ets:new(isis_interfaces, [named_table, ordered_set,
 					   {keypos, #isis_interface.name}]),
     Redist = ets:new(redistributed_routes, [named_table, bag,
-					    {keypos, #zclient_route.route}]),
+					    {keypos, #isis_route.route}]),
     State = #state{system_ids = dict:new(),
 		   interfaces = Interfaces,
 		   redistributed_routes = Redist,
@@ -310,7 +310,10 @@ init(Args) ->
 		   reachability = dict:new()},
     StartState = create_initial_frags(extract_args(Args, State)),
     StartState2 = refresh_lsps(StartState),
-    zclient:subscribe(self()),
+    case application:get_env(isis, rib_client) of
+	{ok, Rib} -> Rib:subscribe(self());
+	_ -> lager:error("No rib client specified, not subscribing..")
+    end,
     %% Periodically check if any of our LSPs need refreshing due to ageout
     Timer = erlang:start_timer(isis_protocol:jitter(?DEFAULT_AGEOUT_CHECK, 10) * 1000,
 			       self(), lsp_ageout),
@@ -627,11 +630,14 @@ extract_args([], State) ->
 do_enable_interface(#isis_interface{pid = Pid}, State)  when is_pid(Pid) ->
     State;
 do_enable_interface(#isis_interface{name = Name} = Interface, State) ->
-    {ok, InterfacePid} = isis_interface:start_link([{name, Name}]),
-    erlang:monitor(process, InterfacePid),
-    ets:insert(State#state.interfaces,
-	       Interface#isis_interface{pid = InterfacePid,
-					enabled = true}),
+    case isis_interface:start_link([{name, Name}]) of
+	{ok, InterfacePid} ->
+	    erlang:monitor(process, InterfacePid),
+	    ets:insert(State#state.interfaces,
+		       Interface#isis_interface{pid = InterfacePid,
+						enabled = true});
+	_ -> no_process
+    end,
     State.
 
 %%%===================================================================
@@ -958,7 +964,7 @@ do_bump_lsp(Level, Node, Frag, SeqNo, State) ->
 %%%===================================================================
 %%% Add interface
 %%%===================================================================
-add_interface(#zclient_interface{
+add_interface(#isis_interface{
 		 name = Name, ifindex = Ifindex, flags = Flags,
 		 mtu = MTU, mtu6 = MTU6, mac = Mac}, State) ->
     {I, Autoconf} = 
@@ -1069,8 +1075,8 @@ update_address_tlv(Updater, ipv6, Address, Mask, State) ->
 %%%===================================================================
 %%% Add address
 %%%===================================================================
-add_address(#zclient_prefix{afi = AFI, address = Address,
-			    mask_length = Mask},
+add_address(#isis_prefix{afi = AFI, address = Address,
+			 mask_length = Mask},
 	    Name, State) ->
     I = case ets:lookup(State#state.interfaces, Name) of
 	    [Intf] -> Intf;
@@ -1088,7 +1094,7 @@ add_address(#zclient_prefix{afi = AFI, address = Address,
 	end,
     NewState.
 
-delete_address(#zclient_prefix{afi = AFI, address = Address, mask_length = Mask} = R,
+delete_address(#isis_prefix{afi = AFI, address = Address, mask_length = Mask} = R,
 	       Name, State) ->
     A = #isis_address{afi = AFI, address = Address, mask = Mask},
     case ets:lookup(State#state.interfaces, Name) of
@@ -1106,9 +1112,9 @@ delete_address(#zclient_prefix{afi = AFI, address = Address, mask_length = Mask}
 	_ -> State
     end.
 
-add_redistribute(#zclient_route{route =
-				    #zclient_route_key{prefix = #zclient_prefix{afi = ipv4, address = Address,
-										mask_length = Mask},
+add_redistribute(#isis_route{route =
+				 #isis_route_key{prefix = #isis_prefix{afi = ipv4, address = Address,
+								       mask_length = Mask},
 						      source = undefined},
 				metric = Metric} = R, State) ->
     ets:insert(State#state.redistributed_routes, R),
@@ -1121,18 +1127,18 @@ add_redistribute(#zclient_route{route =
 		     up = true,
 		     sub_tlv = []}]},
     update_frags(fun isis_protocol:update_tlv/4, TLV, 0, State);
-add_redistribute(#zclient_route{route = #zclient_route_key{
-					   prefix = #zclient_prefix{afi = ipv6, address = Address,
-								    mask_length = Mask},
-					   source = Source},
-				metric = Metric, nexthops = NH} = R, State)
+add_redistribute(#isis_route{route = #isis_route_key{
+					prefix = #isis_prefix{afi = ipv6, address = Address,
+							      mask_length = Mask},
+					source = Source},
+			     metric = Metric, nexthops = NH} = R, State)
   when is_list(NH) ->
     ets:insert(State#state.redistributed_routes, R),
     MaskLenBytes = erlang:trunc((Mask + 7) / 8),
     A = Address bsr (128 - Mask),
     SubTLV =
 	case Source of
-	    #zclient_prefix{afi = ipv6,
+	    #isis_prefix{afi = ipv6,
 			    address = S,
 			    mask_length = M} ->
 		[#isis_subtlv_srcdst{prefix = S, prefix_length = M}];
@@ -1153,11 +1159,11 @@ add_redistribute(R, State) ->
     io:format("Ignoring redistributed route: ~p~n", [R]),
     State.
 
-delete_redistribute(#zclient_route{route = #zclient_route_key{
-					      prefix = #zclient_prefix{afi = ipv4, address = Address,
-								       mask_length = Mask},
-					      source = undefined},
-				   metric = Metric} = R, State) ->
+delete_redistribute(#isis_route{route = #isis_route_key{
+					   prefix = #isis_prefix{afi = ipv4, address = Address,
+								 mask_length = Mask},
+					   source = undefined},
+				metric = Metric} = R, State) ->
     ets:delete_object(State#state.redistributed_routes, R),
     TLV = 
      	#isis_tlv_extended_ip_reachability{
@@ -1171,19 +1177,19 @@ delete_redistribute(#zclient_route{route = #zclient_route_key{
 	true -> update_frags(fun isis_protocol:delete_tlv/4, TLV, 0, State);
 	_ -> State
     end;
-delete_redistribute(#zclient_route{route = #zclient_route_key{
-					      prefix = #zclient_prefix{afi = ipv6, address = Address,
-								       mask_length = Mask},
-					      source = Source},
-				   metric = Metric} = R, State) ->
+delete_redistribute(#isis_route{route = #isis_route_key{
+					   prefix = #isis_prefix{afi = ipv6, address = Address,
+								 mask_length = Mask},
+					   source = Source},
+				metric = Metric} = R, State) ->
     ets:delete_object(State#state.redistributed_routes, R),
     MaskLenBytes = erlang:trunc((Mask + 7) / 8),
     A = Address bsr (128 - Mask),
     SubTLV =
 	case Source of
-	    #zclient_prefix{afi = ipv6,
-			    address = S,
-			    mask_length = M} ->
+	    #isis_prefix{afi = ipv6,
+			 address = S,
+			 mask_length = M} ->
 		[#isis_subtlv_srcdst{prefix = S, prefix_length = M}];
 	    _ -> []
 	end,
@@ -1200,11 +1206,11 @@ delete_redistribute(#zclient_route{route = #zclient_route_key{
 	_ -> State
     end.
 
-update_router_id(#zclient_prefix{afi = ipv4, address = A},
+update_router_id(#isis_prefix{afi = ipv4, address = A},
 		 State) ->
     TLV = #isis_tlv_te_router_id{router_id = A},
     update_frags(fun isis_protocol:update_tlv/4, TLV, 0, State);
-update_router_id(#zclient_prefix{afi = ipv6, address = _A},
+update_router_id(#isis_prefix{afi = ipv6, address = _A},
 		 State) ->
     %% Not sure what to do with v6 router-ids just yet..
     State.
@@ -1264,14 +1270,14 @@ address_apply_mask(ipv6, Address, Mask) ->
 %%
 %% We should only remove the prefix from our TLVs if its not in either
 %% the redist list, or the interface address lists.
-%% In the case of #zclient_route{}, its been withdrawn from redist, so
+%% In the case of #isis_route{}, its been withdrawn from redist, so
 %% check the connected set.
-%% In the case of a #zclient_prefix{}, its a connected address being withdrawn
+%% In the case of a #isis_prefix{}, its a connected address being withdrawn
 %% so check the redist bag.
 %%%===================================================================
-should_withdraw_route(#zclient_route{
-			 route = #zclient_route_key{
-				    prefix = #zclient_prefix{
+should_withdraw_route(#isis_route{
+			 route = #isis_route_key{
+				    prefix = #isis_prefix{
 						afi = AFI,
 						address = Address,
 						mask_length = Mask},
@@ -1289,14 +1295,14 @@ should_withdraw_route(#zclient_route{
     Result = not lists:foldl(CheckInt, false, isis_system:list_interfaces()),
     lager:error("should_withdraw_route ~p: ~p", [R, Result]),
     Result;
-should_withdraw_route(#zclient_prefix{
-			afi = AFI,
-			address = Address,
-			mask_length = Mask} = R, State) ->
+should_withdraw_route(#isis_prefix{
+			 afi = AFI,
+			 address = Address,
+			 mask_length = Mask} = R, State) ->
     AddressClean = address_apply_mask(AFI, Address, Mask),
     Possibles = ets:lookup(State#state.redistributed_routes,
-			   #zclient_prefix{afi = AFI, address = AddressClean, mask_length = Mask}),
-    FilterFun = fun(#zclient_route{route = #zclient_route_key{source = undefined}}) -> true;
+			   #isis_prefix{afi = AFI, address = AddressClean, mask_length = Mask}),
+    FilterFun = fun(#isis_route{route = #isis_route_key{source = undefined}}) -> true;
 		   (_) -> false
 		end,
     Result = not (length(lists:filter(FilterFun, Possibles)) > 0),

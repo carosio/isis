@@ -14,7 +14,6 @@
 
 -behaviour(gen_server).
 
--include("zclient.hrl").
 -include("isis_system.hrl").
 -include_lib("stdlib/include/ms_transform.hrl").
 
@@ -30,7 +29,8 @@
 -define(SERVER, ?MODULE).
 
 -record(state, {
-	  rib
+	  rib,
+	  rib_api :: atom()
 	 }).
 
 %%%===================================================================
@@ -67,8 +67,9 @@ get_rib_table() ->
 init([]) ->
     spf_summary:subscribe(self()),
     Table = ets:new(isis_rib, [ordered_set,
-			       {keypos, #zclient_route.route}]),
-    {ok, #state{rib = Table}}.
+			       {keypos, #isis_route.route}]),
+    {ok, Rib} = application:get_env(isis, rib_client),
+    {ok, #state{rib = Table, rib_api = Rib}}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -149,19 +150,19 @@ code_change(_OldVsn, State, _Extra) ->
 %%% Internal functions
 %%%===================================================================
 extract_prefixes(State) ->
-    F = ets:fun2ms(fun(#zclient_route{route = R}) ->
+    F = ets:fun2ms(fun(#isis_route{route = R}) ->
 			   R
 		   end),
     ets:select(State#state.rib, F).
 
-process_spf(SPF, State) ->
+process_spf(SPF, #state{rib_api = RibApi} = State) ->
     SendRoute = 
 	fun({#isis_address{afi = AFI, address = Address, mask = Mask}, Source},
 	    NHs, Metric, Added) ->
 		SourceP = case Source of
 			      #isis_address{afi = SAFI, address = SAddress,
 					    mask = SMask} ->
-				  #zclient_prefix{afi = SAFI, address = SAddress,
+				  #isis_prefix{afi = SAFI, address = SAddress,
 						  mask_length = SMask};
 			      _ -> undefined
 			  end,
@@ -175,15 +176,15 @@ process_spf(SPF, State) ->
 		    {[], []} ->
 			Added;
 		    {_, _} ->
-			P = #zclient_prefix{afi = AFI, address = Address, mask_length = Mask},
-			K = #zclient_route_key{prefix = P, source = SourceP},
-			R = #zclient_route{route = K, nexthops = Nexthops, ifindexes = IfIndexes,
+			P = #isis_prefix{afi = AFI, address = Address, mask_length = Mask},
+			K = #isis_route_key{prefix = P, source = SourceP},
+			R = #isis_route{route = K, nexthops = Nexthops, ifindexes = IfIndexes,
 					   metric = Metric},
 			case ets:lookup(State#state.rib, R) of
 			    [] ->
 				%% No prior route, so install into the RIB
 				ets:insert(State#state.rib, R),
-				zclient:add(R);
+				RibApi:add(R);
 			    [C] ->
 				case C =:= R of
 				    true ->
@@ -192,7 +193,7 @@ process_spf(SPF, State) ->
 				    _ ->
 					%% Prior route is different
 					ets:insert(State#state.rib, R),
-					zclient:add(R)
+					RibApi:add(R)
 				end
 			end,
 			sets:add_element(K, Added)
@@ -211,7 +212,7 @@ process_spf(SPF, State) ->
     %% lager:debug("Present: ~p", [sets:to_list(Present)]),
     %% lager:debug("Withdraw set: ~p", [sets:to_list(Delete)]),
     lists:map(fun(R) ->
-		      zclient:delete(R),
+		      RibApi:delete(R),
 		      ets:delete(State#state.rib, R)
 	      end, sets:to_list(Delete)),
     State.

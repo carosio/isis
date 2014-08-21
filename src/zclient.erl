@@ -12,6 +12,7 @@
 
 -behaviour(gen_server).
 
+-include ("isis_system.hrl").
 -include ("zclient.hrl").
 
 %% API
@@ -36,7 +37,7 @@
 	  %% State for zclient
 	  interfaces :: dict(),          %% Map ifindex->record
 	  routes :: dict(),              %% Map prefix -> record
-	  router_id :: [zclient_prefix()],
+	  router_id :: [isis_prefix()],
 	  %% State for listeners
 	  listeners :: dict()
 	 }).
@@ -64,13 +65,13 @@ subscribe(Pid) ->
 unsubscribe(Pid) ->
     gen_server:call(?MODULE, {unsubscribe, Pid}).
 
-add(#zclient_route{} = Route) ->
+add(#isis_route{} = Route) ->
     gen_server:call(?MODULE, {send_route, Route});
 add(Unknown) ->
     lager:error("zclient:add called with unknown argument ~p", [Unknown]),
     unknown.
 
-delete(#zclient_route_key{} = RouteKey) ->
+delete(#isis_route_key{} = RouteKey) ->
     gen_server:call(?MODULE, {delete_route, RouteKey});
 delete(Unknown) ->
     lager:error("zclient:delete called with unknown argument ~p", [Unknown]),
@@ -112,7 +113,7 @@ init([{type, T}]) ->
     {ok, State};
 init(Args) ->
     io:format("Unknown args: ~p~n", [Args]),
-    {stop, fuckedup}.
+    {stop, zclient_failure}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -296,7 +297,7 @@ handle_zclient_cmd(interface_add,
 		   State) ->
     N1 = binary_to_list(N),
     Name = string:left(N1, string:chr(N1, 0)-1),
-    I = #zclient_interface{
+    I = #isis_interface{
 	   name = Name, ifindex = Ifindex,
 	   status = Status, flags = Flags,
 	   metric = Metric, mtu = Mtu,
@@ -312,7 +313,7 @@ handle_zclient_cmd(interface_up,
 		   State) ->
     N1 = binary_to_list(N),
     Name = string:left(N1, string:chr(N1, 0)-1),
-    I = #zclient_interface{
+    I = #isis_interface{
 	   name = Name, ifindex = Ifindex,
 	   status = Status, flags = Flags,
 	   metric = Metric, mtu = Mtu,
@@ -326,58 +327,58 @@ handle_zclient_cmd(interface_up,
 handle_zclient_cmd(router_id_update,
 		   <<?ZEBRA_AFI_IPV4:8, Address:32, Mask:8>>,
 		   State) ->
-    A = #zclient_prefix{afi = ipv4, address = Address,
-			 mask_length = Mask},
+    A = #isis_prefix{afi = ipv4, address = Address,
+		     mask_length = Mask},
     update_router_id(A, State);
 handle_zclient_cmd(interface_address_add,
-		   <<Ifindex:32, Flags:8, ?ZEBRA_AFI_IPV4:8,
+		   <<Ifindex:32, _Flags:8, ?ZEBRA_AFI_IPV4:8,
 		     Address:32, Mask:8, _Broadcast:32>>,
 		   State) ->
     %% IPv4 Address
     I = dict:fetch(Ifindex, State#state.interfaces),
-    A = #zclient_prefix{afi = ipv4, flags = Flags,
-			 address = Address, mask_length = Mask},
+    A = #isis_prefix{afi = ipv4,
+		     address = Address, mask_length = Mask},
     io:format("Adding address ~s/~p to interface ~p~n",
-	      [isis_system:address_to_string(ipv4, Address), Mask, I#zclient_interface.name]),
+	      [isis_system:address_to_string(ipv4, Address), Mask, I#isis_interface.name]),
     update_interface_address(add, A, I, State);
 handle_zclient_cmd(interface_address_add,
-		   <<Ifindex:32, Flags:8, ?ZEBRA_AFI_IPV6:8,
+		   <<Ifindex:32, _Flags:8, ?ZEBRA_AFI_IPV6:8,
 		     Address:128, Mask:8, _Broadcast:128>>,
 		   State) ->
     %% IPv6 address
     I = dict:fetch(Ifindex, State#state.interfaces),
-    A = #zclient_prefix{afi = ipv6, flags = Flags,
+    A = #isis_prefix{afi = ipv6,
 			address = Address, mask_length = Mask},
     io:format("Adding address ~s/~p to interface ~p~n",
-	      [isis_system:address_to_string(ipv6, Address), Mask, I#zclient_interface.name]),
+	      [isis_system:address_to_string(ipv6, Address), Mask, I#isis_interface.name]),
     update_interface_address(add, A, I, State);
 handle_zclient_cmd(interface_address_delete,
-		   <<Ifindex:32, Flags:8, ?ZEBRA_AFI_IPV4:8,
+		   <<Ifindex:32, _Flags:8, ?ZEBRA_AFI_IPV4:8,
 		     Address:32, Mask:8, _Broadcast:32>>,
 		   State) ->
     %% IPv4 Address
     I = dict:fetch(Ifindex, State#state.interfaces),
-    A = #zclient_prefix{afi = ipv4, flags = Flags,
+    A = #isis_prefix{afi = ipv4,
 			 address = Address, mask_length = Mask},
-    io:format("Deleting address ~p to interface ~p~n", [A, I#zclient_interface.name]),
+    io:format("Deleting address ~p to interface ~p~n", [A, I#isis_interface.name]),
     update_interface_address(del, A, I, State);
 handle_zclient_cmd(interface_address_delete,
-		   <<Ifindex:32, Flags:8, ?ZEBRA_AFI_IPV6:8,
+		   <<Ifindex:32, _Flags:8, ?ZEBRA_AFI_IPV6:8,
 		     Address:128, Mask:8, _Broadcast:128>>,
 		   State) ->
     %% IPv6 address
     I = dict:fetch(Ifindex, State#state.interfaces),
-    A = #zclient_prefix{afi = ipv6, flags = Flags,
+    A = #isis_prefix{afi = ipv6,
 			address = Address, mask_length = Mask},
-    io:format("Deleting address ~p to interface ~p~n", [A, I#zclient_interface.name]),
+    io:format("Deleting address ~p to interface ~p~n", [A, I#isis_interface.name]),
     update_interface_address(del, A, I, State);
 handle_zclient_cmd(ipv4_route_add,
 		   <<Type:8, Flags:8, Info:8, Mask:8, R0/binary>>,
 		   State) ->
     io:format("Type: ~p, Flags: ~p, Info: ~p~n", [Type, Flags, Info]),
     R = read_ipv4_route(Type, Flags, Info, Mask, R0),
-    NewRoutes = dict:store({R#zclient_route.route,
-			    R#zclient_route.nexthops},
+    NewRoutes = dict:store({R#isis_route.route,
+			    R#isis_route.nexthops},
 			   R, State#state.routes),
     update_listeners({redistribute_add, R}, State),
     State#state{routes = NewRoutes};
@@ -385,16 +386,16 @@ handle_zclient_cmd(ipv4_route_delete,
 		   <<Type:8, Flags:8, Info:8, Mask:8, R0/binary>>,
 		   State) ->
     R = read_ipv4_route(Type, Flags, Info, Mask, R0),
-    NewRoutes = dict:erase({R#zclient_route.route,
-			    R#zclient_route.nexthops}, State#state.routes),
+    NewRoutes = dict:erase({R#isis_route.route,
+			    R#isis_route.nexthops}, State#state.routes),
     update_listeners({redistribute_delete, R}, State),
     State#state{routes = NewRoutes};
 handle_zclient_cmd(ipv6_route_add,
 		   <<Type:8, Flags:8, Info:8, Mask:8, R0/binary>>,
 		   State) ->
     R = read_ipv6_route(Type, Flags, Info, Mask, R0),
-    NewRoutes = dict:store({R#zclient_route.route,
-			    R#zclient_route.nexthops},
+    NewRoutes = dict:store({R#isis_route.route,
+			    R#isis_route.nexthops},
 			   R, State#state.routes),
     update_listeners({redistribute_add, R}, State),
     State#state{routes = NewRoutes};
@@ -402,8 +403,8 @@ handle_zclient_cmd(ipv6_route_delete,
 		   <<Type:8, Flags:8, Info:8, Mask:8, R0/binary>>,
 		   State) ->
     R = read_ipv6_route(Type, Flags, Info, Mask, R0),
-    NewRoutes = dict:erase({R#zclient_route.route,
-			    R#zclient_route.nexthops}, State#state.routes),
+    NewRoutes = dict:erase({R#isis_route.route,
+			    R#isis_route.nexthops}, State#state.routes),
     update_listeners({redistribute_delete, R}, State),
     State#state{routes = NewRoutes};
 handle_zclient_cmd(C, M, State) ->
@@ -415,17 +416,17 @@ handle_zclient_cmd(C, M, State) ->
 %% @end
 %% --------------------------------------------------------------------
 update_interface_address(AddDel, Address,
-			 #zclient_interface{addresses = A} = Interface,
+			 #isis_interface{addresses = A} = Interface,
 			 State) ->
     L = add_or_update_address(AddDel, Address, A),
-    I = Interface#zclient_interface{addresses = L},
-    D = dict:store(I#zclient_interface.ifindex, I,
+    I = Interface#isis_interface{addresses = L},
+    D = dict:store(I#isis_interface.ifindex, I,
 		   State#state.interfaces),
     Action = case AddDel of
 		 add -> add_address;
 		 del -> del_address
 	     end,
-    update_listeners({Action, I#zclient_interface.name, Address},
+    update_listeners({Action, I#isis_interface.name, Address},
 		     State),
     State#state{interfaces = D}.
 
@@ -457,8 +458,8 @@ add_or_update_address(del, Address, Addresses) ->
 %% AFI and replace with this one.
 %% @end
 %% --------------------------------------------------------------------
-update_router_id(#zclient_prefix{afi = Afi} = Address, State) ->
-    F = fun(A) when A#zclient_prefix.afi =:= Afi ->
+update_router_id(#isis_prefix{afi = Afi} = Address, State) ->
+    F = fun(A) when A#isis_prefix.afi =:= Afi ->
 		false;
 	   (_) -> true
 	end,
@@ -477,7 +478,7 @@ read_ipv4_route(_Type, _Flags, Info, MaskLen, R0) ->
 	    1 -> <<SrcPfxLen:8, R6T/binary>> = R1,
 		 SrcPfxBits = erlang:trunc((SrcPfxLen+7)/8) * 8,
 		 <<SrcPfxB:SrcPfxBits, R6T2/binary>> = R6T,
-		 {#zclient_prefix{afi = ipv4,
+		 {#isis_prefix{afi = ipv4,
 				  address = SrcPfxB bsl (32 - SrcPfxBits),
 				  mask_length = SrcPfxLen},
 		  R6T2};
@@ -511,12 +512,12 @@ read_ipv4_route(_Type, _Flags, Info, MaskLen, R0) ->
 		 {MetricT, R5T};
 	    _ -> {0, R4}
 	end,
-    P = #zclient_prefix{afi = ipv4, address = Address, mask_length = MaskLen},
-    K = #zclient_route_key{prefix = P, source = SrcPfx},
-    R = #zclient_route{route = K,
-		       nexthops = Nexthop,
-		       ifindexes = Ifindex,
-		       metric = Metric},
+    P = #isis_prefix{afi = ipv4, address = Address, mask_length = MaskLen},
+    K = #isis_route_key{prefix = P, source = SrcPfx},
+    R = #isis_route{route = K,
+		    nexthops = Nexthop,
+		    ifindexes = Ifindex,
+		    metric = Metric},
     R.
 
 read_ipv6_route(_Type, _Flags, Info, MaskLen, R0) ->
@@ -530,9 +531,9 @@ read_ipv6_route(_Type, _Flags, Info, MaskLen, R0) ->
 	    1 -> <<SrcPfxLen:8, R6T/binary>> = R1,
 		 SrcPfxBytes = erlang:trunc((SrcPfxLen+7)/8),
 		 <<SrcPfxB:SrcPfxBytes/binary, R6T2/binary>> = R6T,
-		 {#zclient_prefix{afi = ipv6,
-				  address = SrcPfxB,
-				  mask_length = SrcPfxLen},
+		 {#isis_prefix{afi = ipv6,
+			       address = SrcPfxB,
+			       mask_length = SrcPfxLen},
 		  R6T2};
 	    0 -> {undefined, R1}
 	end,
@@ -564,12 +565,12 @@ read_ipv6_route(_Type, _Flags, Info, MaskLen, R0) ->
 		 {MetricT, R5T};
 	    _ -> {0, R4}
 	end,
-    P = #zclient_prefix{afi = ipv6, address = Address, mask_length = MaskLen},
-    K = #zclient_route_key{prefix = P, source = SrcPfx},
-    R = #zclient_route{route = K,
-		       nexthops = Nexthop,
-		       ifindexes = Ifindex,
-		       metric = Metric},
+    P = #isis_prefix{afi = ipv6, address = Address, mask_length = MaskLen},
+    K = #isis_route_key{prefix = P, source = SrcPfx},
+    R = #isis_route{route = K,
+		    nexthops = Nexthop,
+		    ifindexes = Ifindex,
+		    metric = Metric},
     R.
 
 remove_client(Pid, #state{listeners = Clients} = State) ->
@@ -603,19 +604,19 @@ send_current_state(Pid, #state{router_id = RouterIDs,
     %% Now send interface information
     I = dict:to_list(Interfaces),
     F = fun({_, A}) ->
-		Z = A#zclient_interface{addresses = []},
+		Z = A#isis_interface{addresses = []},
 		Pid ! {add_interface, Z},
-		lists:map(fun(B) -> Pid ! {add_address, A#zclient_interface.name, B} end,
-			  A#zclient_interface.addresses)
+		lists:map(fun(B) -> Pid ! {add_address, A#isis_interface.name, B} end,
+			  A#isis_interface.addresses)
 	end,
     lists:map(F, I).
 				  
-send_route(#zclient_route{route =
-			      #zclient_route_key{prefix = 
-						     #zclient_prefix{afi = AFI, address = Address,
-								     mask_length = Mask},
-						 source = Source},
-			  nexthops = NH, ifindexes = IFs, metric = Metric},
+send_route(#isis_route{route =
+			   #isis_route_key{prefix = 
+					       #isis_prefix{afi = AFI, address = Address,
+							    mask_length = Mask},
+					   source = Source},
+		       nexthops = NH, ifindexes = IFs, metric = Metric},
 	   State) ->
     Type = zclient_enum:to_int(zebra_route, isis),
     Unicast = zclient_enum:to_int(safi, unicast),
@@ -635,7 +636,7 @@ send_route(#zclient_route{route =
 	end,
     {SrcPresent, SrcBin} =
 	case Source of
-	    #zclient_prefix{address = SDA, mask_length = M} ->
+	    #isis_prefix{address = SDA, mask_length = M} ->
 		{1, <<M:8, SDA/binary>>};
 	    _ -> {0, <<>>}
 	end,
@@ -674,10 +675,10 @@ send_route(#zclient_route{route =
     Message = create_header(MessageType, RouteMessage),
     send_message(Message, State).
 
-delete_route(#zclient_route_key{
+delete_route(#isis_route_key{
 		prefix = 
-		    #zclient_prefix{afi = AFI, address = Address,
-				    mask_length = Mask},
+		    #isis_prefix{afi = AFI, address = Address,
+				 mask_length = Mask},
 		source = Source},
 	     State) ->
     Type = zclient_enum:to_int(zebra_route, isis),
@@ -695,8 +696,8 @@ delete_route(#zclient_route_key{
     {SourcePresent, SourceBin} = 
 	case Source of
 	    undefined -> {0, <<>>};
-	    #zclient_prefix{address = SAddress,
-			    mask_length = SMask} ->
+	    #isis_prefix{address = SAddress,
+			 mask_length = SMask} ->
 		{1, <<SMask:8, SAddress/binary>>}
 	end,
     RouteMessage = 

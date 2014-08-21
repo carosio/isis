@@ -67,8 +67,13 @@ init([]) ->
 
     SPFSummary = {spf_summary, {spf_summary, start_link, []},
 		  permanent, 10000, worker, []},
-    ZChild = {zclient, {zclient, start_link, [[{type, isis}]]},
-     	      Restart, Shutdown, Type, [zclient]},
+    RibChild = 
+	case application:get_env(isis, rib_client) of
+	    {ok, Client} -> {Client, {Client, start_link, [[{type, isis}]]},
+			     Restart, Shutdown, Type, [Client]};
+	    Oops -> lager:error("Got ~p for rib_client!", [Oops]),
+		    missing_rib_client
+	end,
     L1DB = {level1_lspdb, {isis_lspdb, start_link, [[{table, level_1}]]},
 	    Restart, Shutdown, Type, [isis_lspdb]},
     L2DB = {level2_lspdb, {isis_lspdb, start_link, [[{table, level_2}]]},
@@ -86,7 +91,7 @@ init([]) ->
     %%  	    permanent, 1000, worker, []},
     Webserver = {ybed_sup, {ybed_sup, start_link, []},
       		 permanent, 10000, supervisor, []},
-    {ok, {SupFlags, [SPFSummary, ZChild, L1DB, L2DB, ISIS, ISISRib
+    {ok, {SupFlags, [SPFSummary, RibChild, L1DB, L2DB, ISIS, ISISRib
 		    , Webserver %% , Demo
 		    ]}}.
 

@@ -115,14 +115,19 @@ dump_config(Pid) ->
 init(Args) ->
     process_flag(trap_exit, true),
     State = extract_args(Args, #state{}),
-    {Socket, Mac, Ifindex, MTU, Port} = create_port(State#state.name),
-    StartState = State#state{socket = Socket, port = Port,
-			     mac = Mac, mtu = MTU,
-			     ifindex = Ifindex,
-			     level1 = undef,
-			     level2 = undef
-			    },
-    {ok, StartState}.
+    lager:debug("Creating socket for interface ~p (~p)", [State#state.name, State]),
+    case create_port(State#state.name) of
+	{Socket, Mac, Ifindex, MTU, Port} ->
+	    StartState = State#state{socket = Socket, port = Port,
+				     mac = Mac, mtu = MTU,
+				     ifindex = Ifindex,
+				     level1 = undef,
+				     level2 = undef
+				    },
+	    {ok, StartState};
+	error ->
+	    {stop, no_socket}
+    end.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -455,18 +460,23 @@ htons(I) ->
 %%--------------------------------------------------------------------
 -spec create_port(string()) -> {integer(), binary(), integer(), integer(), port()} | error.
 create_port(Name) ->
-    {ok, S} = procket:open(0,
-			   [{progname, "sudo /usr/local/bin/procket"},
-			    {family, packet},
-			    {type, raw},
-			    {protocol, htons(?ETH_P_802_2)},
-			    {interface, Name},
-			    {isis}]),
-    {Ifindex, Mac, MTU} = interface_details(S, Name),
-    LL = create_sockaddr_ll(Ifindex),
-    ok = procket:bind(S, LL),
-    Port = erlang:open_port({fd, S, S}, [binary, stream]),
-    {S, Mac, Ifindex, MTU, Port}.
+    case procket:open(0,
+		      [{progname, "sudo /usr/local/bin/procket"},
+		       {family, packet},
+		       {type, raw},
+		       {protocol, htons(?ETH_P_802_2)},
+		       {interface, Name},
+		       {isis}]) of
+	{ok, S} ->
+	    {Ifindex, Mac, MTU} = interface_details(S, Name),
+	    LL = create_sockaddr_ll(Ifindex),
+	    ok = procket:bind(S, LL),
+	    Port = erlang:open_port({fd, S, S}, [binary, stream]),
+	    {S, Mac, Ifindex, MTU, Port};
+	{error, einval} ->
+	    lager:error("Failed to create socket for ~s", [Name]),
+	    error
+    end.
 
 %%--------------------------------------------------------------------
 %% @private

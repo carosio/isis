@@ -13,7 +13,6 @@
 
 -include("isis_system.hrl").
 -include("isis_protocol.hrl").
--include("zclient.hrl").
 
 %% API
 -export([
@@ -113,11 +112,11 @@ show_rib() ->
     RibDB = isis_rib:get_rib_table(),
     RE = ets:tab2list(RibDB),
     PR =
-	fun(#zclient_route{
-	       route = #zclient_route_key{
-			  prefix = #zclient_prefix{afi = AFI,
-						   address = A,
-						   mask_length = Mask},
+	fun(#isis_route{
+	       route = #isis_route_key{
+			  prefix = #isis_prefix{afi = AFI,
+						address = A,
+						mask_length = Mask},
 			  source = Source},
 	       nexthops = Nexthops,
 	       ifindexes = IfIndexes,
@@ -133,7 +132,7 @@ show_rib() ->
 		FromStr = 
 		    case Source of
 			undefined -> "";
-			#zclient_prefix{afi = SAFI, address = SAddress, mask_length = SMask} ->
+			#isis_prefix{afi = SAFI, address = SAddress, mask_length = SMask} ->
 			    lists:flatten(io_lib:format(" from ~s/~b",
 							[isis_system:address_to_string(#isis_address{afi = SAFI,
 												     address = SAddress,

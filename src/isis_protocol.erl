@@ -384,6 +384,7 @@ decode_tlvs(<<Type:8, Length:8, Value:Length/binary, Rest/binary>>,
 	catch
 	    bad_enum -> unknown
 	end,
+    %% lager:info("Decoding TLV: ~p", [<<Type:8, Length:8, Value/binary>>]),
     case TLVDecode(TLV_Type, Type, Value) of
 	error -> error;
 	TLV ->
