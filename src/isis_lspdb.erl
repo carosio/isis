@@ -552,8 +552,7 @@ expire_lsps(#state{db = DB, level = Level} = State) ->
 						     [X || <<X:16>> <= SID] ++ [PN, Frag]))
 	  end, "", Deletes),
     case length(Deletes) of
-	0 -> lager:info("Expired 0 ~p LSPs~n", [Level]),
-	     State;
+	0 -> State;
 	C -> lager:info("Expired ~B ~p LSPs (~s)~n", [C, Level, LSPs]),
 	     lists:map(fun(BDel) -> notify_subscribers(BDel, State) end, Deletes),
 	     schedule_spf(full, "LSPs deleted", State)
