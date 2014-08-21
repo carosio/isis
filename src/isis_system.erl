@@ -66,6 +66,7 @@
 		interfaces,             %% Our 'state' per interface
 		redistributed_routes,
 		ignore_list = [],       %% Interfaces to ignore
+		allowed_list = [],
 		system_ids :: dict(),   %% SID -> Neighbor address
 		refresh_timer = undef,
 		periodic_refresh,
@@ -619,6 +620,8 @@ extract_args([{areas, Areas} | T], State) ->
     extract_args(T, State#state{areas = Areas});
 extract_args([{ignore_interfaces, Is} | T], State) ->
     extract_args(T, State#state{ignore_list = Is});
+extract_args([{allowed_interfaces, Is} | T], State) ->
+    extract_args(T, State#state{allowed_list = Is});
 extract_args([_ | T], State) ->
     extract_args(T, State);
 extract_args([], State) ->
@@ -986,18 +989,23 @@ add_interface(#isis_interface{
 %%% If we're doing 'autoconf' we should enable on all interfaces (for
 %%% now) and also set the system-id from a MAC address.
 %%% ===================================================================
-is_valid_interface(Name, #state{ignore_list = Ignores}) when is_list(Name) ->
+is_valid_interface(Name, #state{ignore_list = Ignores,
+				allowed_list = Allowed}) when is_list(Name) ->
     % An interface name is expected to consist of a reasonable
     % subset of all characters, use a whitelist and extend it if needed
-    case lists:member(Name, Ignores) of
-	true -> false;
+    case length(Allowed) > 0 of
+	true -> lists:member(Name, Allowed);
 	_ ->
-	    Name == [C || C <- Name, (((C bor 32) >= $a) and ((C bor 32) =< $z))
-			      or ((C >= $0) and (C =< $9)) or (C == $.)]
+	    case lists:member(Name, Ignores) of
+		true -> false;
+		_ ->
+		    Name == [C || C <- Name, (((C bor 32) >= $a) and ((C bor 32) =< $z))
+				      or ((C >= $0) and (C =< $9)) or (C == $.)]
+	    end
     end.
 
 autoconf_interface(#isis_interface{mac = Mac, name = Name} = I,
-		   #state{autoconf = true, ignore_list = Igs} = State) 
+		   #state{autoconf = true} = State) 
   when byte_size(Mac) =:= 6 ->
     case is_valid_interface(Name, State) of
 	true ->
