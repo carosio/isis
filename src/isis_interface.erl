@@ -295,12 +295,16 @@ handle_info({_port, {data,
 		       16#FE:8, 16#FE:8, 3:8, PDU/binary>>}},
 	    State) ->
     NewState = 
-	case isis_protocol:decode(PDU) of
+	try isis_protocol:decode(PDU) of
 	    {ok, DecodedPDU} ->
 		handle_pdu(From, DecodedPDU, State),
 		State;
 	    _ ->
 		lager:error("Failed to decode: ~p", [PDU]),
+		State
+	catch
+	    Fail -> 
+		lager:error("Failed to decode: ~p (~p)", [PDU, Fail]),
 		State
 	end,
     {noreply, NewState};
