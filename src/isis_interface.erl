@@ -465,8 +465,7 @@ htons(I) ->
 -spec create_port(string()) -> {integer(), binary(), integer(), integer(), port()} | error.
 create_port(Name) ->
     case procket:open(0,
-		      [{progname, "sudo /usr/local/bin/procket"},
-		       {family, packet},
+		      [{family, packet},
 		       {type, raw},
 		       {protocol, htons(?ETH_P_802_2)},
 		       {interface, Name},
