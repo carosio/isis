@@ -6,28 +6,26 @@ Pre-requisites:
     (http://www.erlang.org)
   Rebar
     (https://github.com/basho/rebar)
+  Relx
+    (https://github.com/erlware/relx)
 
 To build:
-  Compile rebar as described and put the binary somewhere in your path
+  Compile rebar & relx as described and put the binary somewhere in your path
 
   Download the erlang-isis code
-  make deps
-  make compile
+  rebar get-deps
   rebar generate
+  relx
 
-You should end up with an application directory in rel/isis from which
+You should end up with an application directory in _rel/isis from which
 you can start the application:
 
-You will want to put 'deps/procket/priv/procket' into
-/usr/local/bin. Ensure that you can start this using 'sudo'. Then you
-can start the application:
-
-  cd rel/isis
-  bin/isis start
+  cd _rel/isis
+  sudo bin/isis start
 
 Once running, you can attach to it:
 
-  bin/isis attach
+  sudo bin/isis attach
 
 Use Control-D to detach.
 
