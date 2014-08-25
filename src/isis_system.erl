@@ -696,8 +696,7 @@ lsp_ageout_check(#state{frags = Frags} = State) ->
     {_, {L1IDs, L2IDs}} = lists:mapfoldl(LSP_Gen, {[], []}, Frags),
     L1LSPs = isis_lspdb:lookup_lsps(L1IDs, isis_lspdb:get_db(level_1)),
     L2LSPs = isis_lspdb:lookup_lsps(L2IDs, isis_lspdb:get_db(level_2)),
-    Updater = fun(#isis_lsp{lsp_id = Id,
-			    remaining_lifetime = RL,
+    Updater = fun(#isis_lsp{remaining_lifetime = RL,
 			    sequence_number = SeqNo} = L, Level)
 		    when RL < (2 * ?DEFAULT_AGEOUT_CHECK) ->
 		      %% Update
@@ -802,7 +801,7 @@ update_tlv(#isis_tlv_extended_reachability{reachability =
     isis_lspdb:schedule_spf(level_1, "Self-originated TLV change"),
     isis_lspdb:schedule_spf(level_2, "Self-originated TLV change"),
     {noreply, State#state{frags = NewFrags, reachability = NewD}};
-update_tlv(TLV, Node, Level, Interface, #state{frags = Frags} = State) ->
+update_tlv(TLV, Node, Level, _Interface, #state{frags = Frags} = State) ->
     NewFrags = isis_protocol:update_tlv(TLV, Node, Level, Frags),
     schedule_lsp_refresh(),
     isis_lspdb:schedule_spf(level_1, "Self-originated TLV change"),
@@ -838,7 +837,7 @@ delete_tlv(#isis_tlv_extended_reachability{reachability =
 	_ -> {NewD, Frags}
     end,
     {noreply, State#state{frags = NewFrags, reachability = NewD2}};
-delete_tlv(TLV, Node, Level, Interface, #state{frags = Frags} = State) ->
+delete_tlv(TLV, Node, Level, _Interface, #state{frags = Frags} = State) ->
     NewFrags = isis_protocol:delete_tlv(TLV, Node, Level, Frags),
     schedule_lsp_refresh(),
     {noreply, State#state{frags = NewFrags}}.

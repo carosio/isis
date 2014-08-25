@@ -353,28 +353,28 @@ code_change(_OldVsn, State, _Extra) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
-handle_pdu(From, #isis_iih{pdu_type = level1_iih} = PDU, #state{level1 = Pid} = State)
+handle_pdu(From, #isis_iih{pdu_type = level1_iih} = PDU, #state{level1 = Pid})
   when is_pid(Pid) ->
     isis_interface_level:handle_pdu(Pid, From, PDU);
-handle_pdu(From, #isis_iih{pdu_type = level2_iih} = PDU, #state{level2 = Pid} = State)
+handle_pdu(From, #isis_iih{pdu_type = level2_iih} = PDU, #state{level2 = Pid})
   when is_pid(Pid) ->
     isis_interface_level:handle_pdu(Pid, From, PDU);
-handle_pdu(From, #isis_lsp{pdu_type = level1_lsp} = PDU, #state{level1 = Pid} = State)
+handle_pdu(From, #isis_lsp{pdu_type = level1_lsp} = PDU, #state{level1 = Pid})
   when is_pid(Pid) ->
     isis_interface_level:handle_pdu(Pid, From, PDU);
-handle_pdu(From, #isis_lsp{pdu_type = level2_lsp} = PDU, #state{level2 = Pid} = State)
+handle_pdu(From, #isis_lsp{pdu_type = level2_lsp} = PDU, #state{level2 = Pid})
   when is_pid(Pid) ->
     isis_interface_level:handle_pdu(Pid, From, PDU);
-handle_pdu(From, #isis_csnp{pdu_type = level1_csnp} = PDU, #state{level1 = Pid} = State)
+handle_pdu(From, #isis_csnp{pdu_type = level1_csnp} = PDU, #state{level1 = Pid})
   when is_pid(Pid) ->
     isis_interface_level:handle_pdu(Pid, From, PDU);
-handle_pdu(From, #isis_csnp{pdu_type = level2_csnp} = PDU, #state{level2 = Pid} = State)
+handle_pdu(From, #isis_csnp{pdu_type = level2_csnp} = PDU, #state{level2 = Pid})
   when is_pid(Pid) ->
     isis_interface_level:handle_pdu(Pid, From, PDU);
-handle_pdu(From, #isis_psnp{pdu_type = level1_psnp} = PDU, #state{level1 = Pid} = State)
+handle_pdu(From, #isis_psnp{pdu_type = level1_psnp} = PDU, #state{level1 = Pid})
   when is_pid(Pid) ->
     isis_interface_level:handle_pdu(Pid, From, PDU);
-handle_pdu(From, #isis_psnp{pdu_type = level2_psnp} = PDU, #state{level2 = Pid} = State)
+handle_pdu(From, #isis_psnp{pdu_type = level2_psnp} = PDU, #state{level2 = Pid})
   when is_pid(Pid) ->
     isis_interface_level:handle_pdu(Pid, From, PDU);
 handle_pdu(_From, _Pdu, State) ->

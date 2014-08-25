@@ -21,7 +21,7 @@
 	 lookup_lsps/2, store_lsp/2, flood_lsp/3, purge_lsp/2,
 	 lookup_lsps_by_node/2,
 	 summary/2, range/3,
-	 replace_tlv/3, update_reachability/3,
+	 update_reachability/3,
 	 schedule_spf/2,
 	 links/1,
 	 clear_db/1,
@@ -175,31 +175,11 @@ range(Start_ID, End_ID, DB) ->
 %%--------------------------------------------------------------------
 %% @doc
 %%
-%% For a given LSP, look it up, search the TLV for a matching TLV and
-%% replace it with the provided TLV, bump the sequence number and
-%% re-flood...
-%% 
-%% @end
-%%-------------------------------------------------------------------
--spec replace_tlv(atom(), isis_tlv(), binary()) -> ok.
-replace_tlv(Level, TLV, LSP) ->
-    DB = isis_lspdb:get_db(Level),
-    case lookup_lsps([LSP], DB) of
-	[L] -> NewTLV = replace_tlv(L#isis_lsp.tlv, TLV),
-	       NewLSP = L#isis_lsp{tlv = NewTLV},
-	       CSum = isis_protocol:checksum(NewLSP),
-	       ok;
-	_ -> error
-    end.
-
-%%--------------------------------------------------------------------
-%% @doc
-%%
 %% Add/Del reachability to the TLVs
 %%
 %% @end
 %%--------------------------------------------------------------------
-update_reachability({AddDel, ER}, Level, #isis_lsp{tlv = TLVs} = LSP) ->
+update_reachability({AddDel, ER}, _Level, #isis_lsp{tlv = TLVs} = LSP) ->
     Worker =
 	fun(#isis_tlv_extended_reachability{reachability = R}, Flood) ->
 		{F, NewER} = update_eir(AddDel, ER, R),
@@ -213,7 +193,7 @@ update_reachability({AddDel, ER}, Level, #isis_lsp{tlv = TLVs} = LSP) ->
     {NewTLVs, Flood} = lists:mapfoldl(Worker, false, TLVs),
     case Flood of
 	true ->
-	    NewLSP = LSP#isis_lsp{tlv = NewTLVs};
+	    LSP#isis_lsp{tlv = NewTLVs};
 	_ -> ok
     end.
 %%--------------------------------------------------------------------

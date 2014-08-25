@@ -312,7 +312,7 @@ handle_iih(From, IIH, #state{adj_handlers = Adjs} = State) ->
 		gen_fsm:send_event(Pid, {iih, IIH}),
 		UpAdj2 = 
 		    case dict:find(Pid, State#state.up_adjacencies) of
-			{ok, {A, B, P}} -> dict:store(Pid, {A, B, IIH#isis_iih.priority},
+			{ok, {A, B, _P}} -> dict:store(Pid, {A, B, IIH#isis_iih.priority},
 						      State#state.up_adjacencies);
 			_ -> State#state.up_adjacencies
 		    end,
@@ -355,7 +355,7 @@ handle_iih(From, IIH, #state{adj_handlers = Adjs} = State) ->
 %%--------------------------------------------------------------------
 -spec handle_dis_election(binary(), isis_iih(), tuple()) -> tuple().
 handle_dis_election(From, 
-		    #isis_iih{priority = TheirP, dis = <<D:6/binary, DPN:8>> = DIS, source_id = SID} = IIH,
+		    #isis_iih{priority = TheirP, dis = <<D:6/binary, DPN:8>> = DIS, source_id = SID},
 		    #state{priority = OurP, snpa = OurSNPA, dis = CurrentDIS} = State)
   when TheirP > OurP; TheirP == OurP, From > OurSNPA ->
     DIS_Priority = 
@@ -378,8 +378,8 @@ handle_dis_election(From,
 		 State#state{dis = DIS, dis_priority = DIS_Priority, are_we_dis = false}
 	end,
     NewState;
-handle_dis_election(From,
-		    #isis_iih{priority = _TheirP, dis = DIS, source_id = SID},
+handle_dis_election(_From,
+		    #isis_iih{},
 		    #state{priority = OurP, are_we_dis = Us, snpa = OurM} = State)
   when Us =:= false ->
     %% Any one else likely to take over?
@@ -897,8 +897,8 @@ handle_lsp(#isis_lsp{lsp_id = ID, remaining_lifetime = 0} = LSP, State) ->
 			 LSP#isis_lsp{tlv = [],
 				      remaining_lifetime = 0,
 				      last_update = isis_protocol:current_timestamp()});
-handle_lsp(#isis_lsp{lsp_id = ID, sequence_number = TheirSeq,
-		     checksum = TheirCSum} = LSP, State) ->
+handle_lsp(#isis_lsp{lsp_id = ID, sequence_number = TheirSeq} = LSP,
+	   State) ->
     <<RemoteSys:6/binary, _Rest/binary>> = ID,
     case RemoteSys =:= isis_system:system_id() of
 	true -> handle_old_lsp(LSP, State);
@@ -908,7 +908,6 @@ handle_lsp(#isis_lsp{lsp_id = ID, sequence_number = TheirSeq,
 		case length(L) of
 		    1 -> [OurLSP] = L,
 			 OurSeq = OurLSP#isis_lsp.sequence_number,
-			 OurCSum = OurLSP#isis_lsp.checksum,
 			 case (OurSeq < TheirSeq) of
 			     true -> isis_lspdb:store_lsp(State#state.level, LSP),
 				     lager:warning("Updated LSP (~b vs ~b)~n", [OurSeq, TheirSeq]),

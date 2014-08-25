@@ -115,7 +115,7 @@ handle_cast(_Msg, State) ->
 %%                                   {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_info({spf_summary, {Time, Level, SPF, _Reason}}, State) ->
+handle_info({spf_summary, {_Time, _Level, SPF, _Reason}}, State) ->
     NewState = process_spf(SPF, State),
     {noreply, NewState};
 handle_info(_Info, State) ->
