@@ -311,10 +311,6 @@ init(Args) ->
 		   reachability = dict:new()},
     StartState = create_initial_frags(extract_args(Args, State)),
     StartState2 = refresh_lsps(StartState),
-    case application:get_env(isis, rib_client) of
-	{ok, Rib} -> Rib:subscribe(self());
-	_ -> lager:error("No rib client specified, not subscribing..")
-    end,
     %% Periodically check if any of our LSPs need refreshing due to ageout
     Timer = erlang:start_timer(isis_protocol:jitter(?DEFAULT_AGEOUT_CHECK, 10) * 1000,
 			       self(), lsp_ageout),
@@ -322,6 +318,10 @@ init(Args) ->
 				 {keypos, #isis_name.system_id}]),
     isis_lspdb:set_system_id(level_1, StartState2#state.system_id),
     isis_lspdb:set_system_id(level_2, StartState2#state.system_id),
+    case application:get_env(isis, rib_client) of
+	{ok, Rib} -> Rib:subscribe(self());
+	_ -> lager:error("No rib client specified, not subscribing..")
+    end,
     {ok, StartState2#state{periodic_refresh = Timer, names = Names}}.
 
 %%--------------------------------------------------------------------
