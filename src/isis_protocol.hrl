@@ -298,6 +298,7 @@
 
 -record (isis_lsp, {
 	   lsp_id :: binary() | matchspec_atom(),        %% The key
+	   id_length = 0 :: integer() | matchspec_atom(), %% ID Len as we received it
 	   last_update :: integer() | matchspec_atom(),
 	   version :: integer() | matchspec_atom(),
 	   pdu_type :: atom() | matchspec_atom(),                  %% L1 or L2 LSP

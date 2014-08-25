@@ -1314,9 +1314,9 @@ decode_pdu(_, _, _, _) -> error.
 %%%===================================================================
 %%% PDU encoders
 %%%===================================================================
-isis_header(Type, Len, Area) ->
+isis_header(Type, Len, IDLen, Area) ->
     T = isis_enum:to_int(pdu, Type),
-    <<16#83:8, Len:8, 1:8, 0:8, 0:3, T:5, 1:8, 0:8,
+    <<16#83:8, Len:8, 1:8, IDLen:8, 0:3, T:5, 1:8, 0:8,
       Area:8>>.
 
 -spec encode_iih(isis_iih()) -> {ok, list(), integer()} | error.
@@ -1327,7 +1327,7 @@ encode_iih(#isis_iih{pdu_type = Type,
 		     priority = Priority,
 		     dis = DIS,
 		     tlv = TLVs}) ->
-    Header = isis_header(Type, 27, 0),
+    Header = isis_header(Type, 27, 0, 0),
     CT = isis_enum:to_int(istype, Circuit_Type),
     IIH1 = <<0:6, CT:2, Source_Id:6/binary, Holding_Time:16>>,
     IIH2 = <<0:1, Priority:7, DIS:7/binary>>,
@@ -1339,11 +1339,11 @@ encode_iih(#isis_iih{pdu_type = Type,
 -spec encode_lsp(isis_lsp()) -> {ok, list(), integer()} | error.
 encode_lsp(#isis_lsp{version = _Version, pdu_type = Lsp_Type,
 		     remaining_lifetime = Lifetime,
-		     lsp_id = LSP_Id,
+		     lsp_id = LSP_Id, id_length = ID_Len,
 		     sequence_number = Sequence,
 		     partition = Partition, overload = Overload,
 		     isis_type = ISType, tlv = TLVs}) ->
-    Header = isis_header(Lsp_Type, 27, 0),
+    Header = isis_header(Lsp_Type, 27, ID_Len, 0),
     Pb = isis_enum:to_int(boolean, Partition),
     Ob = isis_enum:to_int(boolean, Overload),
     Ib = isis_enum:to_int(istype, ISType),
@@ -1370,7 +1370,7 @@ encode_lsp(#isis_lsp{version = _Version, pdu_type = Lsp_Type,
 encode_csnp(#isis_csnp{pdu_type = Type, source_id = Source_Id,
 		       start_lsp_id = Start_LSP, end_lsp_id = End_LSP,
 		       tlv = TLVs}) ->
-    Header = isis_header(Type, 33, 0),
+    Header = isis_header(Type, 33, 0, 0),
     CSNP = <<Source_Id:7/binary, Start_LSP:8/binary, End_LSP:8/binary>>,
     TLV_Bs = encode_tlvs(TLVs, fun encode_tlv/1),
     Len = binary_list_size([Header, CSNP, TLV_Bs]) + 2,
@@ -1379,7 +1379,7 @@ encode_csnp(#isis_csnp{pdu_type = Type, source_id = Source_Id,
 -spec encode_psnp(isis_psnp()) -> {ok, list(), integer()} | error.
 encode_psnp(#isis_psnp{pdu_type = Type, source_id = Source_Id,
 		       tlv = TLVs}) ->
-    Header = isis_header(Type, 17, 0),
+    Header = isis_header(Type, 17, 0, 0),
     PSNP = <<Source_Id:7/binary>>,
     TLV_Bs = encode_tlvs(TLVs, fun encode_tlv/1),
     Len = binary_list_size([Header, PSNP, TLV_Bs]) + 2,
@@ -1507,7 +1507,7 @@ checksum(#isis_lsp{version = _Version, pdu_type = Lsp_Type,
 		   sequence_number = Sequence,
 		   partition = Partition, overload = Overload,
 		   isis_type = ISType, tlv = TLVs}) ->
-    Header = isis_header(Lsp_Type, 27, 0),
+    Header = isis_header(Lsp_Type, 27, 0, 0),
     Pb = isis_enum:to_int(boolean, Partition),
     Ob = isis_enum:to_int(boolean, Overload),
     Ib = isis_enum:to_int(istype, ISType),

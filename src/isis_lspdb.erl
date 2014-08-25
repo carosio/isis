@@ -764,9 +764,9 @@ extract_reachability(D, From, TLV) ->
 
 populate_links(DB) ->
     Now = isis_protocol:current_timestamp(),
-    F = ets:fun2ms(fun(#isis_lsp{lsp_id = LSP_Id, remaining_lifetime = L,
+    F = ets:fun2ms(fun(#isis_lsp{lsp_id = LSP_Id, remaining_lifetime = L, id_length = ILen,
 				 last_update = U, sequence_number = N, tlv = TLV})
-			 when (L - (Now - U)) >= 0 ->
+			 when (ILen =:= 0),(L - (Now - U)) >= 0 ->
 			   {LSP_Id, TLV}
 		   end),
     ValidLSPs = ets:select(DB, F),
