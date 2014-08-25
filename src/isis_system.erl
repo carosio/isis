@@ -882,10 +882,10 @@ deallocate_pseudonode(Node, Level, State) ->
     NewFrags = purge_lsps(MatchFun, State),
     %% Now remove this reference from the pseudonode dict
     G = fun(_, {L, PN}) when L =:= Level, PN =:= Node -> false;
-	   (_, _) -> false
+	   (_, _) -> true
 	end,
-    H = fun({Node, Level, _}, _) -> false;
-	   ({_, _, _}, _) -> false
+    H = fun({N, L, _}, _) when N =:= Node, L =:= Level -> false;
+	   ({_, _, _}, _) -> true
 	end,
     NewPNDict = dict:filter(G, State#state.pseudonodes),
     NewRDict = dict:filter(H, State#state.reachability),
