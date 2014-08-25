@@ -96,7 +96,7 @@ get_redistributed_routes() ->
 %%                     {stop, Reason}
 %% @end
 %%--------------------------------------------------------------------
-init([{type, T}]) ->
+init([{type, _}]) ->
     application:ensure_all_started(gen_netlink),
     netlink:subscribe(netlink, self(), [rt]),
     Req = #rtnetlink{type = getlink,
@@ -314,9 +314,9 @@ send_current_state(Pid, #state{interfaces = Interfaces,
     I = dict:to_list(Interfaces),
     F = fun({_, A}) -> send_interface(A, Pid) end,
     lists:map(F, I),
-    %% R = dict:to_list(Routes),
-    %% F2 = fun({Key, Hops}) -> send_route(Key, Hops, Pid) end,
-    %% lists:map(R, F2).
+    R = dict:to_list(Routes),
+    F2 = fun({Key, Hops}) -> send_route_to_pid(Key, Hops, Pid) end,
+    lists:map(R, F2),
     ok.
 
 %%--------------------------------------------------------------------
@@ -399,6 +399,14 @@ send_route(#isis_route_key{} = Key, Hops, State) ->
 		    ifindexes = IFs},
     update_listeners({redistribute_add, R}, State).
 
+send_route_to_pid(#isis_route_key{} = Key, Hops, Pid) ->
+    {NHs, IFs} = lists:unzip(Hops),
+    R = #isis_route{route = Key,
+		    metric = 10,
+		    nexthops = NHs,
+		    ifindexes = IFs},
+    Pid ! {redistribute_add, R}.
+
 %%--------------------------------------------------------------------
 %% @doc
 %% Take a netlink interface and convert to an isis_interface
@@ -406,7 +414,7 @@ send_route(#isis_route_key{} = Key, Hops, State) ->
 %%--------------------------------------------------------------------
 convert_netlink_interface_to_isis(
   #rtnetlink{msg =
-		 {_Family, _Type, IfIndex, Flags, _, Attributes}}) ->
+		 {_Family, _Type, IfIndex, _Flags, _, Attributes}}) ->
     #isis_interface{
        name = proplists:get_value(ifname, Attributes),
        mac = proplists:get_value(address, Attributes),
@@ -435,8 +443,8 @@ convert_netlink_connected_to_isis(_) ->
 %% @end
 %%--------------------------------------------------------------------
 convert_netlink_route_to_isis(
-  #rtnetlink{msg = {Family, Masklen, SrcLen, Tos, Table, Protocol, Scope, unicast,
-		    Flags, Properties}}, State)
+  #rtnetlink{msg = {Family, Masklen, SrcLen, _Tos, _Table, Protocol, _Scope, unicast,
+		    _Flags, Properties}}, State)
   when Protocol =/= State#state.protocol ->
     Dst = proplists:get_value(dst, Properties),
     Src = proplists:get_value(src, Properties),
@@ -508,7 +516,7 @@ process_netlink_update(#rtnetlink{type = Cmd} = RTM, State)
 	end,
     NewState;
 process_netlink_update(#rtnetlink{type = T, msg = Msg}, State) ->
-    %% lager:debug("Ignoring netlink message type ~p (~p)", [T, Msg]),
+    lager:debug("Ignoring netlink message type ~p (~p)", [T, Msg]),
     State.
 
 convert_addr(ipv4, A) when is_binary(A) ->
