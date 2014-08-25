@@ -181,6 +181,8 @@ handle_call({delete_route, RouteKey}, _From, State) ->
     {reply, ok, delete_route_via_netlink(RouteKey, State)};
 handle_call({get_state}, _From, State) ->
     {reply, State, State};
+handle_call({get_redistributed_routes}, _From, State) ->
+    {reply, State#state.routes, State};
 handle_call(_Request, _From, State) ->
     Reply = ok,
     {reply, Reply, State}.
@@ -316,7 +318,7 @@ send_current_state(Pid, #state{interfaces = Interfaces,
     lists:map(F, I),
     R = dict:to_list(Routes),
     F2 = fun({Key, Hops}) -> send_route_to_pid(Key, Hops, Pid) end,
-    lists:map(R, F2),
+    lists:map(F2, R),
     ok.
 
 %%--------------------------------------------------------------------
@@ -456,13 +458,13 @@ convert_netlink_route_to_isis(
 	       _ -> {_, S1} = create_isis_address(Family, Src, SrcLen, IfIndex),
 		    S1
 	   end,
-    NHP = case NH of
-	      undefined -> undefined;
-	      _ -> {_, S2} = create_isis_address(Family, NH, 0, IfIndex),
-		   S2#isis_prefix.address
-	  end,
-    RouteKey = #isis_route_key{prefix = DstP, source = SrcP},
-    {RouteKey, NHP, IfIndex};
+    case NH of
+	undefined -> false;
+	_ -> {_, S2} = create_isis_address(Family, NH, 0, IfIndex),
+	     NHP = S2#isis_prefix.address,
+	     RouteKey = #isis_route_key{prefix = DstP, source = SrcP},
+	     {RouteKey, NHP, IfIndex}
+    end;
 convert_netlink_route_to_isis(_, _) ->
     false.
 
