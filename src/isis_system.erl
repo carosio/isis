@@ -1254,14 +1254,15 @@ address_to_string(ipv6, Address) when is_integer(Address) ->
     inet_parse:ntoa(
       erlang:list_to_tuple([X || <<X:16>> <= <<Address:128>>])).
 
-address_to_string(#isis_address{afi = AFI, address = A, mask = M})
+address_to_string(#isis_address{afi = AFI, address = A})
   when is_binary(A) ->
+    Bits = bit_size(A),
     SA = 
 	case AFI of
-	    ipv4 -> <<T:M>> = A,
-		    T bsl (32 - M);
-	    ipv6 -> <<T:M>> = A,
-		    T bsl (128 - M)
+	    ipv4 -> <<T:Bits>> = A,
+		    T bsl (32 - Bits);
+	    ipv6 -> <<T:Bits>> = A,
+		    T bsl (128 - Bits)
 	end,
     address_to_string(AFI, SA);
 address_to_string(#isis_address{afi = AFI, address = A}) ->
