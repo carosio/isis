@@ -397,8 +397,12 @@ decode_tlvs(_, _,_,_) -> error.
 %%% TLV and subTLV encoders
 %%%===================================================================
 -spec encode_subtlv_ipv6r(isis_subtlv_ipv6r()) -> binary().
-encode_subtlv_ipv6r(#isis_subtlv_srcdst{prefix_length = PL, prefix = P}) ->
+encode_subtlv_ipv6r(#isis_subtlv_srcdst{prefix_length = PL, prefix = P}) when is_binary(P) ->
     encode_tlv(source_prefix, subtlv_ipv6r, <<PL:8, P/binary>>);
+encode_subtlv_ipv6r(#isis_subtlv_srcdst{prefix_length = PL, prefix = P}) when is_integer(P) ->
+    Bits = (erlang:trunc((PL + 7) / 8) * 8),
+    P1 = P bsr (128 - Bits),
+    encode_tlv(source_prefix, subtlv_ipv6r, <<PL:8, P1:Bits>>);
 encode_subtlv_ipv6r(#isis_subtlv_unknown{type = T, value = V}) ->
     S = byte_size(V),
     <<T:8, S:8, V/binary>>.
@@ -1501,22 +1505,20 @@ filter_lifetime(#isis_lsp{remaining_lifetime = L, last_update = U}) ->
 %% are the ones creating the LSP
 %% @end
 %%--------------------------------------------------------------------
-checksum(#isis_lsp{version = _Version, pdu_type = Lsp_Type,
-		   remaining_lifetime = Lifetime,
-		   lsp_id = LSP_Id,
+checksum(#isis_lsp{lsp_id = LSP_Id,
 		   sequence_number = Sequence,
 		   partition = Partition, overload = Overload,
 		   isis_type = ISType, tlv = TLVs}) ->
-    Header = isis_header(Lsp_Type, 27, 0, 0),
+    %% Header = isis_header(Lsp_Type, 27, 0, 0),
     Pb = isis_enum:to_int(boolean, Partition),
     Ob = isis_enum:to_int(boolean, Overload),
     Ib = isis_enum:to_int(istype, ISType),
-    Lsp_Hdr1 = <<Lifetime:16>>,
+    %% Lsp_Hdr1 = <<Lifetime:16>>,
     Lsp_Hdr2 = <<LSP_Id:8/binary, Sequence:32>>,
     %% Hard code ATT bits to zero, deprecated...
     Lsp_Hdr3 = <<Pb:1, 0:4, Ob:1, Ib:2>>,
     TLV_Bs = encode_tlvs(TLVs, fun encode_tlv/1),
-    Len = binary_list_size([Header, Lsp_Hdr1, Lsp_Hdr2, Lsp_Hdr3, TLV_Bs]) + 4,
+    %% Len = binary_list_size([Header, Lsp_Hdr1, Lsp_Hdr2, Lsp_Hdr3, TLV_Bs]) + 4,
     {CSum1, CSum2} = calculate_checksum([Lsp_Hdr2, <<0:16>>, Lsp_Hdr3, TLV_Bs], 12),
     (CSum1 * 256) + CSum2.
 
