@@ -1,6 +1,6 @@
 {application, isis,
  [{description, "IS-IS implementation in erlang"},
-  {vsn, "1"},
+  {vsn, "0.8.0"},
   {registered, []},
   {included_applications, [yaws]},
   {applications, [
