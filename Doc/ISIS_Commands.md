@@ -47,7 +47,7 @@ Startup configuration
 ---------------------
 Startup configuration is done as required for ISIS autoconf.
 
-Configuration is in __sys.config__ in the releases/0.0.1/ directory
+Configuration is in __sys.config__ in the releases/x.x.x/ directory
 (for the compiled/installed version) and src/sys.config before the compilation
 
 The example configuration below configures ISIS for autoconf and excludes interfaces eth0.1 from ISIS
