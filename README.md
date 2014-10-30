@@ -2,27 +2,18 @@ IS-IS implementation AutoISIS
 =============================
 
 ## License:
-AutoISIS can be used (at your option) under the following GPL or under
-a commercial license
-
-1. GPL License<br>
-AutoISIS is free software; you can redistribute it and/or modify it
-under the terms of the GNU General Public License as published by the
-Free Software Foundation; either version 2, or (at your option) any
-later version.
-AutoISIS is distributed in the hope that it will be useful, but
-WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See 
-the GNU General Public License for more details.
-(see COPYING for full license)
-
-2. Commercial License Usage<br>
-Licensees holding a valid commercial AutoISIS may use this file in 
-accordance with the commercial license agreement provided with the 
-Software or, alternatively, in accordance with the terms contained in 
-a written agreement between you and the Copyright Holder.  For
-licensing terms and conditions please contact us at 
-licensing@netdef.org
+AutoISIS s licensed to you under the Apache License, Version 2.0
+(the "License"); you may not use this file except in compliance with
+the License. You may obtain a copy of the License at
+ 
+http://www.apache.org/licenses/LICENSE-2.0
+ 
+Unless required by applicable law or agreed to in writing,
+software distributed under the License is distributed on an
+"AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+KIND, either express or implied.  See the License for the
+specific language governing permissions and limitations
+under the License.
 
 ## Pre-requisites:
 1. Erlang R16 (preferable B03-1 or later)
@@ -42,6 +33,7 @@ licensing@netdef.org
 1. Compile rebar, relx & procket as described and put the binary somewhere in your path
 2. Download this AutoISIS code
 3. Build:
+
     a. rebar get-deps
     b. rebar compile
     c. relx
