@@ -928,7 +928,11 @@ handle_lsp(#isis_lsp{lsp_id = ID, sequence_number = TheirSeq} = LSP,
 			     true -> isis_lspdb:store_lsp(State#state.level, LSP),
 				     lager:warning("Updated LSP (~b vs ~b)~n", [OurSeq, TheirSeq]),
 				     true;
-			     _ -> false
+			     _ -> case State#state.are_we_dis of
+				      true -> send_lsps([OurLSP], State);
+				      _ -> ok
+				  end,
+				  false
 			 end;
 		    0 -> isis_lspdb:store_lsp(State#state.level, LSP),
 			 lager:warning("New LSP, storing..~n", []),
