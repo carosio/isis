@@ -328,6 +328,14 @@ handle_info({_port, {data,
 handle_info({_port, {data, _}}, State) ->
     {noreply, State};
 
+handle_info({'EXIT', Pid, normal}, State)
+  when Pid =:= State#state.level1 ->
+    {noreply, State#state{level1 = undef}};
+handle_info({'EXIT', Pid, normal}, State)
+  when Pid =:= State#state.level2 ->
+    {noreply, State#state{level2 = undef}};
+handle_info({'EXIT', _Pid, normal}, State) ->
+    {noreply, State};
 
 handle_info(Info, State) ->
     io:format("Unknown message: ~p", [Info]),
