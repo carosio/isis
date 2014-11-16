@@ -1301,13 +1301,17 @@ decode_common_psnp(<<PDU_Len:16, Source:7/binary,
 decode_common_psnp(_, _) -> error.
 
 -spec decode_pdu(atom(), isis_header(), integer(), binary()) -> {ok, isis_lsp()} | error.
-decode_pdu(Type, _Header, PDU_Len, Rest) when
-      Type == level1_iih; Type == level2_iih ->
+decode_pdu(Type, #isis_header{id_length = Len}, PDU_Len, Rest) when
+      Len =:= 0, Type =:= level1_iih; Len =:= 0, Type =:= level2_iih;
+      Len =:= 6, Type =:= level1_iih; Len =:= 6, Type =:= level2_iih ->
     case decode_lan_iih(Rest, PDU_Len) of
 	error -> error;
 	{ok, IIH} ->
 	    {ok, IIH#isis_iih{pdu_type = Type}}
     end;
+decode_pdu(Type, _Header, _PDU_Len, _Rest) when
+      Type == level1_iih; Type == level2_iih ->
+    invalid_id_len;
 decode_pdu(Type, _Header, PDU_Len, Rest) when
       Type == level1_lsp; Type == level2_lsp->
     case decode_common_lsp(Rest, PDU_Len) of
