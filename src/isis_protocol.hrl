@@ -318,13 +318,13 @@
 	   last_update :: integer() | matchspec_atom(),
 	   version :: integer() | matchspec_atom(),
 	   pdu_type :: atom() | matchspec_atom(),                  %% L1 or L2 LSP
-	   remaining_lifetime :: integer() | matchspec_atom(),
-	   sequence_number :: integer() | matchspec_atom(),
-	   checksum :: integer() | matchspec_atom(),
-	   partition :: atom() | matchspec_atom(),
-	   overload :: atom() | matchspec_atom(),
-	   isis_type :: atom() | matchspec_atom(),
-	   tlv :: [isis_tlv()] | matchspec_atom()
+	   remaining_lifetime = 0 :: integer() | matchspec_atom(),
+	   sequence_number = 0 :: integer() | matchspec_atom(),
+	   checksum = 0 :: integer() | matchspec_atom(),
+	   partition = false :: atom() | matchspec_atom(),
+	   overload = false :: atom() | matchspec_atom(),
+	   isis_type  = level_1_2 :: atom() | matchspec_atom(),
+	   tlv = []:: [isis_tlv()] | matchspec_atom()
 	  }).
 -type isis_lsp() :: #isis_lsp{}.
 
