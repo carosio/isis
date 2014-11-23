@@ -302,7 +302,8 @@ cancel_timer(State) ->
 seen_ourselves(#isis_iih{tlv = TLVs}, State) ->
     R = lists:filter(fun(A) -> seen_ourselves_tlv(A, State) end,
 		  TLVs),
-    lager:debug("R: ~p", [R]),
+    lager:debug("Seen ourselves in IIH from ~p: ~p",
+		[State#state.neighbor_id, length(R) > 0]),
     length(R) > 0.
 
 seen_ourselves_tlv(#isis_tlv_is_neighbors{neighbors = N}, State) ->
