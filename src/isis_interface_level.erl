@@ -47,6 +47,7 @@
 	  level,           %% The level
 	  interface_ref,   %% Interface
 	  interface_name,
+	  system_id,       %% Cached system_id
 	  snpa,            %% Our mac address
 	  mtu,
 	  database = undef, %% The LSPDB reference
@@ -148,7 +149,7 @@ init(Args) ->
 %% @end
 %%--------------------------------------------------------------------
 handle_call({send_iih}, _From, State) ->
-    send_iih(isis_system:system_id(), State),
+    send_iih(State),
     {reply,ok, State};
 
 handle_call({get_state}, _From, State) ->
@@ -266,7 +267,7 @@ handle_cast(_Msg, State) ->
 %%--------------------------------------------------------------------
 handle_info({timeout, _Ref, iih}, State) ->
     cancel_timers([State#state.iih_timer]),
-    send_iih(isis_system:system_id(), State),
+    send_iih(State),
     Timer = start_timer(iih, State),
     {noreply, State#state{iih_timer = Timer}};
 
@@ -422,7 +423,7 @@ assume_dis(State) ->
     lager:info("Allocated pseudo-node ~p to ~p ~s~n",
 	       [Node, State#state.level,  State#state.interface_name]),
     DIS_Timer = start_timer(dis, State),
-    ID = isis_system:system_id(),
+    ID = State#state.system_id,
     SysID = <<ID:6/binary, 0:8>>,
     DIS = <<ID:6/binary, Node:8>>,
     NewState = State#state{dis = DIS, dis_timer = DIS_Timer,
@@ -436,7 +437,7 @@ assume_dis(State) ->
 		     update_reachability_tlv(add, <<AdjID:6/binary, 0:8>>, Node, 0, State)
 	     end, State#state.up_adjacencies),
     isis_system:schedule_lsp_refresh(),
-    send_iih(ID, NewState),
+    send_iih(NewState),
     NewState.
 
 relinquish_dis(#state{are_we_dis = true,
@@ -474,9 +475,9 @@ remove_adjacency(_) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
-send_iih(SID, _State) when SID =:= undefined; byte_size(SID) =/= 6 ->
+send_iih(#state{system_id = SID}) when SID =:= undefined; byte_size(SID) =/= 6 ->
     no_system_id;
-send_iih(SID, State) ->
+send_iih(#state{system_id = SID} = State) ->
     IS_Neighbors =
 	lists:map(fun({A, _}) -> A end,
 		  dict:to_list(State#state.adj_handlers)),
@@ -590,8 +591,7 @@ send_csnp(#state{database = DBRef, dis_continuation = DC} = State) ->
 	   end,
     {Summary, Continue} = isis_lspdb:summary(Args, DBRef),
     NextDC = 
-	case generate_csnp(isis_system:system_id(),
-			   Args, 90, Summary, State) of
+	case generate_csnp(Args, 90, Summary, State) of
 	    ok ->
 		case Continue of
 		    '$end_of_table' -> undef;
@@ -612,9 +612,10 @@ send_csnp(#state{database = DBRef, dis_continuation = DC} = State) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
-generate_csnp(undefined, _, _, _, _) ->
+generate_csnp(_, _, _, #state{system_id = SID}) when SID =:= undefined ->
     no_system_id;
-generate_csnp(Sys_ID, {Status, _}, Chunk_Size, Summary, State) ->
+generate_csnp({Status, _}, Chunk_Size, Summary,
+	      #state{system_id = Sys_ID} = State) ->
     Source = <<Sys_ID:6/binary, 0:8>>,
     PDU_Type =
 	case State#state.level of
@@ -828,7 +829,7 @@ update_ssn(LSP_Ids, #state{ssn = SSN} = State) ->
 %%--------------------------------------------------------------------
 -spec send_psnp(tuple()) -> tuple().
 send_psnp(#state{ssn = SSN} = State) ->
-    SID = isis_system:system_id(),
+    SID = State#state.system_id,
     Source = <<SID:6/binary, 0:8>>,
     PDU_Type =
 	case State#state.level of
@@ -916,7 +917,7 @@ handle_lsp(#isis_lsp{lsp_id = ID, remaining_lifetime = 0} = LSP, State) ->
 handle_lsp(#isis_lsp{lsp_id = ID, sequence_number = TheirSeq} = LSP,
 	   State) ->
     <<RemoteSys:6/binary, _Rest/binary>> = ID,
-    case RemoteSys =:= isis_system:system_id() of
+    case RemoteSys =:= State#state.system_id of
 	true -> handle_old_lsp(LSP, State);
 	_ ->
 	    L = isis_lspdb:lookup_lsps([ID], State#state.database),
@@ -1104,6 +1105,8 @@ set_values([{hello_interval, P} | Vs], State) ->
     set_values(Vs, State#state{hello_interval = P * 1000});
 set_values([{csnp_interval, P} | Vs], State) ->
     set_values(Vs, State#state{csnp_timer = P * 1000});
+set_values([{system_id, SID} | Vs], State) ->
+    set_values(Vs, State#state{system_id = SID});
 set_values([_ | Vs], State) ->
     set_values(Vs, State);
 set_values([], State) ->

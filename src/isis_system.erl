@@ -160,12 +160,12 @@ get_interface(Name) ->
 
 enable_level(Interface, level_1) ->
     case ets:lookup(isis_interfaces, Interface) of
-	[I] -> do_enable_level(I, level_1);
+	[I] -> do_enable_level(I, level_1, isis_system:system_id());
 	_ -> not_found
     end;
 enable_level(Interface, level_2) ->
     case ets:lookup(isis_interfaces, Interface) of
-	[I] -> do_enable_level(I, level_2);
+	[I] -> do_enable_level(I, level_2, isis_system:system_id());
 	_ -> not_found
     end;
 enable_level(_, _) ->
@@ -397,9 +397,7 @@ handle_call({set_system_id, undefined}, _From, State) ->
 			       system_id_set = false}};
 handle_call({set_system_id, Id}, _From, State)
   when is_binary(Id), byte_size(Id) =:= 6 ->
-    lager:info("System ID set to ~p", [Id]),
-    isis_lspdb:set_system_id(level_1, Id),
-    isis_lspdb:set_system_id(level_2, Id),
+    change_system_id(Id, State),
     NewState = 
 	case State#state.system_id =:= Id of
 	    true -> State;
@@ -662,10 +660,12 @@ do_enable_interface(#isis_interface{name = Name} = Interface, State) ->
 %%%===================================================================
 %%% Enable a level on an interface
 %%% ===================================================================
-do_enable_level(#isis_interface{pid = Pid}, Level) when is_pid(Pid) ->
+do_enable_level(#isis_interface{pid = Pid}, Level, SID) when is_pid(Pid) ->
     isis_interface:enable_level(Pid, Level),
+    LP = isis_interface:get_level_pid(Pid, Level),
+    isis_interface_level:set(LP, [{system_id, SID}]),
     ok;
-do_enable_level(_I, _Level) ->
+do_enable_level(_I, _Level, _State) ->
     not_enabled.
 
 %%%===================================================================
@@ -885,7 +885,7 @@ allocate_pseudonode(Pid, Level, #state{frags = Frags} = State) ->
     S2 = sets:from_list(lists:seq(1, 255)),
     %% Look away now - shuffle the available set of Pseudonodes
     L = [X||{_,X} <- lists:sort([ {random:uniform(), N} ||
-				    N <- sets:to_list(sets:subtract(S2, S1))])],
+    				    N <- sets:to_list(sets:subtract(S2, S1))])],
     NewPN = lists:nth(1, L),
     NewDict = dict:store(Pid, {Level, NewPN}, State#state.pseudonodes),
     NewFrag = create_frag(NewPN, Level),
@@ -1030,9 +1030,7 @@ autoconf_interface(#isis_interface{mac = Mac, name = Name} = I,
 		    _ -> <<ID:(6*8)>> = Mac,
 			 %%DynamicName = lists:flatten(io_lib:format("autoconf-~.16B", [ID])),
 			 {ok, DynamicName} = inet:gethostname(),
-			 isis_lspdb:set_system_id(level_1, Mac),
-			 isis_lspdb:set_system_id(level_2, Mac),
-			 lager:info("System ID set to ~p", [Mac]),
+			 change_system_id(Mac, State),
 			 NextState =
 			     set_tlv_hostname(DynamicName, State#state{system_id = Mac,
 								       system_id_set = true}),
@@ -1042,7 +1040,7 @@ autoconf_interface(#isis_interface{mac = Mac, name = Name} = I,
 	    %% Enable interface and level1...
 	    State2 = do_enable_interface(I, State1),
 	    [Interface] = ets:lookup(State2#state.interfaces, Name),
-	    do_enable_level(Interface, level_1),
+	    do_enable_level(Interface, level_1, State#state.system_id),
 	    LevelPid = isis_interface:get_level_pid(Interface#isis_interface.pid, level_1),
 	    isis_interface_level:set(LevelPid,
 				     [{encryption, text, <<"isis-autoconf">>},
@@ -1335,7 +1333,19 @@ should_withdraw_route(#isis_prefix{
 should_withdraw_route(_, _) ->
     true.
 
-    
+change_system_id(Id, State) ->
+    lager:info("System ID set to ~p", [Id]),
+    isis_lspdb:set_system_id(level_1, Id),
+    isis_lspdb:set_system_id(level_2, Id),
+    PropogateFun
+	= fun(I, L) ->
+		  case isis_interface:get_level_pid(I#isis_interface.pid, L) of
+		      not_enabled -> ok;
+		      P -> isis_interface_level:set(P, [{system_id, Id}])
+		  end
+	  end,
+    lists:map(fun(I) -> PropogateFun(I, level_1) end, ets:tab2list(State#state.interfaces)),
+    lists:map(fun(I) -> PropogateFun(I, level_2) end, ets:tab2list(State#state.interfaces)).
 
 set_state([{lsp_lifetime, Value} | Vs], State) ->
     set_state(Vs, State#state{max_lsp_lifetime = Value});

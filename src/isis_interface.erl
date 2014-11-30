@@ -96,6 +96,8 @@ get_state(Pid) ->
 set(Pid, Values) ->
     gen_server:call(Pid, {set, Values}).
 
+get_level_pid(undefined, _) ->
+    not_enabled;
 get_level_pid(Pid, Level) ->
     gen_server:call(Pid, {get_level_pid, Level}).
 
