@@ -407,8 +407,9 @@ handle_call({set_system_id, Id}, _From, State)
 		    false -> State
 		end
 	end,
-    {reply, ok, NewState#state{system_id = Id,
-			       system_id_set = true}};
+    NextState = NewState#state{system_id = Id,
+			       system_id_set = true},
+    {reply, ok, refresh_lsps(NextState)};
 handle_call({set_system_id, _}, _From, State) ->
     {reply, invalid_sid, State};
 
@@ -484,7 +485,9 @@ handle_cast({schedule_lsp_refresh},
     %% could stagger this a bit - have a fast first re-gen, followed
     %% by longer subsequent ones to allow the network to settle.
     %% io:format("LSP Refresh scheduled~n", []),
-    Timer = erlang:start_timer(2 * 1000, self(), lsp_refresh),
+    Timer = erlang:start_timer(
+	      isis_protocol:jitter(?ISIS_LSP_REFRESH_DELAY, ?ISIS_LSP_JITTER),
+	      self(), lsp_refresh),
     {noreply, State#state{refresh_timer = Timer}};
 handle_cast({schedule_lsp_refresh}, State) ->
     {noreply, State};
@@ -624,7 +627,7 @@ code_change(_OldVsn, State, _Extra) ->
 extract_args([{autoconf, true} | T], State) ->
     %% If we're autoconfig, we need a hardware-fingerprint
     extract_args(T, State#state{autoconf = true,
-				areas = [<<0:(13*8)>>]});
+     				areas = [<<0:(13*8)>>]});
 extract_args([{autoconf_fingerprint, FP} | T], State) ->
     %% If we're autoconfig, we need a hardware-fingerprint
     extract_args(T, State#state{fingerprint = FP});
@@ -686,8 +689,40 @@ refresh_lsps([], State) ->
 			 State#state.frags),
     State#state{frags = NewFrags}.
 
+%% Refresh LSPs - and if we refresh any pseudonode, mark our LSP
+%% to be refreshed next time around (ANVL 5.2 requirement)
 refresh_lsps(#state{frags = Frags} = State) ->
-    refresh_lsps(Frags, State).
+    DoRefresh = fun() -> refresh_lsps(lists:sort(fun frag_sort/2, Frags), State) end,
+    case length(lists:filter(fun(#lsp_frag{pseudonode = PN,
+					  updated = true}) when PN > 0 -> true;
+				(_) -> false
+			     end, Frags)) of
+	0 -> DoRefresh();
+	_ -> NS = DoRefresh(),
+	     schedule_lsp_refresh(),
+	     NS#state{frags = 
+			  lists:map(fun(#lsp_frag{pseudonode = 0, fragment = 0} = F) ->
+					    F#lsp_frag{updated = true};
+				       (F) -> F
+				    end, NS#state.frags)}
+    end.
+
+%% Sort the frag list into ascending order...
+frag_sort(#lsp_frag{pseudonode = AP},
+	  #lsp_frag{pseudonode = BP}) when AP < BP ->
+    true;
+frag_sort(#lsp_frag{pseudonode = AP},
+	  #lsp_frag{pseudonode = BP}) when AP > BP ->
+    false;
+frag_sort(#lsp_frag{fragment = AF},
+	  #lsp_frag{fragment = BF}) when AF < BF ->
+    true;
+frag_sort(#lsp_frag{fragment = AF},
+	  #lsp_frag{fragment = BF}) when AF > BF ->
+    false;
+frag_sort(#lsp_frag{level = AL},
+	  #lsp_frag{level = BL})  ->
+    AL < BL.
 
 %%%===================================================================
 %%% force_refresh_lsps - Ignore the 'updated flag' and force the
@@ -790,7 +825,8 @@ create_initial_frags(State) ->
 
 create_frag(PN, Level) when PN > 0, PN =< 255 ->
     #lsp_frag{level = Level,
-	      pseudonode = PN};
+	      pseudonode = PN,
+	      updated = true};
 create_frag(PN, Level) ->
     io:format("Tried to create PN ~p for ~p~n", [PN, Level]),
     error.
@@ -942,8 +978,8 @@ purge_lsps(MatchFun, State) ->
 %%--------------------------------------------------------------------
 purge_all_lsps(State) ->
     lager:error("!!!!!!!!!!!!!! ALL LSPS PURGED! !!!!!!!!!!!!!!!!", []),
-    NewFrags = purge_lsps(fun(_, _) -> true end, State),
-    State#state{frags = NewFrags}.
+    purge_lsps(fun(_, _) -> true end, State),
+    force_refresh_lsp(create_initial_frags(State)).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -1040,7 +1076,7 @@ autoconf_interface(#isis_interface{mac = Mac, name = Name} = I,
 	    %% Enable interface and level1...
 	    State2 = do_enable_interface(I, State1),
 	    [Interface] = ets:lookup(State2#state.interfaces, Name),
-	    do_enable_level(Interface, level_1, State#state.system_id),
+	    do_enable_level(Interface, level_1, State2#state.system_id),
 	    LevelPid = isis_interface:get_level_pid(Interface#isis_interface.pid, level_1),
 	    isis_interface_level:set(LevelPid,
 				     [{encryption, text, <<"isis-autoconf">>},

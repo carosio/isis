@@ -231,7 +231,6 @@ handle_cast({set_database}, State) ->
     {noreply, State#state{database = DB, iih_timer = Timer}};
 
 handle_cast({update_adjacency, up, Pid, {Sid, SNPA, Priority}}, State) ->
-    %% io:format("Adjacency with ~p now up~n", [Sid]),
     D = dict:store(Pid, {Sid, SNPA, Priority}, State#state.up_adjacencies),
     case State#state.are_we_dis of
 	true ->
@@ -322,19 +321,26 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+handle_iih(_, _, #state{system_id = SID} = State) when SID =:= undefined ->
+    %% Ignore IIH until we have a system id...
+    lager:debug("Ignoring IIH as no system_id set"),
+    State;
 handle_iih(From, IIH, #state{adj_handlers = Adjs} = State) ->
     {NewAdjs, NewUpAdjs, AdjPid} = 
 	case dict:find(From, Adjs) of
 	    {ok, {_SID, Pid}} ->
 		gen_fsm:send_event(Pid, {iih, IIH}),
-		UpAdj2 = 
-		    case dict:find(Pid, State#state.up_adjacencies) of
-			{ok, {A, B, _P}} -> dict:store(Pid, {A, B, IIH#isis_iih.priority},
-						      State#state.up_adjacencies);
-			_ -> State#state.up_adjacencies
-		    end,
+		%% UpAdj2 = 
+		%%     case dict:find(Pid, State#state.up_adjacencies) of
+		%% 	{ok, {A, B, _P}} ->
+		%% 	    dict:store(Pid, {A, B, IIH#isis_iih.priority},
+		%% 		       State#state.up_adjacencies);
+		%% 	_ -> State#state.up_adjacencies
+		%%     end,
+		UpAdj2 = State#state.up_adjacencies,
 		{Adjs, UpAdj2, Pid};
 	    _ ->
+		%% Start adj handler...
 		{ok, NewPid} = isis_adjacency:start_link([{neighbor, From},
 							  {interface, State#state.interface_ref,
 							   State#state.interface_name},
@@ -351,7 +357,6 @@ handle_iih(From, IIH, #state{adj_handlers = Adjs} = State) ->
                 State#state.priority, IIH#isis_iih.priority,
                 (From > State#state.snpa),
                From, State#state.snpa]),
-
     case dict:find(AdjPid, AdjState#state.up_adjacencies) of
 	{ok, _} -> handle_dis_election(From, IIH, AdjState);
 	_ -> AdjState
@@ -488,7 +493,7 @@ send_iih(#state{system_id = SID} = State) ->
 				   get_addresses(State, ipv6)),
 		     ?ISIS_IIH_IPV6COUNT),
     DIS = case State#state.dis of
-	      undef -> <<SID:6/binary, 0:8>>;
+	      undef -> <<0:(7*8)>>;
 	      D -> D
 	  end,
     {Circuit, PDUType} = 
@@ -791,10 +796,13 @@ send_lsps(LSPs, State) ->
     %% AuthTLV = authentication_tlv(State),
     lists:map(fun(#isis_lsp{} = L) ->
 		      %% NewTLVs = AuthTLV ++ TLVs,
-		      case isis_protocol:encode(L) of
+		      try isis_protocol:encode(L) of
 			  {ok, Bin, Len} -> send_pdu(lsp, Bin, Len, State);
-			  _ -> io:format("Failed to encode LSP ~p~n",
-					 [L#isis_lsp.lsp_id])
+			  _ -> lager:error("Failed to encode LSP ~p~n",
+					   [L#isis_lsp.lsp_id])
+		      catch
+			  Fail ->
+			      lager:error("Failed to encode: ~p (~p)", [L, Fail])
 		      end
 	      end, LSPs),
     ok.

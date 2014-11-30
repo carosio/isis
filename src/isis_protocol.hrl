@@ -25,6 +25,7 @@
 
 -define(ISIS_MIN_MSG_SIZE, 27).
 -define(ISIS_HELLO_JITTER, 25).
+-define(ISIS_LSP_JITTER, 25).
 -define(ISIS_PSNP_JITTER, 25).
 -define(ISIS_CSNP_JITTER, 25).
 
@@ -36,6 +37,7 @@
 -define(ISIS_IIH_IPV6COUNT, 15).
 
 -define(ISIS_MAX_LSP_LIFETIME, 1200).
+-define(ISIS_LSP_REFRESH_DELAY, 2000).
 -define(DEFAULT_EXPIRY_TIMER, 60).
 -define(DEFAULT_LSP_AGEOUT, 300).
 -define(DEFAULT_SPF_DELAY, 0.01).   %% 100ms
