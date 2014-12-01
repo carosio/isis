@@ -330,14 +330,13 @@ handle_iih(From, IIH, #state{adj_handlers = Adjs} = State) ->
 	case dict:find(From, Adjs) of
 	    {ok, {_SID, Pid}} ->
 		gen_fsm:send_event(Pid, {iih, IIH}),
-		%% UpAdj2 = 
-		%%     case dict:find(Pid, State#state.up_adjacencies) of
-		%% 	{ok, {A, B, _P}} ->
-		%% 	    dict:store(Pid, {A, B, IIH#isis_iih.priority},
-		%% 		       State#state.up_adjacencies);
-		%% 	_ -> State#state.up_adjacencies
-		%%     end,
-		UpAdj2 = State#state.up_adjacencies,
+		UpAdj2 = 
+		    case dict:find(Pid, State#state.up_adjacencies) of
+			{ok, {A, B, _P}} ->
+			    dict:store(Pid, {A, B, IIH#isis_iih.priority},
+				       State#state.up_adjacencies);
+			_ -> State#state.up_adjacencies
+		    end,
 		{Adjs, UpAdj2, Pid};
 	    _ ->
 		%% Start adj handler...
