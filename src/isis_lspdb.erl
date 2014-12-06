@@ -799,8 +799,8 @@ extract_ip_addresses(#isis_tlv_ip_internal_reachability{ip_reachability = R}, Ts
 							    default = #isis_metric_information{
 									 metric = Metric
 									}}) ->
-		      %% MAP Subnet mask to a len here!
-		      {#isis_address{afi = ipv4, address = A, mask = M, metric = Metric}, undefined}
+		      MaskLen = count_leading_ones(M),
+		      {#isis_address{afi = ipv4, address = A, mask = MaskLen, metric = Metric}, undefined}
 	      end, R)
 	++ Ts;
 extract_ip_addresses(#isis_tlv_extended_ip_reachability{reachability = R}, Ts) ->
@@ -879,3 +879,15 @@ remove_subscriber(Pid, #state{subscribers = Subscribers} = State) ->
 	    error ->Subscribers
 	end,
     State#state{subscribers = NewSubscribers}.
+
+count_leading_ones(B) when is_binary(B) ->
+    count_leading_ones(B, 0);
+count_leading_ones(B) ->
+    count_leading_ones(<<B:32>>, 0).
+
+count_leading_ones(<<>>, Acc) ->
+    Acc;
+count_leading_ones(<<1:1, R/bits>>, Acc) ->
+    count_leading_ones(R, Acc+1);
+count_leading_ones(<<0:1, _R/bits>>, Acc) ->
+    Acc.
