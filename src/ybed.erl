@@ -1,5 +1,6 @@
 -module(ybed).
--compile(export_all).
+
+-export([start/0, run/0]).
 
 -include_lib("yaws/include/yaws.hrl").
 
