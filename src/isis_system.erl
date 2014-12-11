@@ -28,6 +28,7 @@
 
 -include("isis_system.hrl").
 -include("isis_protocol.hrl").
+-include_lib("stdlib/include/ms_transform.hrl").
 
 %% API
 -export([start_link/1,
@@ -55,7 +56,7 @@
 	 %% System Name handling
 	 add_name/2, delete_name/1, lookup_name/1,
 	 %% Handle System ID mapping
-	 add_sid_addresses/2, delete_sid_addresses/2, delete_all_sid_addresses/1,
+	 add_sid_addresses/4, delete_sid_addresses/3, delete_all_sid_addresses/1,
 	 %% pseudonodes
 	 allocate_pseudonode/2, deallocate_pseudonode/2,
 	 %% Misc
@@ -83,7 +84,8 @@
 		redistributed_routes,
 		ignore_list = [],       %% Interfaces to ignore
 		allowed_list = [],
-		system_ids :: dict(),   %% SID -> Neighbor address
+		l1_system_ids :: dict(),   %% SID -> Neighbor address
+		l2_system_ids :: dict(),
 		refresh_timer = undef,
 		periodic_refresh,
 		names,
@@ -152,10 +154,18 @@ set_interface(Name, Level, Values) ->
 list_interfaces() ->
     ets:tab2list(isis_interfaces).
 
-get_interface(Name) ->
+get_interface(Name) when is_list(Name) ->
     case ets:lookup(isis_interfaces, Name) of
 	[I] -> I;
 	_ -> unknown
+    end;
+get_interface(IfIndex) when is_integer(IfIndex) ->
+    Ifs = ets:select(isis_interfaces,
+		     ets:fun2ms(fun(#isis_interface{name = N, ifindex = I} = If)
+				      when I =:= IfIndex -> If end)),
+    case length(Ifs) of
+	0 -> unknown;
+	_ -> lists:nth(1, Ifs)
     end.
 
 enable_level(Interface, level_1) ->
@@ -246,15 +256,15 @@ set_hostname(Name) ->
 process_spf(SPF) ->
     gen_server:cast(?MODULE, {process_spf, SPF}).
 
-add_sid_addresses(_, []) ->
+add_sid_addresses(_, _, _, []) ->
     ok;
-add_sid_addresses(SID, Addresses) ->
-    gen_server:cast(?MODULE, {add_sid, SID, Addresses}).
+add_sid_addresses(Level, SID, Metric, Addresses) ->
+    gen_server:cast(?MODULE, {add_sid, Level, SID, Metric, Addresses}).
 
-delete_sid_addresses(_, []) ->
+delete_sid_addresses(_, _, []) ->
     ok;
-delete_sid_addresses(SID, Addresses) ->
-    gen_server:cast(?MODULE, {delete_sid, SID, Addresses}).
+delete_sid_addresses(Level, SID, Addresses) ->
+    gen_server:cast(?MODULE, {delete_sid, Level, SID, Addresses}).
 
 delete_all_sid_addresses(Pid) ->
     gen_server:cast(?MODULE, {delete_all_sid, Pid}).
@@ -320,7 +330,8 @@ init(Args) ->
 					   {keypos, #isis_interface.name}]),
     Redist = ets:new(redistributed_routes, [named_table, bag,
 					    {keypos, #isis_route.route}]),
-    State = #state{system_ids = dict:new(),
+    State = #state{l1_system_ids = dict:new(),
+		   l2_system_ids = dict:new(),
 		   interfaces = Interfaces,
 		   redistributed_routes = Redist,
 		   pseudonodes = dict:new(),
@@ -497,49 +508,97 @@ handle_cast({update_tlv, TLV, Node, Level, Interface}, State) ->
 handle_cast({delete_tlv, TLV, Node, Level, Interface}, State) ->
     delete_tlv(TLV, Node, Level, Interface, State);
 
-handle_cast({add_sid, SID, Addresses}, #state{system_ids = IDs} = State) ->
+handle_cast({add_sid, Level, SID, Metric, Addresses}, State) ->
+    lager:error("Adding SID Address for level ~p ~p -> ~p", [Level, SID, Addresses]),
+    IDs = 
+	case Level of
+	    level_1 -> State#state.l1_system_ids;
+	    level_2 -> State#state.l2_system_ids
+	end,
+    %% Map IfIndex -> Cost
     D1 = case dict:find(SID, IDs) of
-	     error -> dict:store(SID, Addresses, IDs);
-	     {ok, As} ->
+	     error -> NT = gb_trees:enter(
+			     Metric, Addresses, gb_trees:empty()),
+		      dict:store(SID, NT, IDs);
+	     {ok, Tree} ->
 		 S1 = sets:from_list(Addresses),
-		 S2 = sets:from_list(As),
+		 S2 = sets:from_list(gb_trees:lookup(Metric, Tree)),
 		 NewAs = sets:to_list(sets:union([S1, S2])),
-		 dict:store(SID, NewAs, IDs)
+		 NewTree = gb_trees:enter(Metric, NewAs),
+		 dict:store(SID, NewTree, IDs)
 	 end,
-    isis_lspdb:schedule_spf(level_1, "Neighbor change"),
-    isis_lspdb:schedule_spf(level_2, "Neighbor change"),
-    {noreply, State#state{system_ids = D1}};
-handle_cast({delete_sid, SID, Addresses}, State) ->
-    D1 = case dict:find(SID, State#state.system_ids) of
-	     error -> State#state.system_ids;
-	     {ok, As} ->
-		 S1 = sets:from_list(As),
-		 S2 = sets:from_list(Addresses),
-		 NewAs = sets:to_list(sets:subtract(S1, S2)),
-		 dict:store(SID, NewAs, State#state.system_ids)
+    isis_lspdb:schedule_spf(Level, "Neighbor change"),
+    NewState = 
+	case Level of
+	    level_1 -> State#state{l1_system_ids = D1};
+	    level_2 -> State#state{l2_system_ids = D1}
+	end,
+    {noreply, NewState};
+handle_cast({delete_sid, Level, SID, Addresses}, State) ->
+    IDs = 
+	case Level of
+	    level_1 -> State#state.l1_system_ids;
+	    level_2 -> State#state.l2_system_ids
+	end,
+    D1 = case dict:find(SID, IDs) of
+	     error -> IDs;
+	     {ok, Tree} ->
+		 NewTree = 
+		     gb_trees:map(
+		       fun(_Metric, As) ->
+			       S1 = sets:from_list(As),
+			       S2 = sets:from_list(Addresses),
+			       sets:to_list(sets:subtract(S1, S2))
+		       end, Tree),
+		 dict:store(SID, NewTree, IDs)
 	 end,
-    {noreply, State#state{system_ids = D1}};
-handle_cast({delete_all_sid, Pid}, #state{system_ids = IDs} = State) ->
-    NewIDs = 
-	dict:filter(fun(_Key, Items) -> length(Items) > 0 end,
-		    dict:map(fun(_Key, Items) ->
-				     lists:filter(fun({_AFI, {_A, _I, DPid}}) -> DPid =/= Pid end, Items)
-			     end, IDs)),
-    {noreply, State#state{system_ids = NewIDs}};
+    NewState =
+	case Level of
+	    level_1 -> State#state{l1_system_ids = D1};
+	    level_2 -> State#state{l2_system_ids = D1}
+	end,
+    {noreply, NewState};
+handle_cast({delete_all_sid, Pid}, State) ->
+    F =
+	fun(IDs) -> 
+		dict:filter(
+		  fun(_Key, Tree) -> not gb_trees:is_empty(Tree) end,
+		  dict:map(
+		    fun(_Key, T2) ->
+			    Iter = gb_trees:iterator(T2),
+			    cull_tree(gb_trees:next(Iter), Pid, T2)
+		    end, IDs))
+	end,
+    {noreply, State#state{l1_system_ids = F(State#state.l1_system_ids),
+			  l2_system_ids = F(State#state.l2_system_ids)}};
 handle_cast({process_spf, {Level, Time, SPF, Reason}}, State) ->
+    IDs = 
+	case Level of
+	    level_1 -> extract_lowest_cost_hops(State#state.l1_system_ids);
+	    level_2 -> extract_lowest_cost_hops(State#state.l2_system_ids)
+	end,
     Table = 
 	lists:filtermap(
-	  fun({<<Node:7/binary>>, NHID, Metric, As, Nodes})
+	  fun({<<Node:7/binary>>, NHIDs, Metric, As, Paths})
 	     when is_list(As) ->
 		  case length(As) of
 		      0 -> false;
 		      _ ->
-			  case dict:find(NHID, State#state.system_ids) of
-			      {ok, NH} -> {true, {
-					     lookup_name(Node),
-					     lookup_name(NHID),
-					     NH, Metric, As, Nodes}};
-			      _ -> false
+			  NHs =
+			      lists:flatten(
+				lists:map(
+				  fun(NH) ->
+					  case dict:find(NH, IDs) of
+					      {ok, FNH} -> FNH;
+					      _ -> []
+					  end
+				  end, NHIDs)),
+			  case length(NHs) of
+			      0 -> false;
+			      _ -> {true, {
+				      lookup_name(Node),
+				      lists:map(fun(TNHID) -> lookup_name(TNHID) end, NHIDs),
+				      NHs, Metric, As, Paths}}
 			  end
 		  end;
 	     (_) -> false
@@ -1383,6 +1442,20 @@ change_system_id(Id, State) ->
     lists:map(fun(I) -> PropogateFun(I, level_1) end, ets:tab2list(State#state.interfaces)),
     lists:map(fun(I) -> PropogateFun(I, level_2) end, ets:tab2list(State#state.interfaces)).
 
+%%%===================================================================
+%% create_lowest_nexthop_map
+%%
+%% Convert the dict of (System -> {})
+%% into a map containing just the lowest cost nexthops.
+%%%===================================================================
+extract_lowest_cost_hops(IDs) ->
+    dict:map(
+      fun(_System, HopsTree) ->
+	      {_Metric, Hops, _NewTree} = 
+		  gb_trees:take_smallest(HopsTree),
+	      Hops
+      end, IDs).
+
 set_state([{lsp_lifetime, Value} | Vs], State) ->
     set_state(Vs, State#state{max_lsp_lifetime = Value});
 set_state([_ | Vs], State) ->
@@ -1395,10 +1468,10 @@ extract_state(lsp_lifetime, State) ->
 extract_state(reachability, State) ->
     State#state.reachability;
 extract_state(system_ids, State) ->
-    State#state.system_ids;
+    {State#state.l1_system_ids, State#state.l2_system_ids};
 extract_state(hostname, State) ->
     State#state.hostname;
-extract_state(_, State) ->
+extract_state(_, _State) ->
     unknown_item.
 
 dump_config_fields([{autoconf, true} | Fs], State) ->
@@ -1436,6 +1509,14 @@ dump_config(State) ->
     S = lists:zip(record_info(fields, state),
 		  tl(erlang:tuple_to_list(State))),
     dump_config_fields(S, State).
+
+cull_tree(none, _, T) -> T;
+cull_tree({Key, Value, Iter}, Pid, T) ->
+    NewValue = lists:filter(fun({_AFI, {_A, _I, DPid}}) -> DPid =/= Pid end, Value),
+    case length(NewValue) of
+	0 -> cull_tree(gb_trees:next(Iter), Pid, gb_trees:delete(Key, T));
+	_ -> cull_tree(gb_trees:next(Iter), Pid, gb_tree:enter(Key, NewValue))
+    end.
 
 %%
 %% Debug stuff

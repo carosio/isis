@@ -74,11 +74,19 @@ function connectToSPFFeed() {
 		    } else {
 			 From = ""
 		    }
+                    NexthopStr = "(";
+                    for(var y = 0; y < NewState.rib[0][i].nexthop.length; y++) {
+                         NexthopStr += NewState.rib[0][i].nexthop[y] + " via " +
+			    NewState.rib[0][i].interface[y];
+                         if (y+1 < NewState.rib[0][i].length) {
+                             NexthopStr += ", ";
+			 }
+		    }
+		    NexthopStr += ")"
                     Rib += NewState.rib[0][i].address + "/"
 			+ NewState.rib[0][i].mask + From + " -> "
-  			+ NewState.rib[0][i].nexthop + " via "
-			+ NewState.rib[0][i].interface + " ("
-			+ NewState.rib[0][i].nodepath + ")<BR>";
+  			+ "Nexthops: " + NexthopStr
+			+ " Paths: (" + NewState.rib[0][i].nodepath + ")<BR>";
 		}
             }
 	    document.getElementById('routingtable').innerHTML = Rib;

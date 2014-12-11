@@ -345,7 +345,8 @@ handle_iih(From, IIH, #state{adj_handlers = Adjs} = State) ->
 							   State#state.interface_name},
 							  {snpa, State#state.snpa},
 							  {level, IIH#isis_iih.pdu_type},
-							  {level_pid, self()}]),
+							  {level_pid, self()},
+							  {metric, State#state.metric}]),
 		erlang:monitor(process, NewPid),
 		gen_fsm:send_event(NewPid, {iih, IIH}),
 		{dict:store(From, {IIH#isis_iih.source_id, NewPid}, Adjs), State#state.up_adjacencies, NewPid}

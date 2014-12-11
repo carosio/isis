@@ -46,6 +46,7 @@
 	  neighbor_id,   %% Neighbor ID
 	  lan_id,        %% Who the negihbor believes is DIS
 	  priority,      %% Priority it advertises
+	  metric,        %% Our metric for this interface
 	  ip_addresses = [],  %% IP address of the neighbor
           ipv6_addresses = [], %% IPv6 address of the neighbor
 	  interface,     %% PID handling the interface
@@ -276,6 +277,8 @@ parse_args([{level, level1_iih} | T], State) ->
     parse_args(T, State#state{level = level_1});
 parse_args([{level, level2_iih} | T], State) ->
     parse_args(T, State#state{level = level_2});
+parse_args([{metric, M} | T], State) ->
+    parse_args(T, State#state{metric = M});
 parse_args([], State) ->
     State.
 
@@ -324,6 +327,7 @@ update_adjacency(Direction, State) ->
 verify_interface_addresses(IIH, #state{ip_addresses = IPAddresses,
 				       ipv6_addresses = IPv6Addresses} = State) ->
     IfIndex = get_ifindex(State),
+    Metric = State#state.metric,
     V4 = isis_protocol:filter_tlvs(isis_tlv_ip_interface_address, IIH#isis_iih.tlv),
     V4Addresses =
 	lists:flatten(
@@ -332,8 +336,8 @@ verify_interface_addresses(IIH, #state{ip_addresses = IPAddresses,
     V42 = sets:from_list(V4Addresses),
     V4Remove = lists:map(fun(F) -> {ipv4, {F, IfIndex, self()}} end, sets:to_list(sets:subtract(V41, V42))),
     V4Add = lists:map(fun(F) -> {ipv4, {F, IfIndex, self()}} end, sets:to_list(sets:subtract(V42, V41))),
-    isis_system:add_sid_addresses(IIH#isis_iih.source_id, V4Add),
-    isis_system:delete_sid_addresses(IIH#isis_iih.source_id, V4Remove),
+    isis_system:add_sid_addresses(State#state.level, IIH#isis_iih.source_id, Metric, V4Add),
+    isis_system:delete_sid_addresses(State#state.level, IIH#isis_iih.source_id, V4Remove),
 
     V6 = isis_protocol:filter_tlvs(isis_tlv_ipv6_interface_address, IIH#isis_iih.tlv),
     V6Addresses =
@@ -343,8 +347,8 @@ verify_interface_addresses(IIH, #state{ip_addresses = IPAddresses,
     V62 = sets:from_list(V6Addresses),
     V6Remove = lists:map(fun(F) -> {ipv6, {F, IfIndex, self()}} end, sets:to_list(sets:subtract(V61, V62))),
     V6Add = lists:map(fun(F) -> {ipv6, {F, IfIndex, self()}} end, sets:to_list(sets:subtract(V62, V61))),
-    isis_system:add_sid_addresses(IIH#isis_iih.source_id, V6Add),
-    isis_system:delete_sid_addresses(IIH#isis_iih.source_id, V6Remove),
+    isis_system:add_sid_addresses(State#state.level, IIH#isis_iih.source_id, Metric, V6Add),
+    isis_system:delete_sid_addresses(State#state.level, IIH#isis_iih.source_id, V6Remove),
     {up, State#state{ip_addresses = V4Addresses,
 		     ipv6_addresses = V6Addresses}}.
 

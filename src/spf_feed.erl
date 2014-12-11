@@ -132,19 +132,21 @@ generate_update(Time, Level, SPF, Reason) ->
 
     SendRoute = 
 	fun({#isis_address{afi = AFI, mask = Mask} = A, Source},
-	    NHs, Metric, Nodes) ->
-		{NHStr, IFIndex} = 
-		    case lists:keyfind(AFI, 1, NHs) of
-			{AFI, {NHA, NHI, _Pid}} ->
-			    {isis_system:address_to_string(AFI, NHA), NHI};
-			false -> {"unknown nexthop", no_ifindex}
-		    end,
+	    NHs, Metric, Paths) ->
+		%% Extract NHs matching AFI, map to {Address, Interface} string pair
+		NHList = lists:filtermap(
+			   fun({AFI, {NHA, NHI, _}}) ->
+				   NHIS =
+				       case dict:find(NHI, Interfaces) of
+					   {ok, Value} -> Value;
+					   _ -> "unknown"
+				       end,
+				   {true, {isis_system:address_to_string(AFI, NHA),
+					   NHIS}};
+			      ({_, {_, _, _}}) -> false
+			   end, NHs),
+		{NexthopList, InterfaceList} = lists:unzip(NHList),
 		AStr = isis_system:address_to_string(A),
-		InterfaceStr =
-		    case dict:find(IFIndex, Interfaces) of
-			{ok, Value} -> Value;
-			_ -> "unknown"
-		    end,
 		FromStr = 
 		    case Source of
 			undefined -> "";
@@ -155,14 +157,15 @@ generate_update(Time, Level, SPF, Reason) ->
 												     mask = SMask}),
 							 SMask]))
 		    end,
-		NodesStrList = lists:map(fun(N) -> isis_system:lookup_name(N) end, Nodes),
-		NodesStr = string:join(NodesStrList, ", "),
+		PathConv = fun(Path) -> string:join(lists:map(fun(P) -> isis_system:lookup_name(P) end, Path), ", ") end,
+		NodesStrList = lists:map(PathConv, Paths),
+		NodesStr = "(" ++ string:join(NodesStrList, ", ") ++ ")",
 		{true, {struct, [{"afi", atom_to_list(AFI)},
 				 {"address", AStr},
 				 {"mask", Mask},
 				 {"from", FromStr},
-				 {"nexthop", NHStr},
-				 {"interface", InterfaceStr},
+				 {"nexthop", NexthopList},
+				 {"interface", InterfaceList},
 				 {"nodepath", NodesStr}]}};
 	   (_, _, _, _) -> false
 	end,

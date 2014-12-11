@@ -55,7 +55,7 @@
 -define(ADD_TO_VISITED(Node, OldVisited), dict:store(Node, 'true', OldVisited)).
 %% Parents Abstractions
 -define(EMPTY_PARENTS, dict:new()).
--define(ADD_TO_PARENTS(Node, Cost, Prev, P), dict:store(Node, {Cost, Prev}, P)).
+-define(ADD_TO_PARENTS(Node, Cost, Prev, P), dict:store(Node, {Cost, [Prev]}, P)).
 
 %% ==========================================================
 %% Exported Functions
@@ -92,7 +92,12 @@ dijkstra_step(Graph, Heap, Visited, Parents) ->
       {Cost, Node, Prev, NewHeap} = ?GET_MIN_HEAP(Heap),
       case ?IS_VISITED(Node, Visited) of
         'true' ->
-          dijkstra_step(Graph, NewHeap, Visited, Parents);
+	  NewParents = 
+		  case dict:find(Node, Parents) of
+		      {ok, {Cost, Prevs}} -> dict:store(Node, {Cost, [Prev | Prevs]}, Parents);
+		      {ok, {_, _}} -> Parents
+		  end,
+          dijkstra_step(Graph, NewHeap, Visited, NewParents);
         'false' ->
           NewParents = ?ADD_TO_PARENTS(Node, Cost, Prev, Parents),
           NewVisited = ?ADD_TO_VISITED(Node, Visited),

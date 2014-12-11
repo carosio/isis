@@ -670,6 +670,8 @@ do_spf(undefined, _State) ->
     [];
 do_spf(SID, State) ->
     SysID = <<SID:6/binary, 0:8>>,
+    Edges = populate_links(State#state.db),
+    Graph = graph:empty(directed),
     Build_Graph =
 	fun({From, To}, Metric, G) ->
 		graph:add_vertex(G, From),
@@ -677,17 +679,15 @@ do_spf(SID, State) ->
 		graph:add_edge(G, From, To, Metric),
 		G
 	end,
-    Edges = populate_links(State#state.db),
-    Graph = graph:empty(directed),
     dict:fold(Build_Graph, Graph, Edges),
     DResult = dijkstra:run(Graph, SysID),
     RoutingTableF = 
-	fun({Node, {Metric, Nodes}}) when length(Nodes) >= 2 ->
+	fun({_, {_, []}}) -> false;
+	   ({Node, {Metric, Paths}}) ->
 		Prefixes = lookup_prefixes(Node, State),
-		Nexthop = get_nexthop(Nodes),
-		{true, {Node, Nexthop, Metric, Prefixes, Nodes}};
-	   ({_, {_, _}}) -> true;
-	   ({_, unreachable}) -> true
+		Nexthops = lists:filtermap(fun(P) -> get_nexthop(P) end, Paths),
+		{true, {Node, Nexthops, Metric, Prefixes, Paths}};
+	   ({_, unreachable}) -> false
 	end,
     graph:del_graph(Graph),
     RoutingTable = lists:filtermap(RoutingTableF, DResult),
@@ -721,17 +721,16 @@ lookup_prefixes(Node, State) ->
 get_nexthop(Nodes) when length(Nodes) >= 2 ->
     <<Candidate:6/binary, PN:8>> = lists:nth(2, Nodes),
     case PN of
-	0 -> Candidate;
+	0 -> {true, Candidate};
 	_ -> 
 	    case length(Nodes) >= 3 of
 		true -> <<Candidate2:6/binary, _:8>> = lists:nth(3, Nodes),
-			Candidate2;
-		_ -> unreachable
+			{true, Candidate2};
+		_ -> false
 	    end
     end;
 get_nexthop(Nodes) ->
-    io:format("Node list length was ~b!~n", [length(Nodes)]),
-    unreachable.
+    false.
 
 %%--------------------------------------------------------------------
 %% @private

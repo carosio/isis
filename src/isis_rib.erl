@@ -182,7 +182,6 @@ process_spf(SPF, #state{rib_api = RibApi} = State) ->
 						  mask_length = SMask};
 			      _ -> undefined
 			  end,
-		%% FIX zclient to handle multiple nexthops..
 		{Nexthops, IfIndexes} = lists:foldl(
 					  fun({NHAfi,{A, I, _Pid}}, {TNHs, TIFs})
 						when NHAfi =:= AFI -> {[A | TNHs], [I | TIFs]};
