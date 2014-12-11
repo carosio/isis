@@ -38,7 +38,7 @@
 -export([start_link/1, send_pdu/5, stop/1,
 	 get_state/3, get_state/1, set/2,
 	 enable_level/2, disable_level/2, levels/1, get_level_pid/2,
-	 clear_neighbors/1,
+	 clear_neighbors/1, clear_neighbors/2,
 	 dump_config/1]).
 
 %% Debug export
@@ -114,7 +114,10 @@ levels(Pid) ->
     gen_server:call(Pid, {levels}).
 
 clear_neighbors(Pid) ->
-    gen_server:cast(Pid, {clear_neighbors}).
+    gen_server:cast(Pid, {clear_neighbors, all}).
+
+clear_neighbors(Pid, Adjs) ->
+    gen_server:cast(Pid, {clear_neighbors, Adjs}).
 
 dump_config(Pid) ->
     gen_server:call(Pid, {dump_config}).
@@ -282,15 +285,15 @@ handle_cast({set, level_2, Values}, #state{level2 = P} = State)
 handle_cast({set, _, _}, State) ->
     {noreply, State};
 
-handle_cast({clear_neighbors}, #state{
+handle_cast({clear_neighbors, Which}, #state{
 				 level1 = Level1,
 				 level2 = Level2} = State) ->
     case is_pid(Level1) of
-	true -> isis_interface_level:clear_neighbors(Level1);
+	true -> isis_interface_level:clear_neighbors(Level1, Which);
 	_ -> no_level
     end,
     case is_pid(Level2) of
-	true -> isis_interface_level:clear_neighbors(Level2);
+	true -> isis_interface_level:clear_neighbors(Level2, Which);
 	_ -> no_level
     end,
     {noreply, State};
@@ -321,8 +324,8 @@ handle_info({_port, {data,
 		lager:error("Failed to decode: ~p", [PDU]),
 		State
 	catch
-	    Fail -> 
-		lager:error("Failed to decode: ~p (~p)", [PDU, Fail]),
+	    Class:Fail -> 
+		lager:error("Failed to decode: ~p (~p:~p)", [PDU, Class, Fail]),
 		State
 	end,
     {noreply, NewState};

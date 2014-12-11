@@ -33,7 +33,7 @@
 
 %% API
 -export([start_link/1, get_state/1, get_state/2, set/2,
-	 update_adjacency/3, clear_neighbors/1,
+	 update_adjacency/3, clear_neighbors/2,
 	 dump_config/3]).
 
 %% gen_server callbacks
@@ -91,8 +91,8 @@ set(Pid, Values) ->
 update_adjacency(Pid, Direction, {Neighbor, Mac, Priority}) ->
     gen_server:cast(Pid, {update_adjacency, Direction, self(), {Neighbor, Mac, Priority}}).
 
-clear_neighbors(Pid) ->
-    gen_server:call(Pid, {clear_neighbors}).
+clear_neighbors(Pid, Which) ->
+    gen_server:call(Pid, {clear_neighbors, Which}).
 
 dump_config(Name, Level, Pid) ->
     gen_server:call(Pid, {dump_config, Name, Level}).
@@ -173,12 +173,23 @@ handle_call({get_state, authentication}, _From, State) ->
     {reply, {State#state.authentication_type,
 	     State#state.authentication_key}, State};
 
-handle_call({clear_neighbors}, _From, State) ->
+handle_call({clear_neighbors, all}, _From, State) ->
     dict:map(fun(_, {_, Pid}) ->
 		     gen_fsm:send_event(Pid, stop)
 	     end,
 	     State#state.adj_handlers),
     {reply, ok, State};
+handle_call({clear_neighbors, Which}, _From, State) ->
+    lists:map(
+      fun(A) ->
+	      case dict:find(A, State#state.adj_handlers) of
+		  {ok, {_Sid, Pid}} ->
+		      gen_fsm:send_event(Pid, stop);
+		  _ -> ok
+	      end
+      end, Which),
+    {reply, ok, State};
+	
 
 handle_call({dump_config, Name, Level}, _From, State) ->
     dump_config_state(Name, Level, State),
@@ -801,7 +812,7 @@ send_lsps(LSPs, State) ->
 			  _ -> lager:error("Failed to encode LSP ~p~n",
 					   [L#isis_lsp.lsp_id])
 		      catch
-			  Fail ->
+			  error:Fail ->
 			      lager:error("Failed to encode: ~p (~p)", [L, Fail])
 		      end
 	      end, LSPs),

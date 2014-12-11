@@ -977,7 +977,7 @@ allocate_pseudonode(Pid, Level, #state{frags = Frags} = State) ->
 		  end
 	  end, ets:tab2list(isis_lspdb:get_db(Level))),
     S1 = sets:union(S0, sets:from_list(InUseFrags)),
-    S2 = sets:from_list(lists:seq(1, 255)),
+    S2 = sets:from_list(lists:seq(1, 254)),
     %% Look away now - shuffle the available set of Pseudonodes
     L = [X||{_,X} <- lists:sort([ {random:uniform(), N} ||
     				    N <- sets:to_list(sets:subtract(S2, S1))])],
