@@ -698,7 +698,8 @@ extract_args([{autoconf_fingerprint, FP} | T], State) ->
     %% If we're autoconfig, we need a hardware-fingerprint
     extract_args(T, State#state{fingerprint = FP});
 extract_args([{system_id, Id} | T], State) ->
-    extract_args(T, State#state{system_id = Id});
+    extract_args(T, State#state{system_id_set = true,
+				system_id = Id});
 extract_args([{areas, Areas} | T], State) ->
     extract_args(T, State#state{areas = Areas});
 extract_args([{ignore_interfaces, Is} | T], State) ->
