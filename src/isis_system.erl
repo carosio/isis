@@ -521,11 +521,18 @@ handle_cast({add_sid, Level, SID, Metric, Addresses}, State) ->
 			     Metric, Addresses, gb_trees:empty()),
 		      dict:store(SID, NT, IDs);
 	     {ok, Tree} ->
-		 S1 = sets:from_list(Addresses),
-		 S2 = sets:from_list(gb_trees:lookup(Metric, Tree)),
-		 NewAs = sets:to_list(sets:union([S1, S2])),
-		 NewTree = gb_trees:enter(Metric, NewAs),
-		 dict:store(SID, NewTree, IDs)
+		 case gb_trees:lookup(Metric, Tree) of
+		     %% 'none' case should not happen, but we handle it just in case...
+		     none -> NT = gb_trees:enter(
+				    Metric, Addresses, gb_trees:empty()),
+			     dict:store(SID, NT, IDs);
+		     {value, V} ->
+			 S1 = sets:from_list(Addresses),
+			 S2 = sets:from_list(V),
+			 NewAs = sets:to_list(sets:union([S1, S2])),
+			 NewTree = gb_trees:enter(Metric, NewAs, Tree),
+			 dict:store(SID, NewTree, IDs)
+		 end
 	 end,
     isis_lspdb:schedule_spf(Level, "Neighbor change"),
     NewState = 
@@ -1515,7 +1522,7 @@ cull_tree({Key, Value, Iter}, Pid, T) ->
     NewValue = lists:filter(fun({_AFI, {_A, _I, DPid}}) -> DPid =/= Pid end, Value),
     case length(NewValue) of
 	0 -> cull_tree(gb_trees:next(Iter), Pid, gb_trees:delete(Key, T));
-	_ -> cull_tree(gb_trees:next(Iter), Pid, gb_tree:enter(Key, NewValue))
+	_ -> cull_tree(gb_trees:next(Iter), Pid, gb_trees:enter(Key, NewValue, T))
     end.
 
 %%
