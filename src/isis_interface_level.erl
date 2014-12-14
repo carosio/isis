@@ -906,11 +906,12 @@ handle_psnp(#isis_psnp{tlv = TLVs}, State) ->
 			    end
 		    end,
 		    [], TLVs),
-    FilterFun = fun(#isis_tlv_lsp_entry_detail{lifetime = L, sequence = S, checksum = C}) ->
-			(L == 0) and (S == 0) and (C == 0)
-		end,
-    Filtered = lists:filter(FilterFun, PSNP_LSPs),
-    LSP_Ids = lists:map(fun(F) -> F#isis_tlv_lsp_entry_detail.lsp_id end, Filtered),
+    %% FilterFun = fun(#isis_tlv_lsp_entry_detail{lifetime = L, sequence = S, checksum = C}) ->
+    %% 			(L == 0) and (S == 0) and (C == 0)
+    %% 		end,
+    %% Filtered = lists:filter(FilterFun, PSNP_LSPs),
+    %% LSP_Ids = lists:map(fun(F) -> F#isis_tlv_lsp_entry_detail.lsp_id end, Filtered),
+    LSP_Ids = lists:map(fun(F) -> F#isis_tlv_lsp_entry_detail.lsp_id end, PSNP_LSPs),
     LSPs = isis_lspdb:lookup_lsps(LSP_Ids, State#state.database),
     send_lsps(LSPs, State),
     ok.
