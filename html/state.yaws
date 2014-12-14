@@ -6,6 +6,8 @@
 	   metric = 10 :: integer(),
 	   flags :: integer(),
 	   enabled = false :: atom(),
+	   status :: integer(),
+	   bandwidth :: integer(),
 	   pid :: pid(),
 	   addresses = [] :: [],
 	   ifindex :: integer(),
@@ -15,6 +17,7 @@
 
 -record (isis_lsp, {
 	   lsp_id,
+	   id_length,
 	   last_update,
 	   version,
 	   pdu_type,
