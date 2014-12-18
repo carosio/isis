@@ -57,8 +57,9 @@ init(_Args) ->
     {ok, #state{}}.
 
 handle_message({text, <<"start level_1">>}, State) ->
-    isis_lspdb:subscribe(level_1, self()),
-    isis_lspdb:initial_state(level_1, self()),
+    lager:error("Subscription for l1 received"),
+    isis_lspdb:subscribe(level_1, self(), web),
+    isis_lspdb:initial_state(level_1, self(), web),
     {noreply, State#state{level = level_1}};
 
 handle_message({text, <<"start level_2">>}, State) ->
@@ -69,7 +70,7 @@ handle_message({close, Status, _Reason}, State) ->
     {close, Status, State};
 
 handle_message(Any, State) ->
-    error_logger:error_msg("Received ~p (~p)", [Any, State]),
+    error_logger:error_msg("Received ~p (~p) ~p", [Any, State, ?MODULE]),
     {noreply, State}.
 
 terminate(_Reason, #state{level = L}) when L =/= undefined ->
