@@ -312,21 +312,28 @@ handle_cast(_Msg, State) ->
 %% @end
 %%--------------------------------------------------------------------
 handle_info({_port, {data,
-		     <<_To:6/binary, From:6/binary, _Len:16,
-		       16#FE:8, 16#FE:8, 3:8, PDU/binary>>}},
+		     <<_To:6/binary, From:6/binary, Len:16,
+		       16#FE:8, 16#FE:8, 3:8, PDU/binary>> = B}},
 	    State) ->
     NewState = 
-	try isis_protocol:decode(PDU) of
-	    {ok, DecodedPDU} ->
-		handle_pdu(From, DecodedPDU, State),
-		State;
-	    _ ->
-		lager:error("Failed to decode: ~p", [PDU]),
-		State
-	catch
-	    Class:Fail -> 
-		lager:error("Failed to decode: ~p (~p:~p)", [PDU, Class, Fail]),
-		State
+	case (Len - 3) =< byte_size(PDU) of
+	true ->
+		Bytes = Len - 3,
+		<<FinalPDU:Bytes/binary, _Tail/binary>> = PDU,
+		case catch isis_protocol:decode(FinalPDU) of
+		    {ok, DecodedPDU} ->
+			handle_pdu(From, DecodedPDU, State),
+			State;
+		    {'EXIT', Reason} ->
+			lager:error("Len: ~p B: ~p", [Len, B]),
+			lager:error("Failed to decode: ~p for ~p", [PDU, Reason]),
+			State;
+		    CatchAll ->
+			lager:error("Failed to decode: ~p", [CatchAll]),
+			State
+		end;
+	    _ -> lager:error("PDU received is shorter than size: ~p ~p", [Len, PDU]),
+		 State
 	end,
     {noreply, NewState};
 
