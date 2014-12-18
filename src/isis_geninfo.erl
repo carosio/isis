@@ -211,11 +211,13 @@ register(#isis_geninfo_client{app = AppID, ip = AppIP} = GI, Pid,
     end.
 				     
 unregister(Pid, #state{clients = C} = State) ->
-    NewC = dict:filter(fun(K, _) when K =:= Pid ->
-			       false;
-			  (_, _) ->
-			       true
-		       end, C),
+    NewC =
+	dict:filter(fun(K, GI) when K =:= Pid ->
+			    remove_all_tlvs(GI),
+			    false;
+		       (_, _) ->
+			    true
+		    end, C),
     State#state{clients = NewC}.
 
 start_timer(#state{refresh_timer = RT} = State) when RT =:= undefined ->
@@ -296,6 +298,20 @@ announce_frag(#isis_geninfo_frag{tlvs = TLVs,
        remaining_size = RS,
        previous_encode = Gunk,
        updated = false}.
+
+remove_all_tlvs(#isis_geninfo_client{
+		   app = App, ip = IP, level = Level,
+		   frags = Frags}) ->
+    lists:map(
+      fun(#isis_geninfo_frag{
+	    previous_encode = PE}) when PE =/= <<>> ->
+	      isis_system:delete_tlv(#isis_tlv_geninfo{
+					application_id = App,
+					application_ip_address = IP,
+					application_gunk = PE},
+				     0, Level, undefined);
+	 (_) -> ok
+      end, Frags).
 
 %% Extract just the geninfo TLVs
 extract_geninfo(TLVs) ->
