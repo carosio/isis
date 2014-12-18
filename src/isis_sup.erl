@@ -103,11 +103,13 @@ init([]) ->
 	    Restart, Shutdown, Type, [isis_system, isis_protocol, isis_enum]},
     ISISRib = {isis_rib, {isis_rib, start_link, []},
 	       permanent, 10000, worker, []},
+    ISISGenInfo = {isis_geninfo, {isis_geninfo, start_link, []},
+		   permanent, 10000, worker, []},
     %% Demo = {demo, {demo, start_link, []},
     %%  	    permanent, 1000, worker, []},
     Webserver = {ybed_sup, {ybed_sup, start_link, []},
       		 permanent, 10000, supervisor, []},
-    {ok, {SupFlags, [SPFSummary, RibChild, L1DB, L2DB, ISIS, ISISRib
+    {ok, {SupFlags, [SPFSummary, RibChild, L1DB, L2DB, ISIS, ISISRib, ISISGenInfo
 		    , Webserver %% , Demo
 		    ]}}.
 
