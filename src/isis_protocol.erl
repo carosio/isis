@@ -230,8 +230,9 @@ decode_tlv_extended_ip_reachability(
 	case SubTLV_Present of
 	    0 -> {[], Rest2} ;
 	    1 ->
-		<<SubTLV_Len:8, SubTLVb:SubTLV_Len/binary, Rest3/binary>> = Rest,
-		{decode_tlvs(SubTLVb, subtlv_eir, fun decode_subtlv_eir/3, []), Rest3}
+		<<SubTLV_Len:8, SubTLVb:SubTLV_Len/binary, Rest3/binary>> = Rest2,
+		{ok, STLVs} = {decode_tlvs(SubTLVb, subtlv_eir, fun decode_subtlv_eir/3, []), Rest3},
+		{STLVs, Rest3}
 	end,
     UpA = isis_enum:to_atom(boolean, Up),
     EIR = #isis_tlv_extended_ip_reachability_detail{
@@ -363,6 +364,33 @@ decode_tlv(restart, _Type,
        supress_adjacency = isis_enum:to_atom(boolean, Supress),
        remaining = Remaining,
        neighbor = Neighbor};
+decode_tlv(geninfo, _Type,
+	   <<_Reserved:4, 0:1, 1:1, D:1, S:1, AppID:16, Ip:32, AppGunk/binary>>) ->
+    #isis_tlv_geninfo{
+       d_bit = isis_enum:to_atom(D),
+       s_bit = isis_enum:to_atom(S),
+       application_id = AppID,
+       application_ip_address = #isis_address{afi = ipv4, address = Ip},
+       application_gunk = AppGunk
+      };
+decode_tlv(geninfo, _Type,
+	   <<_Reserved:4, 1:1, 0:1, D:1, S:1, AppID:16, Ip:16/binary, AppGunk/binary>>) ->
+    #isis_tlv_geninfo{
+       d_bit = isis_enum:to_atom(D),
+       s_bit = isis_enum:to_atom(S),
+       application_id = AppID,
+       application_ip_address = #isis_address{afi = ipv6, address = Ip},
+       application_gunk = AppGunk
+      };
+decode_tlv(geninfo, _Type,
+	   <<_Reserved:4, 0:1, 0:1, D:1, S:1, AppID:16, AppGunk/binary>>) ->
+    #isis_tlv_geninfo{
+       d_bit = isis_enum:to_atom(D),
+       s_bit = isis_enum:to_atom(S),
+       application_id = AppID,
+       application_ip_address = undefined,
+       application_gunk = AppGunk
+      };
 decode_tlv(hardware_fingerprint, _Type, <<FP/binary>>) ->
     #isis_tlv_hardware_fingerprint{fingerprint = FP};
 decode_tlv(unknown, Type, Value) ->
@@ -586,6 +614,22 @@ encode_tlv(#isis_tlv_protocols_supported{protocols = Protocols}) ->
     encode_tlv_list(protocols_supported, tlv, Ps);
 encode_tlv(#isis_tlv_te_router_id{router_id = Router_Id}) ->
     encode_tlv(te_router_id, tlv, <<Router_Id:32>>);
+encode_tlv(#isis_tlv_geninfo{d_bit = D, s_bit = S,
+			     application_id = AppID,
+			     application_ip_address = AppAddress,
+			     application_gunk = AppGunk}) ->
+    {AFlags, Address} = 
+	case AppAddress of
+	    undefined -> {<<0:2>>, <<>>};
+	    #isis_address{afi = AFI,
+			  address = Addr} ->
+		case AFI of
+		    ipv4 -> {<<0:1, 1:1>>, <<Addr:32>>};
+		    ipv6 -> {<<1:1, 0:1>>, Addr}
+		end
+	end,
+    Flags = <<0:4, AFlags/bitstring, (isis_enum:to_int(boolean, D)):1, (isis_enum:to_int(boolean, S)):1>>,
+    encode_tlv(geninfo, tlv, <<Flags/bitstring, AppID:16, Address/binary, AppGunk/binary>>);
 encode_tlv(#isis_tlv_hardware_fingerprint{fingerprint = FP}) ->
     encode_tlv(hardware_fingerprint, tlv, FP);
 encode_tlv(#isis_tlv_unknown{type = Type, bytes = Bytes}) ->
@@ -670,6 +714,10 @@ do_delete_tlv(#isis_tlv_extended_ip_reachability{} = TLV,
 do_delete_tlv(#isis_tlv_ipv6_reachability{} = TLV,
 	   Node, Level, Frags) ->
     delete_array_tlv(TLV, Node, Level, Frags);
+do_delete_tlv(#isis_tlv_geninfo{} = TLV,
+	      Node, Level, Frags) ->
+    delete_whole_tlv(fun(T) -> T =/= TLV end,
+		     Node, Level, Frags);
 do_delete_tlv(TLV, Node, Level, Frags) ->
     delete_whole_tlv(fun(T) -> element(1, T) =/= element(1, TLV) end,
 		     Node, Level, Frags).
@@ -1307,6 +1355,7 @@ decode_pdu(Type, _Header, PDU_Len, Rest) when
     end;
 decode_pdu(Type, _Header, PDU_Len, Rest) when
       Type == level1_psnp; Type == level2_psnp ->
+    lager:error("Handling PSNP packet..."),
     case decode_common_psnp(Rest, PDU_Len) of
 	error -> throw(decode_error);
 	{ok, PSNP} ->
@@ -1591,6 +1640,15 @@ do_pp_tlv(#isis_tlv_extended_ip_reachability{reachability = R}) ->
 	     end, R);
 do_pp_tlv(#isis_tlv_te_router_id{router_id = ID}) ->
     isis_system:address_to_string(ipv4, ID);
+do_pp_tlv(#isis_tlv_geninfo{application_id = ID, application_ip_address = IP,
+			    application_gunk = G}) ->
+    lists:flatten(
+      io_lib:format("App ID: ~B, App IP: ~s, Data: ~p",
+		    [ID,
+		     case IP of
+			 undefined -> "undefined";
+			 _ -> isis_system:address_to_string(IP)
+		     end, G]));
 do_pp_tlv(#isis_tlv_unknown{bytes = B}) ->
     lists:flatten(io_lib:format("~p", [B]));
 do_pp_tlv(T) ->
