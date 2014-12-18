@@ -8,32 +8,18 @@
 %%% This file is part of AutoISIS.
 %%%
 %%% License:
-%%% AutoISIS can be used (at your option) under the following GPL or under
-%%% a commercial license
+%%% This code is licensed to you under the Apache License, Version 2.0
+%%% (the "License"); you may not use this file except in compliance with
+%%% the License. You may obtain a copy of the License at
 %%% 
-%%% Choice 1: GPL License
-%%% AutoISIS is free software; you can redistribute it and/or modify it
-%%% under the terms of the GNU General Public License as published by the
-%%% Free Software Foundation; either version 2, or (at your option) any
-%%% later version.
+%%%   http://www.apache.org/licenses/LICENSE-2.0
 %%% 
-%%% AutoISIS is distributed in the hope that it will be useful, but
-%%% WITHOUT ANY WARRANTY; without even the implied warranty of
-%%% MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See 
-%%% the GNU General Public License for more details.
-%%% 
-%%% You should have received a copy of the GNU General Public License
-%%% along with GNU Zebra; see the file COPYING.  If not, write to the Free
-%%% Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
-%%% 02111-1307, USA.
-%%% 
-%%% Choice 2: Commercial License Usage
-%%% Licensees holding a valid commercial AutoISIS may use this file in 
-%%% accordance with the commercial license agreement provided with the 
-%%% Software or, alternatively, in accordance with the terms contained in 
-%%% a written agreement between you and the Copyright Holder.  For
-%%% licensing terms and conditions please contact us at 
-%%% licensing@netdef.org
+%%% Unless required by applicable law or agreed to in writing,
+%%% software distributed under the License is distributed on an
+%%% "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+%%% KIND, either express or implied.  See the License for the
+%%% specific language governing permissions and limitations
+%%% under the License.
 %%%
 %%% @end
 %%% Created :  7 Feb 2014 by Rick Payne <rickp@rossfell.co.uk>
@@ -47,7 +33,7 @@
 
 %% API
 -export([start_link/1, get_state/1, get_state/2, set/2,
-	 update_adjacency/3, clear_neighbors/1,
+	 update_adjacency/3, clear_neighbors/2,
 	 dump_config/3]).
 
 %% gen_server callbacks
@@ -61,6 +47,7 @@
 	  level,           %% The level
 	  interface_ref,   %% Interface
 	  interface_name,
+	  system_id,       %% Cached system_id
 	  snpa,            %% Our mac address
 	  mtu,
 	  database = undef, %% The LSPDB reference
@@ -104,8 +91,8 @@ set(Pid, Values) ->
 update_adjacency(Pid, Direction, {Neighbor, Mac, Priority}) ->
     gen_server:cast(Pid, {update_adjacency, Direction, self(), {Neighbor, Mac, Priority}}).
 
-clear_neighbors(Pid) ->
-    gen_server:call(Pid, {clear_neighbors}).
+clear_neighbors(Pid, Which) ->
+    gen_server:call(Pid, {clear_neighbors, Which}).
 
 dump_config(Name, Level, Pid) ->
     gen_server:call(Pid, {dump_config, Name, Level}).
@@ -162,7 +149,7 @@ init(Args) ->
 %% @end
 %%--------------------------------------------------------------------
 handle_call({send_iih}, _From, State) ->
-    send_iih(isis_system:system_id(), State),
+    send_iih(State),
     {reply,ok, State};
 
 handle_call({get_state}, _From, State) ->
@@ -186,12 +173,23 @@ handle_call({get_state, authentication}, _From, State) ->
     {reply, {State#state.authentication_type,
 	     State#state.authentication_key}, State};
 
-handle_call({clear_neighbors}, _From, State) ->
+handle_call({clear_neighbors, all}, _From, State) ->
     dict:map(fun(_, {_, Pid}) ->
 		     gen_fsm:send_event(Pid, stop)
 	     end,
 	     State#state.adj_handlers),
     {reply, ok, State};
+handle_call({clear_neighbors, Which}, _From, State) ->
+    lists:map(
+      fun(A) ->
+	      case dict:find(A, State#state.adj_handlers) of
+		  {ok, {_Sid, Pid}} ->
+		      gen_fsm:send_event(Pid, stop);
+		  _ -> ok
+	      end
+      end, Which),
+    {reply, ok, State};
+	
 
 handle_call({dump_config, Name, Level}, _From, State) ->
     dump_config_state(Name, Level, State),
@@ -244,7 +242,6 @@ handle_cast({set_database}, State) ->
     {noreply, State#state{database = DB, iih_timer = Timer}};
 
 handle_cast({update_adjacency, up, Pid, {Sid, SNPA, Priority}}, State) ->
-    %% io:format("Adjacency with ~p now up~n", [Sid]),
     D = dict:store(Pid, {Sid, SNPA, Priority}, State#state.up_adjacencies),
     case State#state.are_we_dis of
 	true ->
@@ -280,7 +277,7 @@ handle_cast(_Msg, State) ->
 %%--------------------------------------------------------------------
 handle_info({timeout, _Ref, iih}, State) ->
     cancel_timers([State#state.iih_timer]),
-    send_iih(isis_system:system_id(), State),
+    send_iih(State),
     Timer = start_timer(iih, State),
     {noreply, State#state{iih_timer = Timer}};
 
@@ -335,6 +332,10 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+handle_iih(_, _, #state{system_id = SID} = State) when SID =:= undefined ->
+    %% Ignore IIH until we have a system id...
+    lager:debug("Ignoring IIH as no system_id set"),
+    State;
 handle_iih(From, IIH, #state{adj_handlers = Adjs} = State) ->
     {NewAdjs, NewUpAdjs, AdjPid} = 
 	case dict:find(From, Adjs) of
@@ -342,18 +343,21 @@ handle_iih(From, IIH, #state{adj_handlers = Adjs} = State) ->
 		gen_fsm:send_event(Pid, {iih, IIH}),
 		UpAdj2 = 
 		    case dict:find(Pid, State#state.up_adjacencies) of
-			{ok, {A, B, P}} -> dict:store(Pid, {A, B, IIH#isis_iih.priority},
-						      State#state.up_adjacencies);
+			{ok, {A, B, _P}} ->
+			    dict:store(Pid, {A, B, IIH#isis_iih.priority},
+				       State#state.up_adjacencies);
 			_ -> State#state.up_adjacencies
 		    end,
 		{Adjs, UpAdj2, Pid};
 	    _ ->
+		%% Start adj handler...
 		{ok, NewPid} = isis_adjacency:start_link([{neighbor, From},
 							  {interface, State#state.interface_ref,
 							   State#state.interface_name},
 							  {snpa, State#state.snpa},
 							  {level, IIH#isis_iih.pdu_type},
-							  {level_pid, self()}]),
+							  {level_pid, self()},
+							  {metric, State#state.metric}]),
 		erlang:monitor(process, NewPid),
 		gen_fsm:send_event(NewPid, {iih, IIH}),
 		{dict:store(From, {IIH#isis_iih.source_id, NewPid}, Adjs), State#state.up_adjacencies, NewPid}
@@ -364,7 +368,6 @@ handle_iih(From, IIH, #state{adj_handlers = Adjs} = State) ->
                 State#state.priority, IIH#isis_iih.priority,
                 (From > State#state.snpa),
                From, State#state.snpa]),
-
     case dict:find(AdjPid, AdjState#state.up_adjacencies) of
 	{ok, _} -> handle_dis_election(From, IIH, AdjState);
 	_ -> AdjState
@@ -385,7 +388,7 @@ handle_iih(From, IIH, #state{adj_handlers = Adjs} = State) ->
 %%--------------------------------------------------------------------
 -spec handle_dis_election(binary(), isis_iih(), tuple()) -> tuple().
 handle_dis_election(From, 
-		    #isis_iih{priority = TheirP, dis = <<D:6/binary, DPN:8>> = DIS, source_id = SID} = IIH,
+		    #isis_iih{priority = TheirP, dis = <<D:6/binary, DPN:8>> = DIS, source_id = SID},
 		    #state{priority = OurP, snpa = OurSNPA, dis = CurrentDIS} = State)
   when TheirP > OurP; TheirP == OurP, From > OurSNPA ->
     DIS_Priority = 
@@ -408,8 +411,8 @@ handle_dis_election(From,
 		 State#state{dis = DIS, dis_priority = DIS_Priority, are_we_dis = false}
 	end,
     NewState;
-handle_dis_election(From,
-		    #isis_iih{priority = _TheirP, dis = DIS, source_id = SID},
+handle_dis_election(_From,
+		    #isis_iih{},
 		    #state{priority = OurP, are_we_dis = Us, snpa = OurM} = State)
   when Us =:= false ->
     %% Any one else likely to take over?
@@ -436,7 +439,7 @@ assume_dis(State) ->
     lager:info("Allocated pseudo-node ~p to ~p ~s~n",
 	       [Node, State#state.level,  State#state.interface_name]),
     DIS_Timer = start_timer(dis, State),
-    ID = isis_system:system_id(),
+    ID = State#state.system_id,
     SysID = <<ID:6/binary, 0:8>>,
     DIS = <<ID:6/binary, Node:8>>,
     NewState = State#state{dis = DIS, dis_timer = DIS_Timer,
@@ -450,7 +453,7 @@ assume_dis(State) ->
 		     update_reachability_tlv(add, <<AdjID:6/binary, 0:8>>, Node, 0, State)
 	     end, State#state.up_adjacencies),
     isis_system:schedule_lsp_refresh(),
-    send_iih(ID, NewState),
+    send_iih(NewState),
     NewState.
 
 relinquish_dis(#state{are_we_dis = true,
@@ -488,9 +491,9 @@ remove_adjacency(_) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
-send_iih(SID, _State) when SID =:= undefined; byte_size(SID) =/= 6 ->
+send_iih(#state{system_id = SID}) when SID =:= undefined; byte_size(SID) =/= 6 ->
     no_system_id;
-send_iih(SID, State) ->
+send_iih(#state{system_id = SID} = State) ->
     IS_Neighbors =
 	lists:map(fun({A, _}) -> A end,
 		  dict:to_list(State#state.adj_handlers)),
@@ -501,7 +504,7 @@ send_iih(SID, State) ->
 				   get_addresses(State, ipv6)),
 		     ?ISIS_IIH_IPV6COUNT),
     DIS = case State#state.dis of
-	      undef -> <<SID:6/binary, 0:8>>;
+	      undef -> <<0:(7*8)>>;
 	      D -> D
 	  end,
     {Circuit, PDUType} = 
@@ -604,8 +607,7 @@ send_csnp(#state{database = DBRef, dis_continuation = DC} = State) ->
 	   end,
     {Summary, Continue} = isis_lspdb:summary(Args, DBRef),
     NextDC = 
-	case generate_csnp(isis_system:system_id(),
-			   Args, 90, Summary, State) of
+	case generate_csnp(Args, 90, Summary, State) of
 	    ok ->
 		case Continue of
 		    '$end_of_table' -> undef;
@@ -626,9 +628,10 @@ send_csnp(#state{database = DBRef, dis_continuation = DC} = State) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
-generate_csnp(undefined, _, _, _, _) ->
+generate_csnp(_, _, _, #state{system_id = SID}) when SID =:= undefined ->
     no_system_id;
-generate_csnp(Sys_ID, {Status, _}, Chunk_Size, Summary, State) ->
+generate_csnp({Status, _}, Chunk_Size, Summary,
+	      #state{system_id = Sys_ID} = State) ->
     Source = <<Sys_ID:6/binary, 0:8>>,
     PDU_Type =
 	case State#state.level of
@@ -804,10 +807,13 @@ send_lsps(LSPs, State) ->
     %% AuthTLV = authentication_tlv(State),
     lists:map(fun(#isis_lsp{} = L) ->
 		      %% NewTLVs = AuthTLV ++ TLVs,
-		      case isis_protocol:encode(L) of
+		      try isis_protocol:encode(L) of
 			  {ok, Bin, Len} -> send_pdu(lsp, Bin, Len, State);
-			  _ -> io:format("Failed to encode LSP ~p~n",
-					 [L#isis_lsp.lsp_id])
+			  _ -> lager:error("Failed to encode LSP ~p~n",
+					   [L#isis_lsp.lsp_id])
+		      catch
+			  error:Fail ->
+			      lager:error("Failed to encode: ~p (~p)", [L, Fail])
 		      end
 	      end, LSPs),
     ok.
@@ -842,7 +848,7 @@ update_ssn(LSP_Ids, #state{ssn = SSN} = State) ->
 %%--------------------------------------------------------------------
 -spec send_psnp(tuple()) -> tuple().
 send_psnp(#state{ssn = SSN} = State) ->
-    SID = isis_system:system_id(),
+    SID = State#state.system_id,
     Source = <<SID:6/binary, 0:8>>,
     PDU_Type =
 	case State#state.level of
@@ -900,11 +906,12 @@ handle_psnp(#isis_psnp{tlv = TLVs}, State) ->
 			    end
 		    end,
 		    [], TLVs),
-    FilterFun = fun(#isis_tlv_lsp_entry_detail{lifetime = L, sequence = S, checksum = C}) ->
-			(L == 0) and (S == 0) and (C == 0)
-		end,
-    Filtered = lists:filter(FilterFun, PSNP_LSPs),
-    LSP_Ids = lists:map(fun(F) -> F#isis_tlv_lsp_entry_detail.lsp_id end, Filtered),
+    %% FilterFun = fun(#isis_tlv_lsp_entry_detail{lifetime = L, sequence = S, checksum = C}) ->
+    %% 			(L == 0) and (S == 0) and (C == 0)
+    %% 		end,
+    %% Filtered = lists:filter(FilterFun, PSNP_LSPs),
+    %% LSP_Ids = lists:map(fun(F) -> F#isis_tlv_lsp_entry_detail.lsp_id end, Filtered),
+    LSP_Ids = lists:map(fun(F) -> F#isis_tlv_lsp_entry_detail.lsp_id end, PSNP_LSPs),
     LSPs = isis_lspdb:lookup_lsps(LSP_Ids, State#state.database),
     send_lsps(LSPs, State),
     ok.
@@ -927,10 +934,10 @@ handle_lsp(#isis_lsp{lsp_id = ID, remaining_lifetime = 0} = LSP, State) ->
 			 LSP#isis_lsp{tlv = [],
 				      remaining_lifetime = 0,
 				      last_update = isis_protocol:current_timestamp()});
-handle_lsp(#isis_lsp{lsp_id = ID, sequence_number = TheirSeq,
-		     checksum = TheirCSum} = LSP, State) ->
+handle_lsp(#isis_lsp{lsp_id = ID, sequence_number = TheirSeq} = LSP,
+	   State) ->
     <<RemoteSys:6/binary, _Rest/binary>> = ID,
-    case RemoteSys =:= isis_system:system_id() of
+    case RemoteSys =:= State#state.system_id of
 	true -> handle_old_lsp(LSP, State);
 	_ ->
 	    L = isis_lspdb:lookup_lsps([ID], State#state.database),
@@ -938,12 +945,15 @@ handle_lsp(#isis_lsp{lsp_id = ID, sequence_number = TheirSeq,
 		case length(L) of
 		    1 -> [OurLSP] = L,
 			 OurSeq = OurLSP#isis_lsp.sequence_number,
-			 OurCSum = OurLSP#isis_lsp.checksum,
 			 case (OurSeq < TheirSeq) of
 			     true -> isis_lspdb:store_lsp(State#state.level, LSP),
 				     lager:warning("Updated LSP (~b vs ~b)~n", [OurSeq, TheirSeq]),
 				     true;
-			     _ -> false
+			     _ -> case State#state.are_we_dis of
+				      true -> send_lsps([OurLSP], State);
+				      _ -> ok
+				  end,
+				  false
 			 end;
 		    0 -> isis_lspdb:store_lsp(State#state.level, LSP),
 			 lager:warning("New LSP, storing..~n", []),
@@ -1115,6 +1125,8 @@ set_values([{hello_interval, P} | Vs], State) ->
     set_values(Vs, State#state{hello_interval = P * 1000});
 set_values([{csnp_interval, P} | Vs], State) ->
     set_values(Vs, State#state{csnp_timer = P * 1000});
+set_values([{system_id, SID} | Vs], State) ->
+    set_values(Vs, State#state{system_id = SID});
 set_values([_ | Vs], State) ->
     set_values(Vs, State);
 set_values([], State) ->

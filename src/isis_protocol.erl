@@ -6,32 +6,18 @@
 %%% This file is part of AutoISIS.
 %%%
 %%% License:
-%%% AutoISIS can be used (at your option) under the following GPL or under
-%%% a commercial license
+%%% This code is licensed to you under the Apache License, Version 2.0
+%%% (the "License"); you may not use this file except in compliance with
+%%% the License. You may obtain a copy of the License at
 %%% 
-%%% Choice 1: GPL License
-%%% AutoISIS is free software; you can redistribute it and/or modify it
-%%% under the terms of the GNU General Public License as published by the
-%%% Free Software Foundation; either version 2, or (at your option) any
-%%% later version.
+%%%   http://www.apache.org/licenses/LICENSE-2.0
 %%% 
-%%% AutoISIS is distributed in the hope that it will be useful, but
-%%% WITHOUT ANY WARRANTY; without even the implied warranty of
-%%% MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See 
-%%% the GNU General Public License for more details.
-%%% 
-%%% You should have received a copy of the GNU General Public License
-%%% along with GNU Zebra; see the file COPYING.  If not, write to the Free
-%%% Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
-%%% 02111-1307, USA.
-%%% 
-%%% Choice 2: Commercial License Usage
-%%% Licensees holding a valid commercial AutoISIS may use this file in 
-%%% accordance with the commercial license agreement provided with the 
-%%% Software or, alternatively, in accordance with the terms contained in 
-%%% a written agreement between you and the Copyright Holder.  For
-%%% licensing terms and conditions please contact us at 
-%%% licensing@netdef.org
+%%% Unless required by applicable law or agreed to in writing,
+%%% software distributed under the License is distributed on an
+%%% "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+%%% KIND, either express or implied.  See the License for the
+%%% specific language governing permissions and limitations
+%%% under the License.
 %%%
 %%% @end
 %%% Created :  2 Jan 2014 by Rick Payne <rickp@rossfell.co.uk>
@@ -76,12 +62,7 @@ decode(<<16#83:8, Len:8, Version:8, ID_Len:8,
 	 _Res1:3, PDU_Type:5, PDU_Version:8, _Res2:8,
 	 Max_Areas:8, Rest/binary>> = Binary)
   when byte_size(Binary) >= ?ISIS_MIN_MSG_SIZE ->
-    Type =
-	try isis_enum:to_atom(pdu, PDU_Type) of
-	    Atom -> Atom
-	catch
-	    bad_enum -> pdu_type_unset
-	end,
+    Type = isis_enum:to_atom(pdu, PDU_Type),
     Header = #isis_header{
 		header_length = Len,
 		version = Version,
@@ -89,8 +70,7 @@ decode(<<16#83:8, Len:8, Version:8, ID_Len:8,
 		pdu_type = Type,
 		pdu_version = PDU_Version,
 		maximum_areas = Max_Areas},
-    decode_pdu(Type, Header, byte_size(Binary), Rest);
-decode(_Binary) -> error.
+    decode_pdu(Type, Header, byte_size(Binary), Rest).
 
 %%--------------------------------------------------------------------
 %% @doc encode a set of IS-IS terms into a PDU
@@ -104,9 +84,7 @@ encode(#isis_lsp{} = LSP) ->
 encode(#isis_csnp{} = CSNP) ->
     encode_csnp(CSNP);
 encode(#isis_psnp{} = PSNP) ->
-    encode_psnp(PSNP);
-encode(_) ->
-    error.
+    encode_psnp(PSNP).
 
 %%--------------------------------------------------------------------
 %% @doc encode a set of IS-IS terms into a PDU
@@ -151,7 +129,7 @@ decode_subtlv_ipv6r(source_prefix, _Type, <<PLen:8, P/binary>>) ->
     Bytes = erlang:trunc((PLen + 7) / 8),
     case byte_size(P) =:= Bytes of
 	true -> #isis_subtlv_srcdst{prefix_length = PLen, prefix = P};
-	_ -> error
+	_ -> throw(decode_error)
     end;
 decode_subtlv_ipv6r(_, Type, Value) ->
     #isis_subtlv_unknown{type = Type, value = Value}.
@@ -160,8 +138,7 @@ decode_subtlv_ipv6r(_, Type, Value) ->
 decode_subtlv_eir(admin_tag_32bit, _Type, <<Value:32>>) ->
     #isis_subtlv_eir_admintag32{tag = Value};
 decode_subtlv_eir(admin_tag_64bit, _Type, <<Value:64>>) ->
-    #isis_subtlv_eir_admintag64{tag = Value};
-decode_subtlv_eir(_, _, _) -> error.
+    #isis_subtlv_eir_admintag64{tag = Value}.
 
 -spec decode_subtlv_eis(atom(), integer(), binary()) -> isis_subtlv_eis() | error.
 decode_subtlv_eis(link_id, _Type, <<Local:32, Remote:32>>) ->
@@ -175,9 +152,7 @@ decode_subtlv_eis(_, Type, Value) ->
 decode_tlv_area_address(<<>>, Areas) ->
     lists:reverse(Areas);
 decode_tlv_area_address(<<Len:8, Area:Len/binary, Rest/binary>>, Areas) ->
-    decode_tlv_area_address(Rest, [Area | Areas]);
-decode_tlv_area_address(_, _) ->
-    error.
+    decode_tlv_area_address(Rest, [Area | Areas]).
 
 -spec decode_tlv_is_reachability(binary(), [isis_tlv_is_reachability_detail()]) ->
 					[isis_tlv_is_reachability_detail()] | error.
@@ -193,8 +168,7 @@ decode_tlv_is_reachability(<<Default:1/binary, Delay:1/binary,
 					  expense = ExpenseM, error = ErrorM},
     decode_tlv_is_reachability(Rest, [IR | Neighbors]);
 decode_tlv_is_reachability(<<>>, Neighbors) ->
-    lists:reverse(Neighbors);
-decode_tlv_is_reachability(_, _) -> error.
+    lists:reverse(Neighbors).
 
 -spec decode_tlv_lsp_entry(binary(), [isis_tlv_lsp_entry_detail()]) ->
 				  [isis_tlv_lsp_entry_detail()] | error.
@@ -207,9 +181,7 @@ decode_tlv_lsp_entry(<<Lifetime:16, LSP_Id:8/binary,
 				   lifetime = Lifetime,
 				   sequence = Sequence,
 				   checksum = Checksum}
-				| LSPs]);
-decode_tlv_lsp_entry(_, _) ->
-    error.
+				| LSPs]).
 
 -spec decode_isis_metric_information(binary(), atom())
 			       -> isis_metric_information().
@@ -222,8 +194,7 @@ decode_isis_metric_information(<<B8:1, B7:1, Metric:6>>, Type) when
     Supported = isis_enum:to_atom(boolean, B8),
     #isis_metric_information{metric_supported = Supported,
 			     metric_type = isis_enum:to_atom(metric_type, B7),
-			     metric = Metric};
-decode_isis_metric_information(_, default) -> error.
+			     metric = Metric}.
 
 -spec decode_tlv_ip_internal_reachability(binary(),
 					  [isis_tlv_ip_internal_reachability_detail()])
@@ -246,8 +217,7 @@ decode_tlv_ip_internal_reachability(<<Default:1/binary, Delay:1/binary,
     decode_tlv_ip_internal_reachability(Rest,
 					[MI | Values]);
 decode_tlv_ip_internal_reachability(<<>>, Values) ->
-    lists:reverse(Values);
-decode_tlv_ip_internal_reachability(_, _) -> error.
+    lists:reverse(Values).
 
 decode_tlv_extended_ip_reachability(
   <<Metric:32, Up:1, SubTLV_Present:1, Mask_Len:6, Rest/binary>>, Values) ->
@@ -272,8 +242,7 @@ decode_tlv_extended_ip_reachability(
 	     sub_tlv = SubTLV},
     decode_tlv_extended_ip_reachability(Rest4, [EIR | Values]);
 decode_tlv_extended_ip_reachability(<<>>, Values) ->
-    lists:reverse(Values);
-decode_tlv_extended_ip_reachability(_, _) -> error.
+    lists:reverse(Values).
 
 decode_tlv_ipv6_reachability(<<Metric:32, Up:1, X:1, S:1,
 			       _Res:5, PLen:8, Rest/binary>>, Acc) ->
@@ -309,11 +278,10 @@ decode_tlv_extended_reachability(
 		     metric = Metric,
 		     sub_tlv = SubTLVs},
 	    decode_tlv_extended_reachability(Rest, [EIS | Values]);
-	_ -> error
+	_ -> throw(decode_error)
     end;    
 decode_tlv_extended_reachability(<<>>, Values) ->
-    lists:reverse(Values);
-decode_tlv_extended_reachability(_, _) -> error.
+    lists:reverse(Values).
 
 
 
@@ -414,20 +382,24 @@ decode_tlvs(<<Type:8, Length:8, Value:Length/binary, Rest/binary>>,
 	catch
 	    bad_enum -> unknown
 	end,
+    %% lager:info("Decoding TLV: ~p", [<<Type:8, Length:8, Value/binary>>]),
     case TLVDecode(TLV_Type, Type, Value) of
-	error -> error;
+	error -> throw(decode_error);
 	TLV ->
 	    decode_tlvs(Rest, Enum, TLVDecode, [TLV | TLVs])
-    end;
-decode_tlvs(_, _,_,_) -> error.
+    end.
 
 
 %%%===================================================================
 %%% TLV and subTLV encoders
 %%%===================================================================
 -spec encode_subtlv_ipv6r(isis_subtlv_ipv6r()) -> binary().
-encode_subtlv_ipv6r(#isis_subtlv_srcdst{prefix_length = PL, prefix = P}) ->
+encode_subtlv_ipv6r(#isis_subtlv_srcdst{prefix_length = PL, prefix = P}) when is_binary(P) ->
     encode_tlv(source_prefix, subtlv_ipv6r, <<PL:8, P/binary>>);
+encode_subtlv_ipv6r(#isis_subtlv_srcdst{prefix_length = PL, prefix = P}) when is_integer(P) ->
+    Bits = (erlang:trunc((PL + 7) / 8) * 8),
+    P1 = P bsr (128 - Bits),
+    encode_tlv(source_prefix, subtlv_ipv6r, <<PL:8, P1:Bits>>);
 encode_subtlv_ipv6r(#isis_subtlv_unknown{type = T, value = V}) ->
     S = byte_size(V),
     <<T:8, S:8, V/binary>>.
@@ -677,8 +649,9 @@ update_tlv(TLV, Node, Level, Frags) ->
     try do_update_tlv(TLV, Node, Level, Frags) of
 	F -> F
     catch
-	Error -> lager:info("update_tlv: ~p", [Error])
-    end.	     
+	Class:Error -> lager:error("update_tlv: ~p:~p", [Class, Error]),
+		       Frags
+    end.
 
 
 do_delete_tlv(#isis_tlv_dynamic_hostname{} = TLV,
@@ -706,7 +679,8 @@ delete_tlv(TLV, Node, Level, Frags) ->
     try do_delete_tlv(TLV, Node, Level, Frags) of
 	F -> F
     catch
-	Error -> lager:info("delete_tlv: ~p", [Error])
+	Class:Error -> lager:info("delete_tlv: ~p:~p", [Class, Error]),
+		       Frags
     end.	     
 
 
@@ -1226,7 +1200,7 @@ decode_lan_iih(<<_Res1:6, Circuit_Type:2, Source_ID:6/binary,
 	    _ -> TLV_Binary
 	end,
     case decode_tlvs(TrueTLVBin, tlv, fun decode_tlv/3, []) of
-	error -> error;
+	error -> throw(decode_error);
 	{ok, TLVS} ->
 	    CT = isis_enum:to_atom(istype, Circuit_Type),
 	    {ok, #isis_iih{circuit_type = CT,
@@ -1235,8 +1209,7 @@ decode_lan_iih(<<_Res1:6, Circuit_Type:2, Source_ID:6/binary,
 			   priority = Priority,
 			   dis = DIS,
 			   tlv = TLVS}}
-    end;
-decode_lan_iih(_, _) -> error.
+    end.
 
 -spec decode_common_lsp(binary(), integer()) -> {ok, isis_lsp()} | error.
 decode_common_lsp(<<PDU_Len:16, Lifetime:16,
@@ -1253,7 +1226,7 @@ decode_common_lsp(<<PDU_Len:16, Lifetime:16,
 	    _ -> TLV_Binary
 	end,
     case decode_tlvs(TrueTLVBin, tlv, fun decode_tlv/3, []) of
-	error -> error;
+	error -> throw(decode_error);
 	{ok, TLVS} ->
 	    LSP_ID = <<Sys_Id:6/binary, Pnode:8, Fragment:8>>,
 	    {ok, #isis_lsp{pdu_type = pdu_type_unset,
@@ -1266,8 +1239,7 @@ decode_common_lsp(<<PDU_Len:16, Lifetime:16,
 			   overload = isis_enum:to_atom(boolean, Overload),
 			   isis_type = isis_enum:to_atom(istype, Type),
 			   tlv = TLVS}}
-    end;
-decode_common_lsp(_, _) -> error.
+    end.
 
 
 -spec decode_common_csnp(binary(), integer()) -> {ok, isis_csnp()} | error.
@@ -1281,14 +1253,13 @@ decode_common_csnp(<<PDU_Len:16, Source:7/binary, Start:8/binary,
 	    _ -> TLV_Binary
 	end,
     case decode_tlvs(TrueTLVBin, tlv, fun decode_tlv/3, []) of
-	error -> error;
+	error -> throw(decode_error);
 	{ok, TLVS} ->
 	    {ok, #isis_csnp{source_id = Source,
 			    start_lsp_id = Start,
 			    end_lsp_id = End,
 			    tlv = TLVS}}
-    end;
-decode_common_csnp(_, _) -> error.
+    end.
 
 
 -spec decode_common_psnp(binary(), integer()) -> {ok, isis_psnp()} | error.
@@ -1302,50 +1273,52 @@ decode_common_psnp(<<PDU_Len:16, Source:7/binary,
 	    _ -> TLV_Binary
 	end,
     case decode_tlvs(TrueTLVBin, tlv, fun decode_tlv/3, []) of
-	error -> error;
+	error -> throw(decode_error);
 	{ok, TLVS} ->
 	    {ok, #isis_psnp{source_id = Source,
 			    tlv = TLVS}}
-    end;
-decode_common_psnp(_, _) -> error.
+    end.
 
 -spec decode_pdu(atom(), isis_header(), integer(), binary()) -> {ok, isis_lsp()} | error.
-decode_pdu(Type, _Header, PDU_Len, Rest) when
-      Type == level1_iih; Type == level2_iih ->
+decode_pdu(Type, #isis_header{id_length = Len}, PDU_Len, Rest) when
+      Len =:= 0, Type =:= level1_iih; Len =:= 0, Type =:= level2_iih;
+      Len =:= 6, Type =:= level1_iih; Len =:= 6, Type =:= level2_iih ->
     case decode_lan_iih(Rest, PDU_Len) of
-	error -> error;
+	error -> throw(decode_error);
 	{ok, IIH} ->
 	    {ok, IIH#isis_iih{pdu_type = Type}}
     end;
+decode_pdu(Type, _Header, _PDU_Len, _Rest) when
+      Type == level1_iih; Type == level2_iih ->
+    invalid_id_len;
 decode_pdu(Type, _Header, PDU_Len, Rest) when
       Type == level1_lsp; Type == level2_lsp->
     case decode_common_lsp(Rest, PDU_Len) of
-	error -> error;
+	error -> throw(decode_error);
 	{ok, Lsp} ->
 	    {ok, Lsp#isis_lsp{pdu_type = Type}}
     end;
 decode_pdu(Type, _Header, PDU_Len, Rest) when
       Type == level1_csnp; Type == level2_csnp ->
     case decode_common_csnp(Rest, PDU_Len) of
-	error -> error;
+	error -> throw(decode_error);
 	{ok, CSNP} ->
 	    {ok, CSNP#isis_csnp{pdu_type = Type}}
     end;
 decode_pdu(Type, _Header, PDU_Len, Rest) when
       Type == level1_psnp; Type == level2_psnp ->
     case decode_common_psnp(Rest, PDU_Len) of
-	error -> error;
+	error -> throw(decode_error);
 	{ok, PSNP} ->
 	    {ok, PSNP#isis_psnp{pdu_type = Type}}
-    end;
-decode_pdu(_, _, _, _) -> error.
+    end.
 
 %%%===================================================================
 %%% PDU encoders
 %%%===================================================================
-isis_header(Type, Len, Area) ->
+isis_header(Type, Len, IDLen, Area) ->
     T = isis_enum:to_int(pdu, Type),
-    <<16#83:8, Len:8, 1:8, 0:8, 0:3, T:5, 1:8, 0:8,
+    <<16#83:8, Len:8, 1:8, IDLen:8, 0:3, T:5, 1:8, 0:8,
       Area:8>>.
 
 -spec encode_iih(isis_iih()) -> {ok, list(), integer()} | error.
@@ -1356,7 +1329,7 @@ encode_iih(#isis_iih{pdu_type = Type,
 		     priority = Priority,
 		     dis = DIS,
 		     tlv = TLVs}) ->
-    Header = isis_header(Type, 27, 0),
+    Header = isis_header(Type, 27, 0, 0),
     CT = isis_enum:to_int(istype, Circuit_Type),
     IIH1 = <<0:6, CT:2, Source_Id:6/binary, Holding_Time:16>>,
     IIH2 = <<0:1, Priority:7, DIS:7/binary>>,
@@ -1368,11 +1341,11 @@ encode_iih(#isis_iih{pdu_type = Type,
 -spec encode_lsp(isis_lsp()) -> {ok, list(), integer()} | error.
 encode_lsp(#isis_lsp{version = _Version, pdu_type = Lsp_Type,
 		     remaining_lifetime = Lifetime,
-		     lsp_id = LSP_Id,
+		     lsp_id = LSP_Id, id_length = ID_Len,
 		     sequence_number = Sequence,
 		     partition = Partition, overload = Overload,
 		     isis_type = ISType, tlv = TLVs}) ->
-    Header = isis_header(Lsp_Type, 27, 0),
+    Header = isis_header(Lsp_Type, 27, ID_Len, 0),
     Pb = isis_enum:to_int(boolean, Partition),
     Ob = isis_enum:to_int(boolean, Overload),
     Ib = isis_enum:to_int(istype, ISType),
@@ -1399,7 +1372,7 @@ encode_lsp(#isis_lsp{version = _Version, pdu_type = Lsp_Type,
 encode_csnp(#isis_csnp{pdu_type = Type, source_id = Source_Id,
 		       start_lsp_id = Start_LSP, end_lsp_id = End_LSP,
 		       tlv = TLVs}) ->
-    Header = isis_header(Type, 33, 0),
+    Header = isis_header(Type, 33, 0, 0),
     CSNP = <<Source_Id:7/binary, Start_LSP:8/binary, End_LSP:8/binary>>,
     TLV_Bs = encode_tlvs(TLVs, fun encode_tlv/1),
     Len = binary_list_size([Header, CSNP, TLV_Bs]) + 2,
@@ -1408,7 +1381,7 @@ encode_csnp(#isis_csnp{pdu_type = Type, source_id = Source_Id,
 -spec encode_psnp(isis_psnp()) -> {ok, list(), integer()} | error.
 encode_psnp(#isis_psnp{pdu_type = Type, source_id = Source_Id,
 		       tlv = TLVs}) ->
-    Header = isis_header(Type, 17, 0),
+    Header = isis_header(Type, 17, 0, 0),
     PSNP = <<Source_Id:7/binary>>,
     TLV_Bs = encode_tlvs(TLVs, fun encode_tlv/1),
     Len = binary_list_size([Header, PSNP, TLV_Bs]) + 2,
@@ -1530,22 +1503,20 @@ filter_lifetime(#isis_lsp{remaining_lifetime = L, last_update = U}) ->
 %% are the ones creating the LSP
 %% @end
 %%--------------------------------------------------------------------
-checksum(#isis_lsp{version = _Version, pdu_type = Lsp_Type,
-		   remaining_lifetime = Lifetime,
-		   lsp_id = LSP_Id,
+checksum(#isis_lsp{lsp_id = LSP_Id,
 		   sequence_number = Sequence,
 		   partition = Partition, overload = Overload,
 		   isis_type = ISType, tlv = TLVs}) ->
-    Header = isis_header(Lsp_Type, 27, 0),
+    %% Header = isis_header(Lsp_Type, 27, 0, 0),
     Pb = isis_enum:to_int(boolean, Partition),
     Ob = isis_enum:to_int(boolean, Overload),
     Ib = isis_enum:to_int(istype, ISType),
-    Lsp_Hdr1 = <<Lifetime:16>>,
+    %% Lsp_Hdr1 = <<Lifetime:16>>,
     Lsp_Hdr2 = <<LSP_Id:8/binary, Sequence:32>>,
     %% Hard code ATT bits to zero, deprecated...
     Lsp_Hdr3 = <<Pb:1, 0:4, Ob:1, Ib:2>>,
     TLV_Bs = encode_tlvs(TLVs, fun encode_tlv/1),
-    Len = binary_list_size([Header, Lsp_Hdr1, Lsp_Hdr2, Lsp_Hdr3, TLV_Bs]) + 4,
+    %% Len = binary_list_size([Header, Lsp_Hdr1, Lsp_Hdr2, Lsp_Hdr3, TLV_Bs]) + 4,
     {CSum1, CSum2} = calculate_checksum([Lsp_Hdr2, <<0:16>>, Lsp_Hdr3, TLV_Bs], 12),
     (CSum1 * 256) + CSum2.
 

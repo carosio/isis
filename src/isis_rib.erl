@@ -10,32 +10,18 @@
 %%% This file is part of AutoISIS.
 %%%
 %%% License:
-%%% AutoISIS can be used (at your option) under the following GPL or under
-%%% a commercial license
+%%% This code is licensed to you under the Apache License, Version 2.0
+%%% (the "License"); you may not use this file except in compliance with
+%%% the License. You may obtain a copy of the License at
 %%% 
-%%% Choice 1: GPL License
-%%% AutoISIS is free software; you can redistribute it and/or modify it
-%%% under the terms of the GNU General Public License as published by the
-%%% Free Software Foundation; either version 2, or (at your option) any
-%%% later version.
+%%%   http://www.apache.org/licenses/LICENSE-2.0
 %%% 
-%%% AutoISIS is distributed in the hope that it will be useful, but
-%%% WITHOUT ANY WARRANTY; without even the implied warranty of
-%%% MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See 
-%%% the GNU General Public License for more details.
-%%% 
-%%% You should have received a copy of the GNU General Public License
-%%% along with GNU Zebra; see the file COPYING.  If not, write to the Free
-%%% Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
-%%% 02111-1307, USA.
-%%% 
-%%% Choice 2: Commercial License Usage
-%%% Licensees holding a valid commercial AutoISIS may use this file in 
-%%% accordance with the commercial license agreement provided with the 
-%%% Software or, alternatively, in accordance with the terms contained in 
-%%% a written agreement between you and the Copyright Holder.  For
-%%% licensing terms and conditions please contact us at 
-%%% licensing@netdef.org
+%%% Unless required by applicable law or agreed to in writing,
+%%% software distributed under the License is distributed on an
+%%% "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+%%% KIND, either express or implied.  See the License for the
+%%% specific language governing permissions and limitations
+%%% under the License.
 %%%
 %%% @end
 %%% Created :  1 Apr 2014 by Rick Payne <rickp@rossfell.co.uk>
@@ -44,7 +30,6 @@
 
 -behaviour(gen_server).
 
--include("zclient.hrl").
 -include("isis_system.hrl").
 -include_lib("stdlib/include/ms_transform.hrl").
 
@@ -60,7 +45,8 @@
 -define(SERVER, ?MODULE).
 
 -record(state, {
-	  rib
+	  rib,
+	  rib_api :: atom()
 	 }).
 
 %%%===================================================================
@@ -97,8 +83,9 @@ get_rib_table() ->
 init([]) ->
     spf_summary:subscribe(self()),
     Table = ets:new(isis_rib, [ordered_set,
-			       {keypos, #zclient_route.route}]),
-    {ok, #state{rib = Table}}.
+			       {keypos, #isis_route.route}]),
+    {ok, Rib} = application:get_env(isis, rib_client),
+    {ok, #state{rib = Table, rib_api = Rib}}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -144,7 +131,7 @@ handle_cast(_Msg, State) ->
 %%                                   {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_info({spf_summary, {Time, Level, SPF, _Reason}}, State) ->
+handle_info({spf_summary, {_Time, _Level, SPF, _Reason}}, State) ->
     NewState = process_spf(SPF, State),
     {noreply, NewState};
 handle_info(_Info, State) ->
@@ -179,23 +166,22 @@ code_change(_OldVsn, State, _Extra) ->
 %%% Internal functions
 %%%===================================================================
 extract_prefixes(State) ->
-    F = ets:fun2ms(fun(#zclient_route{route = R}) ->
+    F = ets:fun2ms(fun(#isis_route{route = R}) ->
 			   R
 		   end),
     ets:select(State#state.rib, F).
 
-process_spf(SPF, State) ->
+process_spf(SPF, #state{rib_api = RibApi} = State) ->
     SendRoute = 
 	fun({#isis_address{afi = AFI, address = Address, mask = Mask}, Source},
 	    NHs, Metric, Added) ->
 		SourceP = case Source of
 			      #isis_address{afi = SAFI, address = SAddress,
 					    mask = SMask} ->
-				  #zclient_prefix{afi = SAFI, address = SAddress,
+				  #isis_prefix{afi = SAFI, address = SAddress,
 						  mask_length = SMask};
 			      _ -> undefined
 			  end,
-		%% FIX zclient to handle multiple nexthops..
 		{Nexthops, IfIndexes} = lists:foldl(
 					  fun({NHAfi,{A, I, _Pid}}, {TNHs, TIFs})
 						when NHAfi =:= AFI -> {[A | TNHs], [I | TIFs]};
@@ -205,15 +191,15 @@ process_spf(SPF, State) ->
 		    {[], []} ->
 			Added;
 		    {_, _} ->
-			P = #zclient_prefix{afi = AFI, address = Address, mask_length = Mask},
-			K = #zclient_route_key{prefix = P, source = SourceP},
-			R = #zclient_route{route = K, nexthops = Nexthops, ifindexes = IfIndexes,
+			P = #isis_prefix{afi = AFI, address = Address, mask_length = Mask},
+			K = #isis_route_key{prefix = P, source = SourceP},
+			R = #isis_route{route = K, nexthops = Nexthops, ifindexes = IfIndexes,
 					   metric = Metric},
 			case ets:lookup(State#state.rib, R) of
 			    [] ->
 				%% No prior route, so install into the RIB
 				ets:insert(State#state.rib, R),
-				zclient:add(R);
+				RibApi:add(R);
 			    [C] ->
 				case C =:= R of
 				    true ->
@@ -222,7 +208,7 @@ process_spf(SPF, State) ->
 				    _ ->
 					%% Prior route is different
 					ets:insert(State#state.rib, R),
-					zclient:add(R)
+					RibApi:add(R)
 				end
 			end,
 			sets:add_element(K, Added)
@@ -241,7 +227,7 @@ process_spf(SPF, State) ->
     %% lager:debug("Present: ~p", [sets:to_list(Present)]),
     %% lager:debug("Withdraw set: ~p", [sets:to_list(Delete)]),
     lists:map(fun(R) ->
-		      zclient:delete(R),
+		      RibApi:delete(R),
 		      ets:delete(State#state.rib, R)
 	      end, sets:to_list(Delete)),
     State.

@@ -8,32 +8,18 @@
 %%% This file is part of AutoISIS.
 %%%
 %%% License:
-%%% AutoISIS can be used (at your option) under the following GPL or under
-%%% a commercial license
+%%% This code is licensed to you under the Apache License, Version 2.0
+%%% (the "License"); you may not use this file except in compliance with
+%%% the License. You may obtain a copy of the License at
 %%% 
-%%% Choice 1: GPL License
-%%% AutoISIS is free software; you can redistribute it and/or modify it
-%%% under the terms of the GNU General Public License as published by the
-%%% Free Software Foundation; either version 2, or (at your option) any
-%%% later version.
+%%%   http://www.apache.org/licenses/LICENSE-2.0
 %%% 
-%%% AutoISIS is distributed in the hope that it will be useful, but
-%%% WITHOUT ANY WARRANTY; without even the implied warranty of
-%%% MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See 
-%%% the GNU General Public License for more details.
-%%% 
-%%% You should have received a copy of the GNU General Public License
-%%% along with GNU Zebra; see the file COPYING.  If not, write to the Free
-%%% Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
-%%% 02111-1307, USA.
-%%% 
-%%% Choice 2: Commercial License Usage
-%%% Licensees holding a valid commercial AutoISIS may use this file in 
-%%% accordance with the commercial license agreement provided with the 
-%%% Software or, alternatively, in accordance with the terms contained in 
-%%% a written agreement between you and the Copyright Holder.  For
-%%% licensing terms and conditions please contact us at 
-%%% licensing@netdef.org
+%%% Unless required by applicable law or agreed to in writing,
+%%% software distributed under the License is distributed on an
+%%% "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+%%% KIND, either express or implied.  See the License for the
+%%% specific language governing permissions and limitations
+%%% under the License.
 %%%
 %%% @end
 %%% Created : 24 Jan 2014 by Rick Payne <rickp@rossfell.co.uk>
@@ -51,7 +37,7 @@
 	 lookup_lsps/2, store_lsp/2, flood_lsp/3, purge_lsp/2,
 	 lookup_lsps_by_node/2,
 	 summary/2, range/3,
-	 replace_tlv/3, update_reachability/3,
+	 update_reachability/3,
 	 schedule_spf/2,
 	 links/1,
 	 clear_db/1,
@@ -205,31 +191,11 @@ range(Start_ID, End_ID, DB) ->
 %%--------------------------------------------------------------------
 %% @doc
 %%
-%% For a given LSP, look it up, search the TLV for a matching TLV and
-%% replace it with the provided TLV, bump the sequence number and
-%% re-flood...
-%% 
-%% @end
-%%-------------------------------------------------------------------
--spec replace_tlv(atom(), isis_tlv(), binary()) -> ok.
-replace_tlv(Level, TLV, LSP) ->
-    DB = isis_lspdb:get_db(Level),
-    case lookup_lsps([LSP], DB) of
-	[L] -> NewTLV = replace_tlv(L#isis_lsp.tlv, TLV),
-	       NewLSP = L#isis_lsp{tlv = NewTLV},
-	       CSum = isis_protocol:checksum(NewLSP),
-	       ok;
-	_ -> error
-    end.
-
-%%--------------------------------------------------------------------
-%% @doc
-%%
 %% Add/Del reachability to the TLVs
 %%
 %% @end
 %%--------------------------------------------------------------------
-update_reachability({AddDel, ER}, Level, #isis_lsp{tlv = TLVs} = LSP) ->
+update_reachability({AddDel, ER}, _Level, #isis_lsp{tlv = TLVs} = LSP) ->
     Worker =
 	fun(#isis_tlv_extended_reachability{reachability = R}, Flood) ->
 		{F, NewER} = update_eir(AddDel, ER, R),
@@ -243,7 +209,7 @@ update_reachability({AddDel, ER}, Level, #isis_lsp{tlv = TLVs} = LSP) ->
     {NewTLVs, Flood} = lists:mapfoldl(Worker, false, TLVs),
     case Flood of
 	true ->
-	    NewLSP = LSP#isis_lsp{tlv = NewTLVs};
+	    LSP#isis_lsp{tlv = NewTLVs};
 	_ -> ok
     end.
 %%--------------------------------------------------------------------
@@ -704,6 +670,8 @@ do_spf(undefined, _State) ->
     [];
 do_spf(SID, State) ->
     SysID = <<SID:6/binary, 0:8>>,
+    Edges = populate_links(State#state.db),
+    Graph = graph:empty(directed),
     Build_Graph =
 	fun({From, To}, Metric, G) ->
 		graph:add_vertex(G, From),
@@ -711,17 +679,15 @@ do_spf(SID, State) ->
 		graph:add_edge(G, From, To, Metric),
 		G
 	end,
-    Edges = populate_links(State#state.db),
-    Graph = graph:empty(directed),
     dict:fold(Build_Graph, Graph, Edges),
     DResult = dijkstra:run(Graph, SysID),
     RoutingTableF = 
-	fun({Node, {Metric, Nodes}}) when length(Nodes) >= 2 ->
+	fun({_, {_, []}}) -> false;
+	   ({Node, {Metric, Paths}}) ->
 		Prefixes = lookup_prefixes(Node, State),
-		Nexthop = get_nexthop(Nodes),
-		{true, {Node, Nexthop, Metric, Prefixes, Nodes}};
-	   ({_, {_, _}}) -> true;
-	   ({_, unreachable}) -> true
+		Nexthops = lists:filtermap(fun(P) -> get_nexthop(P) end, Paths),
+		{true, {Node, Nexthops, Metric, Prefixes, Paths}};
+	   ({_, unreachable}) -> false
 	end,
     graph:del_graph(Graph),
     RoutingTable = lists:filtermap(RoutingTableF, DResult),
@@ -755,17 +721,16 @@ lookup_prefixes(Node, State) ->
 get_nexthop(Nodes) when length(Nodes) >= 2 ->
     <<Candidate:6/binary, PN:8>> = lists:nth(2, Nodes),
     case PN of
-	0 -> Candidate;
+	0 -> {true, Candidate};
 	_ -> 
 	    case length(Nodes) >= 3 of
 		true -> <<Candidate2:6/binary, _:8>> = lists:nth(3, Nodes),
-			Candidate2;
-		_ -> unreachable
+			{true, Candidate2};
+		_ -> false
 	    end
     end;
 get_nexthop(Nodes) ->
-    io:format("Node list length was ~b!~n", [length(Nodes)]),
-    unreachable.
+    false.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -814,9 +779,9 @@ extract_reachability(D, From, TLV) ->
 
 populate_links(DB) ->
     Now = isis_protocol:current_timestamp(),
-    F = ets:fun2ms(fun(#isis_lsp{lsp_id = LSP_Id, remaining_lifetime = L,
+    F = ets:fun2ms(fun(#isis_lsp{lsp_id = LSP_Id, remaining_lifetime = L, id_length = ILen,
 				 last_update = U, sequence_number = N, tlv = TLV})
-			 when (L - (Now - U)) >= 0 ->
+			 when (ILen =:= 0),(L - (Now - U)) >= 0 ->
 			   {LSP_Id, TLV}
 		   end),
     ValidLSPs = ets:select(DB, F),
@@ -833,8 +798,8 @@ extract_ip_addresses(#isis_tlv_ip_internal_reachability{ip_reachability = R}, Ts
 							    default = #isis_metric_information{
 									 metric = Metric
 									}}) ->
-		      %% MAP Subnet mask to a len here!
-		      {#isis_address{afi = ipv4, address = A, mask = M, metric = Metric}, undefined}
+		      MaskLen = count_leading_ones(M),
+		      {#isis_address{afi = ipv4, address = A, mask = MaskLen, metric = Metric}, undefined}
 	      end, R)
 	++ Ts;
 extract_ip_addresses(#isis_tlv_extended_ip_reachability{reachability = R}, Ts) ->
@@ -913,3 +878,15 @@ remove_subscriber(Pid, #state{subscribers = Subscribers} = State) ->
 	    error ->Subscribers
 	end,
     State#state{subscribers = NewSubscribers}.
+
+count_leading_ones(B) when is_binary(B) ->
+    count_leading_ones(B, 0);
+count_leading_ones(B) ->
+    count_leading_ones(<<B:32>>, 0).
+
+count_leading_ones(<<>>, Acc) ->
+    Acc;
+count_leading_ones(<<1:1, R/bits>>, Acc) ->
+    count_leading_ones(R, Acc+1);
+count_leading_ones(<<0:1, _R/bits>>, Acc) ->
+    Acc.

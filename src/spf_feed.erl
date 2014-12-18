@@ -9,32 +9,18 @@
 %%% This file is part of AutoISIS.
 %%%
 %%% License:
-%%% AutoISIS can be used (at your option) under the following GPL or under
-%%% a commercial license
+%%% This code is licensed to you under the Apache License, Version 2.0
+%%% (the "License"); you may not use this file except in compliance with
+%%% the License. You may obtain a copy of the License at
 %%% 
-%%% Choice 1: GPL License
-%%% AutoISIS is free software; you can redistribute it and/or modify it
-%%% under the terms of the GNU General Public License as published by the
-%%% Free Software Foundation; either version 2, or (at your option) any
-%%% later version.
+%%%   http://www.apache.org/licenses/LICENSE-2.0
 %%% 
-%%% AutoISIS is distributed in the hope that it will be useful, but
-%%% WITHOUT ANY WARRANTY; without even the implied warranty of
-%%% MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See 
-%%% the GNU General Public License for more details.
-%%% 
-%%% You should have received a copy of the GNU General Public License
-%%% along with GNU Zebra; see the file COPYING.  If not, write to the Free
-%%% Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
-%%% 02111-1307, USA.
-%%% 
-%%% Choice 2: Commercial License Usage
-%%% Licensees holding a valid commercial AutoISIS may use this file in 
-%%% accordance with the commercial license agreement provided with the 
-%%% Software or, alternatively, in accordance with the terms contained in 
-%%% a written agreement between you and the Copyright Holder.  For
-%%% licensing terms and conditions please contact us at 
-%%% licensing@netdef.org
+%%% Unless required by applicable law or agreed to in writing,
+%%% software distributed under the License is distributed on an
+%%% "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+%%% KIND, either express or implied.  See the License for the
+%%% specific language governing permissions and limitations
+%%% under the License.
 %%%
 %%% @end
 %%% Created : 18 Jan 2014 by Rick Payne <rickp@rossfell.co.uk>
@@ -146,19 +132,21 @@ generate_update(Time, Level, SPF, Reason) ->
 
     SendRoute = 
 	fun({#isis_address{afi = AFI, mask = Mask} = A, Source},
-	    NHs, Metric, Nodes) ->
-		{NHStr, IFIndex} = 
-		    case lists:keyfind(AFI, 1, NHs) of
-			{AFI, {NHA, NHI, _Pid}} ->
-			    {isis_system:address_to_string(AFI, NHA), NHI};
-			false -> {"unknown nexthop", no_ifindex}
-		    end,
+	    NHs, Metric, Paths) ->
+		%% Extract NHs matching AFI, map to {Address, Interface} string pair
+		NHList = lists:filtermap(
+			   fun({AFI, {NHA, NHI, _}}) ->
+				   NHIS =
+				       case dict:find(NHI, Interfaces) of
+					   {ok, Value} -> Value;
+					   _ -> "unknown"
+				       end,
+				   {true, {isis_system:address_to_string(AFI, NHA),
+					   NHIS}};
+			      ({_, {_, _, _}}) -> false
+			   end, NHs),
+		{NexthopList, InterfaceList} = lists:unzip(NHList),
 		AStr = isis_system:address_to_string(A),
-		InterfaceStr =
-		    case dict:find(IFIndex, Interfaces) of
-			{ok, Value} -> Value;
-			_ -> "unknown"
-		    end,
 		FromStr = 
 		    case Source of
 			undefined -> "";
@@ -169,14 +157,15 @@ generate_update(Time, Level, SPF, Reason) ->
 												     mask = SMask}),
 							 SMask]))
 		    end,
-		NodesStrList = lists:map(fun(N) -> isis_system:lookup_name(N) end, Nodes),
-		NodesStr = string:join(NodesStrList, ", "),
+		PathConv = fun(Path) -> string:join(lists:map(fun(P) -> isis_system:lookup_name(P) end, Path), ", ") end,
+		NodesStrList = lists:map(PathConv, Paths),
+		NodesStr = "(" ++ string:join(NodesStrList, ", ") ++ ")",
 		{true, {struct, [{"afi", atom_to_list(AFI)},
 				 {"address", AStr},
 				 {"mask", Mask},
 				 {"from", FromStr},
-				 {"nexthop", NHStr},
-				 {"interface", InterfaceStr},
+				 {"nexthop", NexthopList},
+				 {"interface", InterfaceList},
 				 {"nodepath", NodesStr}]}};
 	   (_, _, _, _) -> false
 	end,

@@ -6,32 +6,18 @@
 %%% This file is part of AutoISIS.
 %%%
 %%% License:
-%%% AutoISIS can be used (at your option) under the following GPL or under
-%%% a commercial license
+%%% This code is licensed to you under the Apache License, Version 2.0
+%%% (the "License"); you may not use this file except in compliance with
+%%% the License. You may obtain a copy of the License at
 %%% 
-%%% Choice 1: GPL License
-%%% AutoISIS is free software; you can redistribute it and/or modify it
-%%% under the terms of the GNU General Public License as published by the
-%%% Free Software Foundation; either version 2, or (at your option) any
-%%% later version.
+%%%   http://www.apache.org/licenses/LICENSE-2.0
 %%% 
-%%% AutoISIS is distributed in the hope that it will be useful, but
-%%% WITHOUT ANY WARRANTY; without even the implied warranty of
-%%% MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See 
-%%% the GNU General Public License for more details.
-%%% 
-%%% You should have received a copy of the GNU General Public License
-%%% along with GNU Zebra; see the file COPYING.  If not, write to the Free
-%%% Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
-%%% 02111-1307, USA.
-%%% 
-%%% Choice 2: Commercial License Usage
-%%% Licensees holding a valid commercial AutoISIS may use this file in 
-%%% accordance with the commercial license agreement provided with the 
-%%% Software or, alternatively, in accordance with the terms contained in 
-%%% a written agreement between you and the Copyright Holder.  For
-%%% licensing terms and conditions please contact us at 
-%%% licensing@netdef.org
+%%% Unless required by applicable law or agreed to in writing,
+%%% software distributed under the License is distributed on an
+%%% "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+%%% KIND, either express or implied.  See the License for the
+%%% specific language governing permissions and limitations
+%%% under the License.
 %%%
 %%% @end
 %%% Created : 18 Jan 2014 by Rick Payne <rickp@rossfell.co.uk>
@@ -52,7 +38,7 @@
 -export([start_link/1, send_pdu/5, stop/1,
 	 get_state/3, get_state/1, set/2,
 	 enable_level/2, disable_level/2, levels/1, get_level_pid/2,
-	 clear_neighbors/1,
+	 clear_neighbors/1, clear_neighbors/2,
 	 dump_config/1]).
 
 %% Debug export
@@ -110,6 +96,8 @@ get_state(Pid) ->
 set(Pid, Values) ->
     gen_server:call(Pid, {set, Values}).
 
+get_level_pid(undefined, _) ->
+    not_enabled;
 get_level_pid(Pid, Level) ->
     gen_server:call(Pid, {get_level_pid, Level}).
 
@@ -126,7 +114,10 @@ levels(Pid) ->
     gen_server:call(Pid, {levels}).
 
 clear_neighbors(Pid) ->
-    gen_server:cast(Pid, {clear_neighbors}).
+    gen_server:cast(Pid, {clear_neighbors, all}).
+
+clear_neighbors(Pid, Adjs) ->
+    gen_server:cast(Pid, {clear_neighbors, Adjs}).
 
 dump_config(Pid) ->
     gen_server:call(Pid, {dump_config}).
@@ -145,14 +136,19 @@ dump_config(Pid) ->
 init(Args) ->
     process_flag(trap_exit, true),
     State = extract_args(Args, #state{}),
-    {Socket, Mac, Ifindex, MTU, Port} = create_port(State#state.name),
-    StartState = State#state{socket = Socket, port = Port,
-			     mac = Mac, mtu = MTU,
-			     ifindex = Ifindex,
-			     level1 = undef,
-			     level2 = undef
-			    },
-    {ok, StartState}.
+    lager:debug("Creating socket for interface ~p (~p)", [State#state.name, State]),
+    case create_port(State#state.name) of
+	{Socket, Mac, Ifindex, MTU, Port} ->
+	    StartState = State#state{socket = Socket, port = Port,
+				     mac = Mac, mtu = MTU,
+				     ifindex = Ifindex,
+				     level1 = undef,
+				     level2 = undef
+				    },
+	    {ok, StartState};
+	error ->
+	    {stop, no_socket}
+    end.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -289,15 +285,15 @@ handle_cast({set, level_2, Values}, #state{level2 = P} = State)
 handle_cast({set, _, _}, State) ->
     {noreply, State};
 
-handle_cast({clear_neighbors}, #state{
+handle_cast({clear_neighbors, Which}, #state{
 				 level1 = Level1,
 				 level2 = Level2} = State) ->
     case is_pid(Level1) of
-	true -> isis_interface_level:clear_neighbors(Level1);
+	true -> isis_interface_level:clear_neighbors(Level1, Which);
 	_ -> no_level
     end,
     case is_pid(Level2) of
-	true -> isis_interface_level:clear_neighbors(Level2);
+	true -> isis_interface_level:clear_neighbors(Level2, Which);
 	_ -> no_level
     end,
     {noreply, State};
@@ -328,8 +324,8 @@ handle_info({_port, {data,
 		lager:error("Failed to decode: ~p", [PDU]),
 		State
 	catch
-	    Fail -> 
-		lager:error("Failed to decode: ~p (~p)", [PDU, Fail]),
+	    Class:Fail -> 
+		lager:error("Failed to decode: ~p (~p:~p)", [PDU, Class, Fail]),
 		State
 	end,
     {noreply, NewState};
@@ -337,6 +333,14 @@ handle_info({_port, {data,
 handle_info({_port, {data, _}}, State) ->
     {noreply, State};
 
+handle_info({'EXIT', Pid, normal}, State)
+  when Pid =:= State#state.level1 ->
+    {noreply, State#state{level1 = undef}};
+handle_info({'EXIT', Pid, normal}, State)
+  when Pid =:= State#state.level2 ->
+    {noreply, State#state{level2 = undef}};
+handle_info({'EXIT', _Pid, normal}, State) ->
+    {noreply, State};
 
 handle_info(Info, State) ->
     io:format("Unknown message: ~p", [Info]),
@@ -378,28 +382,28 @@ code_change(_OldVsn, State, _Extra) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
-handle_pdu(From, #isis_iih{pdu_type = level1_iih} = PDU, #state{level1 = Pid} = State)
+handle_pdu(From, #isis_iih{pdu_type = level1_iih} = PDU, #state{level1 = Pid})
   when is_pid(Pid) ->
     isis_interface_level:handle_pdu(Pid, From, PDU);
-handle_pdu(From, #isis_iih{pdu_type = level2_iih} = PDU, #state{level2 = Pid} = State)
+handle_pdu(From, #isis_iih{pdu_type = level2_iih} = PDU, #state{level2 = Pid})
   when is_pid(Pid) ->
     isis_interface_level:handle_pdu(Pid, From, PDU);
-handle_pdu(From, #isis_lsp{pdu_type = level1_lsp} = PDU, #state{level1 = Pid} = State)
+handle_pdu(From, #isis_lsp{pdu_type = level1_lsp} = PDU, #state{level1 = Pid})
   when is_pid(Pid) ->
     isis_interface_level:handle_pdu(Pid, From, PDU);
-handle_pdu(From, #isis_lsp{pdu_type = level2_lsp} = PDU, #state{level2 = Pid} = State)
+handle_pdu(From, #isis_lsp{pdu_type = level2_lsp} = PDU, #state{level2 = Pid})
   when is_pid(Pid) ->
     isis_interface_level:handle_pdu(Pid, From, PDU);
-handle_pdu(From, #isis_csnp{pdu_type = level1_csnp} = PDU, #state{level1 = Pid} = State)
+handle_pdu(From, #isis_csnp{pdu_type = level1_csnp} = PDU, #state{level1 = Pid})
   when is_pid(Pid) ->
     isis_interface_level:handle_pdu(Pid, From, PDU);
-handle_pdu(From, #isis_csnp{pdu_type = level2_csnp} = PDU, #state{level2 = Pid} = State)
+handle_pdu(From, #isis_csnp{pdu_type = level2_csnp} = PDU, #state{level2 = Pid})
   when is_pid(Pid) ->
     isis_interface_level:handle_pdu(Pid, From, PDU);
-handle_pdu(From, #isis_psnp{pdu_type = level1_psnp} = PDU, #state{level1 = Pid} = State)
+handle_pdu(From, #isis_psnp{pdu_type = level1_psnp} = PDU, #state{level1 = Pid})
   when is_pid(Pid) ->
     isis_interface_level:handle_pdu(Pid, From, PDU);
-handle_pdu(From, #isis_psnp{pdu_type = level2_psnp} = PDU, #state{level2 = Pid} = State)
+handle_pdu(From, #isis_psnp{pdu_type = level2_psnp} = PDU, #state{level2 = Pid})
   when is_pid(Pid) ->
     isis_interface_level:handle_pdu(Pid, From, PDU);
 handle_pdu(_From, _Pdu, State) ->
@@ -489,18 +493,22 @@ htons(I) ->
 %%--------------------------------------------------------------------
 -spec create_port(string()) -> {integer(), binary(), integer(), integer(), port()} | error.
 create_port(Name) ->
-    {ok, S} = procket:open(0,
-			   [{progname, "sudo /usr/local/bin/procket"},
-			    {family, packet},
-			    {type, raw},
-			    {protocol, htons(?ETH_P_802_2)},
-			    {interface, Name},
-			    {isis}]),
-    {Ifindex, Mac, MTU} = interface_details(S, Name),
-    LL = create_sockaddr_ll(Ifindex),
-    ok = procket:bind(S, LL),
-    Port = erlang:open_port({fd, S, S}, [binary, stream]),
-    {S, Mac, Ifindex, MTU, Port}.
+    case procket:open(0,
+		      [{family, packet},
+		       {type, raw},
+		       {protocol, htons(?ETH_P_802_2)},
+		       {interface, Name},
+		       {isis}]) of
+	{ok, S} ->
+	    {Ifindex, Mac, MTU} = interface_details(S, Name),
+	    LL = create_sockaddr_ll(Ifindex),
+	    ok = procket:bind(S, LL),
+	    Port = erlang:open_port({fd, S, S}, [binary, stream]),
+	    {S, Mac, Ifindex, MTU, Port};
+	{error, einval} ->
+	    lager:error("Failed to create socket for ~s", [Name]),
+	    error
+    end.
 
 %%--------------------------------------------------------------------
 %% @private

@@ -28,6 +28,7 @@ tr:hover {
 <erl>
 -record (isis_lsp, {
 	   lsp_id,
+           id_length,
 	   last_update,
 	   version,
 	   pdu_type,

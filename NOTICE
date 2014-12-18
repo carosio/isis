@@ -1,0 +1,16 @@
+AutoISIS
+Copyright 2014 Alistair Woodman, California USA <awoodman@netdef.org>
+
+This product is licensed under Apache License Version 2.0
+See LICENSE file for details
+
+Graphical Representation is provided by d3 library, which is open
+source software, written and copyright by Michael Bostock. The
+original software is available from http://d3js.org. See specific
+license in html/d3/LICENSE
+
+Dijkstra Algorithm and Directed/Unidirected Graphs support is 
+provided by erlang-algorithms library. It is written and copyright
+Aggelos Giantsios. The original software is available at
+https://github.com/aggelgian/erlang-algorithms
+

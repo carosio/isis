@@ -93,19 +93,19 @@ reconstruct_flow(L) ->
 
 reconstruct_path(Result, Node) ->
   try dict:fetch(Node, Result) of
-    {Cost, Prev} ->
-      {Node, reconstruct_path(Result, Prev, Cost, [Node])}
+    {Cost, Prevs} ->
+      {Node, {Cost,
+	      lists:map(fun(P) -> lists:reverse(lists:flatten([Node | reconstruct_path(Result, P, Cost)])) end, Prevs)}}
   catch
     error:badarg ->
       {Node, 'unreachable'}
   end.
 
--spec reconstruct_path(dict(), graph:vertex(), term(), vpath()) -> {term(), vpath()}.
+-spec reconstruct_path(dict(), graph:vertex(), term()) -> {vpath()}.
 
-reconstruct_path(_Result, root, Cost, Path) ->
-  {Cost, Path};
-reconstruct_path(Result, Node, Cost, Path) ->
-  {_, Prev} = dict:fetch(Node, Result),
-  reconstruct_path(Result, Prev, Cost, [Node|Path]).
-  
-
+reconstruct_path(_Result, root, _Cost) ->
+  [];
+reconstruct_path(Result, Node, Cost) ->
+  {_, Prevs} = dict:fetch(Node, Result),
+  AltPaths = lists:map(fun(P) -> reconstruct_path(Result, P, Cost) end, Prevs),
+  lists:map(fun(P) -> [Node | P] end, AltPaths).

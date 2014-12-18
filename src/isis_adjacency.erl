@@ -6,32 +6,18 @@
 %%% This file is part of AutoISIS.
 %%%
 %%% License:
-%%% AutoISIS can be used (at your option) under the following GPL or under
-%%% a commercial license
+%%% This code is licensed to you under the Apache License, Version 2.0
+%%% (the "License"); you may not use this file except in compliance with
+%%% the License. You may obtain a copy of the License at
 %%% 
-%%% Choice 1: GPL License
-%%% AutoISIS is free software; you can redistribute it and/or modify it
-%%% under the terms of the GNU General Public License as published by the
-%%% Free Software Foundation; either version 2, or (at your option) any
-%%% later version.
+%%%   http://www.apache.org/licenses/LICENSE-2.0
 %%% 
-%%% AutoISIS is distributed in the hope that it will be useful, but
-%%% WITHOUT ANY WARRANTY; without even the implied warranty of
-%%% MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See 
-%%% the GNU General Public License for more details.
-%%% 
-%%% You should have received a copy of the GNU General Public License
-%%% along with GNU Zebra; see the file COPYING.  If not, write to the Free
-%%% Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
-%%% 02111-1307, USA.
-%%% 
-%%% Choice 2: Commercial License Usage
-%%% Licensees holding a valid commercial AutoISIS may use this file in 
-%%% accordance with the commercial license agreement provided with the 
-%%% Software or, alternatively, in accordance with the terms contained in 
-%%% a written agreement between you and the Copyright Holder.  For
-%%% licensing terms and conditions please contact us at 
-%%% licensing@netdef.org
+%%% Unless required by applicable law or agreed to in writing,
+%%% software distributed under the License is distributed on an
+%%% "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+%%% KIND, either express or implied.  See the License for the
+%%% specific language governing permissions and limitations
+%%% under the License.
 %%%
 %%% @end
 %%% Created : 22 Jan 2014 by Rick Payne <rickp@rossfell.co.uk>
@@ -60,6 +46,7 @@
 	  neighbor_id,   %% Neighbor ID
 	  lan_id,        %% Who the negihbor believes is DIS
 	  priority,      %% Priority it advertises
+	  metric,        %% Our metric for this interface
 	  ip_addresses = [],  %% IP address of the neighbor
           ipv6_addresses = [], %% IPv6 address of the neighbor
 	  interface,     %% PID handling the interface
@@ -290,6 +277,8 @@ parse_args([{level, level1_iih} | T], State) ->
     parse_args(T, State#state{level = level_1});
 parse_args([{level, level2_iih} | T], State) ->
     parse_args(T, State#state{level = level_2});
+parse_args([{metric, M} | T], State) ->
+    parse_args(T, State#state{metric = M});
 parse_args([], State) ->
     State.
 
@@ -316,7 +305,8 @@ cancel_timer(State) ->
 seen_ourselves(#isis_iih{tlv = TLVs}, State) ->
     R = lists:filter(fun(A) -> seen_ourselves_tlv(A, State) end,
 		  TLVs),
-    lager:debug("R: ~p", [R]),
+    lager:debug("Seen ourselves in IIH from ~p: ~p",
+		[State#state.neighbor_id, length(R) > 0]),
     length(R) > 0.
 
 seen_ourselves_tlv(#isis_tlv_is_neighbors{neighbors = N}, State) ->
@@ -337,6 +327,7 @@ update_adjacency(Direction, State) ->
 verify_interface_addresses(IIH, #state{ip_addresses = IPAddresses,
 				       ipv6_addresses = IPv6Addresses} = State) ->
     IfIndex = get_ifindex(State),
+    Metric = State#state.metric,
     V4 = isis_protocol:filter_tlvs(isis_tlv_ip_interface_address, IIH#isis_iih.tlv),
     V4Addresses =
 	lists:flatten(
@@ -345,8 +336,8 @@ verify_interface_addresses(IIH, #state{ip_addresses = IPAddresses,
     V42 = sets:from_list(V4Addresses),
     V4Remove = lists:map(fun(F) -> {ipv4, {F, IfIndex, self()}} end, sets:to_list(sets:subtract(V41, V42))),
     V4Add = lists:map(fun(F) -> {ipv4, {F, IfIndex, self()}} end, sets:to_list(sets:subtract(V42, V41))),
-    isis_system:add_sid_addresses(IIH#isis_iih.source_id, V4Add),
-    isis_system:delete_sid_addresses(IIH#isis_iih.source_id, V4Remove),
+    isis_system:add_sid_addresses(State#state.level, IIH#isis_iih.source_id, Metric, V4Add),
+    isis_system:delete_sid_addresses(State#state.level, IIH#isis_iih.source_id, V4Remove),
 
     V6 = isis_protocol:filter_tlvs(isis_tlv_ipv6_interface_address, IIH#isis_iih.tlv),
     V6Addresses =
@@ -356,8 +347,8 @@ verify_interface_addresses(IIH, #state{ip_addresses = IPAddresses,
     V62 = sets:from_list(V6Addresses),
     V6Remove = lists:map(fun(F) -> {ipv6, {F, IfIndex, self()}} end, sets:to_list(sets:subtract(V61, V62))),
     V6Add = lists:map(fun(F) -> {ipv6, {F, IfIndex, self()}} end, sets:to_list(sets:subtract(V62, V61))),
-    isis_system:add_sid_addresses(IIH#isis_iih.source_id, V6Add),
-    isis_system:delete_sid_addresses(IIH#isis_iih.source_id, V6Remove),
+    isis_system:add_sid_addresses(State#state.level, IIH#isis_iih.source_id, Metric, V6Add),
+    isis_system:delete_sid_addresses(State#state.level, IIH#isis_iih.source_id, V6Remove),
     {up, State#state{ip_addresses = V4Addresses,
 		     ipv6_addresses = V6Addresses}}.
 

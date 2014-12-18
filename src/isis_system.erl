@@ -6,32 +6,18 @@
 %%% This file is part of AutoISIS.
 %%%
 %%% License:
-%%% AutoISIS can be used (at your option) under the following GPL or under
-%%% a commercial license
+%%% This code is licensed to you under the Apache License, Version 2.0
+%%% (the "License"); you may not use this file except in compliance with
+%%% the License. You may obtain a copy of the License at
 %%% 
-%%% Choice 1: GPL License
-%%% AutoISIS is free software; you can redistribute it and/or modify it
-%%% under the terms of the GNU General Public License as published by the
-%%% Free Software Foundation; either version 2, or (at your option) any
-%%% later version.
+%%%   http://www.apache.org/licenses/LICENSE-2.0
 %%% 
-%%% AutoISIS is distributed in the hope that it will be useful, but
-%%% WITHOUT ANY WARRANTY; without even the implied warranty of
-%%% MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See 
-%%% the GNU General Public License for more details.
-%%% 
-%%% You should have received a copy of the GNU General Public License
-%%% along with GNU Zebra; see the file COPYING.  If not, write to the Free
-%%% Software Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
-%%% 02111-1307, USA.
-%%% 
-%%% Choice 2: Commercial License Usage
-%%% Licensees holding a valid commercial AutoISIS may use this file in 
-%%% accordance with the commercial license agreement provided with the 
-%%% Software or, alternatively, in accordance with the terms contained in 
-%%% a written agreement between you and the Copyright Holder.  For
-%%% licensing terms and conditions please contact us at 
-%%% licensing@netdef.org
+%%% Unless required by applicable law or agreed to in writing,
+%%% software distributed under the License is distributed on an
+%%% "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+%%% KIND, either express or implied.  See the License for the
+%%% specific language governing permissions and limitations
+%%% under the License.
 %%%
 %%% @end
 %%% Created : 18 Jan 2014 by Rick Payne <rickp@rossfell.co.uk>
@@ -42,7 +28,7 @@
 
 -include("isis_system.hrl").
 -include("isis_protocol.hrl").
--include("zclient.hrl").
+-include_lib("stdlib/include/ms_transform.hrl").
 
 %% API
 -export([start_link/1,
@@ -70,7 +56,7 @@
 	 %% System Name handling
 	 add_name/2, delete_name/1, lookup_name/1,
 	 %% Handle System ID mapping
-	 add_sid_addresses/2, delete_sid_addresses/2, delete_all_sid_addresses/1,
+	 add_sid_addresses/4, delete_sid_addresses/3, delete_all_sid_addresses/1,
 	 %% pseudonodes
 	 allocate_pseudonode/2, deallocate_pseudonode/2,
 	 %% Misc
@@ -98,10 +84,12 @@
 		redistributed_routes,
 		ignore_list = [],       %% Interfaces to ignore
 		allowed_list = [],
-		system_ids :: dict(),   %% SID -> Neighbor address
+		l1_system_ids :: dict(),   %% SID -> Neighbor address
+		l2_system_ids :: dict(),
 		refresh_timer = undef,
 		periodic_refresh,
-		names}).
+		names,
+		rib_api :: atom()}).
 
 %%%===================================================================
 %%% API
@@ -166,20 +154,28 @@ set_interface(Name, Level, Values) ->
 list_interfaces() ->
     ets:tab2list(isis_interfaces).
 
-get_interface(Name) ->
+get_interface(Name) when is_list(Name) ->
     case ets:lookup(isis_interfaces, Name) of
 	[I] -> I;
 	_ -> unknown
+    end;
+get_interface(IfIndex) when is_integer(IfIndex) ->
+    Ifs = ets:select(isis_interfaces,
+		     ets:fun2ms(fun(#isis_interface{name = N, ifindex = I} = If)
+				      when I =:= IfIndex -> If end)),
+    case length(Ifs) of
+	0 -> unknown;
+	_ -> lists:nth(1, Ifs)
     end.
 
 enable_level(Interface, level_1) ->
     case ets:lookup(isis_interfaces, Interface) of
-	[I] -> do_enable_level(I, level_1);
+	[I] -> do_enable_level(I, level_1, isis_system:system_id());
 	_ -> not_found
     end;
 enable_level(Interface, level_2) ->
     case ets:lookup(isis_interfaces, Interface) of
-	[I] -> do_enable_level(I, level_2);
+	[I] -> do_enable_level(I, level_2, isis_system:system_id());
 	_ -> not_found
     end;
 enable_level(_, _) ->
@@ -260,15 +256,15 @@ set_hostname(Name) ->
 process_spf(SPF) ->
     gen_server:cast(?MODULE, {process_spf, SPF}).
 
-add_sid_addresses(_, []) ->
+add_sid_addresses(_, _, _, []) ->
     ok;
-add_sid_addresses(SID, Addresses) ->
-    gen_server:cast(?MODULE, {add_sid, SID, Addresses}).
+add_sid_addresses(Level, SID, Metric, Addresses) ->
+    gen_server:cast(?MODULE, {add_sid, Level, SID, Metric, Addresses}).
 
-delete_sid_addresses(_, []) ->
+delete_sid_addresses(_, _, []) ->
     ok;
-delete_sid_addresses(SID, Addresses) ->
-    gen_server:cast(?MODULE, {delete_sid, SID, Addresses}).
+delete_sid_addresses(Level, SID, Addresses) ->
+    gen_server:cast(?MODULE, {delete_sid, Level, SID, Addresses}).
 
 delete_all_sid_addresses(Pid) ->
     gen_server:cast(?MODULE, {delete_all_sid, Pid}).
@@ -333,15 +329,15 @@ init(Args) ->
     Interfaces = ets:new(isis_interfaces, [named_table, ordered_set,
 					   {keypos, #isis_interface.name}]),
     Redist = ets:new(redistributed_routes, [named_table, bag,
-					    {keypos, #zclient_route.route}]),
-    State = #state{system_ids = dict:new(),
+					    {keypos, #isis_route.route}]),
+    State = #state{l1_system_ids = dict:new(),
+		   l2_system_ids = dict:new(),
 		   interfaces = Interfaces,
 		   redistributed_routes = Redist,
 		   pseudonodes = dict:new(),
 		   reachability = dict:new()},
     StartState = create_initial_frags(extract_args(Args, State)),
     StartState2 = refresh_lsps(StartState),
-    zclient:subscribe(self()),
     %% Periodically check if any of our LSPs need refreshing due to ageout
     Timer = erlang:start_timer(isis_protocol:jitter(?DEFAULT_AGEOUT_CHECK, 10) * 1000,
 			       self(), lsp_ageout),
@@ -349,6 +345,10 @@ init(Args) ->
 				 {keypos, #isis_name.system_id}]),
     isis_lspdb:set_system_id(level_1, StartState2#state.system_id),
     isis_lspdb:set_system_id(level_2, StartState2#state.system_id),
+    case application:get_env(isis, rib_client) of
+	{ok, Rib} -> Rib:subscribe(self());
+	_ -> lager:error("No rib client specified, not subscribing..")
+    end,
     {ok, StartState2#state{periodic_refresh = Timer, names = Names}}.
 
 %%--------------------------------------------------------------------
@@ -408,9 +408,7 @@ handle_call({set_system_id, undefined}, _From, State) ->
 			       system_id_set = false}};
 handle_call({set_system_id, Id}, _From, State)
   when is_binary(Id), byte_size(Id) =:= 6 ->
-    lager:info("System ID set to ~p", [Id]),
-    isis_lspdb:set_system_id(level_1, Id),
-    isis_lspdb:set_system_id(level_2, Id),
+    change_system_id(Id, State),
     NewState = 
 	case State#state.system_id =:= Id of
 	    true -> State;
@@ -420,8 +418,9 @@ handle_call({set_system_id, Id}, _From, State)
 		    false -> State
 		end
 	end,
-    {reply, ok, NewState#state{system_id = Id,
-			       system_id_set = true}};
+    NextState = NewState#state{system_id = Id,
+			       system_id_set = true},
+    {reply, ok, refresh_lsps(NextState)};
 handle_call({set_system_id, _}, _From, State) ->
     {reply, invalid_sid, State};
 
@@ -497,7 +496,9 @@ handle_cast({schedule_lsp_refresh},
     %% could stagger this a bit - have a fast first re-gen, followed
     %% by longer subsequent ones to allow the network to settle.
     %% io:format("LSP Refresh scheduled~n", []),
-    Timer = erlang:start_timer(2 * 1000, self(), lsp_refresh),
+    Timer = erlang:start_timer(
+	      isis_protocol:jitter(?ISIS_LSP_REFRESH_DELAY, ?ISIS_LSP_JITTER),
+	      self(), lsp_refresh),
     {noreply, State#state{refresh_timer = Timer}};
 handle_cast({schedule_lsp_refresh}, State) ->
     {noreply, State};
@@ -507,49 +508,104 @@ handle_cast({update_tlv, TLV, Node, Level, Interface}, State) ->
 handle_cast({delete_tlv, TLV, Node, Level, Interface}, State) ->
     delete_tlv(TLV, Node, Level, Interface, State);
 
-handle_cast({add_sid, SID, Addresses}, #state{system_ids = IDs} = State) ->
+handle_cast({add_sid, Level, SID, Metric, Addresses}, State) ->
+    lager:error("Adding SID Address for level ~p ~p -> ~p", [Level, SID, Addresses]),
+    IDs = 
+	case Level of
+	    level_1 -> State#state.l1_system_ids;
+	    level_2 -> State#state.l2_system_ids
+	end,
+    %% Map IfIndex -> Cost
     D1 = case dict:find(SID, IDs) of
-	     error -> dict:store(SID, Addresses, IDs);
-	     {ok, As} ->
-		 S1 = sets:from_list(Addresses),
-		 S2 = sets:from_list(As),
-		 NewAs = sets:to_list(sets:union([S1, S2])),
-		 dict:store(SID, NewAs, IDs)
+	     error -> NT = gb_trees:enter(
+			     Metric, Addresses, gb_trees:empty()),
+		      dict:store(SID, NT, IDs);
+	     {ok, Tree} ->
+		 case gb_trees:lookup(Metric, Tree) of
+		     %% 'none' case should not happen, but we handle it just in case...
+		     none -> NT = gb_trees:enter(
+				    Metric, Addresses, gb_trees:empty()),
+			     dict:store(SID, NT, IDs);
+		     {value, V} ->
+			 S1 = sets:from_list(Addresses),
+			 S2 = sets:from_list(V),
+			 NewAs = sets:to_list(sets:union([S1, S2])),
+			 NewTree = gb_trees:enter(Metric, NewAs, Tree),
+			 dict:store(SID, NewTree, IDs)
+		 end
 	 end,
-    isis_lspdb:schedule_spf(level_1, "Neighbor change"),
-    isis_lspdb:schedule_spf(level_2, "Neighbor change"),
-    {noreply, State#state{system_ids = D1}};
-handle_cast({delete_sid, SID, Addresses}, State) ->
-    D1 = case dict:find(SID, State#state.system_ids) of
-	     error -> State#state.system_ids;
-	     {ok, As} ->
-		 S1 = sets:from_list(As),
-		 S2 = sets:from_list(Addresses),
-		 NewAs = sets:to_list(sets:subtract(S1, S2)),
-		 dict:store(SID, NewAs, State#state.system_ids)
+    isis_lspdb:schedule_spf(Level, "Neighbor change"),
+    NewState = 
+	case Level of
+	    level_1 -> State#state{l1_system_ids = D1};
+	    level_2 -> State#state{l2_system_ids = D1}
+	end,
+    {noreply, NewState};
+handle_cast({delete_sid, Level, SID, Addresses}, State) ->
+    IDs = 
+	case Level of
+	    level_1 -> State#state.l1_system_ids;
+	    level_2 -> State#state.l2_system_ids
+	end,
+    D1 = case dict:find(SID, IDs) of
+	     error -> IDs;
+	     {ok, Tree} ->
+		 NewTree = 
+		     gb_trees:map(
+		       fun(_Metric, As) ->
+			       S1 = sets:from_list(As),
+			       S2 = sets:from_list(Addresses),
+			       sets:to_list(sets:subtract(S1, S2))
+		       end, Tree),
+		 dict:store(SID, NewTree, IDs)
 	 end,
-    {noreply, State#state{system_ids = D1}};
-handle_cast({delete_all_sid, Pid}, #state{system_ids = IDs} = State) ->
-    NewIDs = 
-	dict:filter(fun(_Key, Items) -> length(Items) > 0 end,
-		    dict:map(fun(_Key, Items) ->
-				     lists:filter(fun({_AFI, {_A, _I, DPid}}) -> DPid =/= Pid end, Items)
-			     end, IDs)),
-    {noreply, State#state{system_ids = NewIDs}};
+    NewState =
+	case Level of
+	    level_1 -> State#state{l1_system_ids = D1};
+	    level_2 -> State#state{l2_system_ids = D1}
+	end,
+    {noreply, NewState};
+handle_cast({delete_all_sid, Pid}, State) ->
+    F =
+	fun(IDs) -> 
+		dict:filter(
+		  fun(_Key, Tree) -> not gb_trees:is_empty(Tree) end,
+		  dict:map(
+		    fun(_Key, T2) ->
+			    Iter = gb_trees:iterator(T2),
+			    cull_tree(gb_trees:next(Iter), Pid, T2)
+		    end, IDs))
+	end,
+    {noreply, State#state{l1_system_ids = F(State#state.l1_system_ids),
+			  l2_system_ids = F(State#state.l2_system_ids)}};
 handle_cast({process_spf, {Level, Time, SPF, Reason}}, State) ->
+    IDs = 
+	case Level of
+	    level_1 -> extract_lowest_cost_hops(State#state.l1_system_ids);
+	    level_2 -> extract_lowest_cost_hops(State#state.l2_system_ids)
+	end,
     Table = 
 	lists:filtermap(
-	  fun({<<Node:7/binary>>, NHID, Metric, As, Nodes})
+	  fun({<<Node:7/binary>>, NHIDs, Metric, As, Paths})
 	     when is_list(As) ->
 		  case length(As) of
 		      0 -> false;
 		      _ ->
-			  case dict:find(NHID, State#state.system_ids) of
-			      {ok, NH} -> {true, {
-					     lookup_name(Node),
-					     lookup_name(NHID),
-					     NH, Metric, As, Nodes}};
-			      _ -> false
+			  NHs =
+			      lists:flatten(
+				lists:map(
+				  fun(NH) ->
+					  case dict:find(NH, IDs) of
+					      {ok, FNH} -> FNH;
+					      _ -> []
+					  end
+				  end, NHIDs)),
+			  case length(NHs) of
+			      0 -> false;
+			      _ -> {true, {
+				      lookup_name(Node),
+				      lists:map(fun(TNHID) -> lookup_name(TNHID) end, NHIDs),
+				      NHs, Metric, As, Paths}}
 			  end
 		  end;
 	     (_) -> false
@@ -637,12 +693,13 @@ code_change(_OldVsn, State, _Extra) ->
 extract_args([{autoconf, true} | T], State) ->
     %% If we're autoconfig, we need a hardware-fingerprint
     extract_args(T, State#state{autoconf = true,
-				areas = [<<0:(13*8)>>]});
+     				areas = [<<0:(13*8)>>]});
 extract_args([{autoconf_fingerprint, FP} | T], State) ->
     %% If we're autoconfig, we need a hardware-fingerprint
     extract_args(T, State#state{fingerprint = FP});
 extract_args([{system_id, Id} | T], State) ->
-    extract_args(T, State#state{system_id = Id});
+    extract_args(T, State#state{system_id_set = true,
+				system_id = Id});
 extract_args([{areas, Areas} | T], State) ->
     extract_args(T, State#state{areas = Areas});
 extract_args([{ignore_interfaces, Is} | T], State) ->
@@ -660,20 +717,25 @@ extract_args([], State) ->
 do_enable_interface(#isis_interface{pid = Pid}, State)  when is_pid(Pid) ->
     State;
 do_enable_interface(#isis_interface{name = Name} = Interface, State) ->
-    {ok, InterfacePid} = isis_interface:start_link([{name, Name}]),
-    erlang:monitor(process, InterfacePid),
-    ets:insert(State#state.interfaces,
-	       Interface#isis_interface{pid = InterfacePid,
-					enabled = true}),
+    case isis_interface:start_link([{name, Name}]) of
+	{ok, InterfacePid} ->
+	    erlang:monitor(process, InterfacePid),
+	    ets:insert(State#state.interfaces,
+		       Interface#isis_interface{pid = InterfacePid,
+						enabled = true});
+	_ -> no_process
+    end,
     State.
 
 %%%===================================================================
 %%% Enable a level on an interface
 %%% ===================================================================
-do_enable_level(#isis_interface{pid = Pid}, Level) when is_pid(Pid) ->
+do_enable_level(#isis_interface{pid = Pid}, Level, SID) when is_pid(Pid) ->
     isis_interface:enable_level(Pid, Level),
+    LP = isis_interface:get_level_pid(Pid, Level),
+    isis_interface_level:set(LP, [{system_id, SID}]),
     ok;
-do_enable_level(_I, _Level) ->
+do_enable_level(_I, _Level, _State) ->
     not_enabled.
 
 %%%===================================================================
@@ -694,8 +756,40 @@ refresh_lsps([], State) ->
 			 State#state.frags),
     State#state{frags = NewFrags}.
 
+%% Refresh LSPs - and if we refresh any pseudonode, mark our LSP
+%% to be refreshed next time around (ANVL 5.2 requirement)
 refresh_lsps(#state{frags = Frags} = State) ->
-    refresh_lsps(Frags, State).
+    DoRefresh = fun() -> refresh_lsps(lists:sort(fun frag_sort/2, Frags), State) end,
+    case length(lists:filter(fun(#lsp_frag{pseudonode = PN,
+					  updated = true}) when PN > 0 -> true;
+				(_) -> false
+			     end, Frags)) of
+	0 -> DoRefresh();
+	_ -> NS = DoRefresh(),
+	     schedule_lsp_refresh(),
+	     NS#state{frags = 
+			  lists:map(fun(#lsp_frag{pseudonode = 0, fragment = 0} = F) ->
+					    F#lsp_frag{updated = true};
+				       (F) -> F
+				    end, NS#state.frags)}
+    end.
+
+%% Sort the frag list into ascending order...
+frag_sort(#lsp_frag{pseudonode = AP},
+	  #lsp_frag{pseudonode = BP}) when AP < BP ->
+    true;
+frag_sort(#lsp_frag{pseudonode = AP},
+	  #lsp_frag{pseudonode = BP}) when AP > BP ->
+    false;
+frag_sort(#lsp_frag{fragment = AF},
+	  #lsp_frag{fragment = BF}) when AF < BF ->
+    true;
+frag_sort(#lsp_frag{fragment = AF},
+	  #lsp_frag{fragment = BF}) when AF > BF ->
+    false;
+frag_sort(#lsp_frag{level = AL},
+	  #lsp_frag{level = BL})  ->
+    AL < BL.
 
 %%%===================================================================
 %%% force_refresh_lsps - Ignore the 'updated flag' and force the
@@ -720,8 +814,7 @@ lsp_ageout_check(#state{frags = Frags} = State) ->
     {_, {L1IDs, L2IDs}} = lists:mapfoldl(LSP_Gen, {[], []}, Frags),
     L1LSPs = isis_lspdb:lookup_lsps(L1IDs, isis_lspdb:get_db(level_1)),
     L2LSPs = isis_lspdb:lookup_lsps(L2IDs, isis_lspdb:get_db(level_2)),
-    Updater = fun(#isis_lsp{lsp_id = Id,
-			    remaining_lifetime = RL,
+    Updater = fun(#isis_lsp{remaining_lifetime = RL,
 			    sequence_number = SeqNo} = L, Level)
 		    when RL < (2 * ?DEFAULT_AGEOUT_CHECK) ->
 		      %% Update
@@ -799,7 +892,8 @@ create_initial_frags(State) ->
 
 create_frag(PN, Level) when PN > 0, PN =< 255 ->
     #lsp_frag{level = Level,
-	      pseudonode = PN};
+	      pseudonode = PN,
+	      updated = true};
 create_frag(PN, Level) ->
     io:format("Tried to create PN ~p for ~p~n", [PN, Level]),
     error.
@@ -826,7 +920,7 @@ update_tlv(#isis_tlv_extended_reachability{reachability =
     isis_lspdb:schedule_spf(level_1, "Self-originated TLV change"),
     isis_lspdb:schedule_spf(level_2, "Self-originated TLV change"),
     {noreply, State#state{frags = NewFrags, reachability = NewD}};
-update_tlv(TLV, Node, Level, Interface, #state{frags = Frags} = State) ->
+update_tlv(TLV, Node, Level, _Interface, #state{frags = Frags} = State) ->
     NewFrags = isis_protocol:update_tlv(TLV, Node, Level, Frags),
     schedule_lsp_refresh(),
     isis_lspdb:schedule_spf(level_1, "Self-originated TLV change"),
@@ -862,7 +956,7 @@ delete_tlv(#isis_tlv_extended_reachability{reachability =
 	_ -> {NewD, Frags}
     end,
     {noreply, State#state{frags = NewFrags, reachability = NewD2}};
-delete_tlv(TLV, Node, Level, Interface, #state{frags = Frags} = State) ->
+delete_tlv(TLV, Node, Level, _Interface, #state{frags = Frags} = State) ->
     NewFrags = isis_protocol:delete_tlv(TLV, Node, Level, Frags),
     schedule_lsp_refresh(),
     {noreply, State#state{frags = NewFrags}}.
@@ -891,10 +985,10 @@ allocate_pseudonode(Pid, Level, #state{frags = Frags} = State) ->
 		  end
 	  end, ets:tab2list(isis_lspdb:get_db(Level))),
     S1 = sets:union(S0, sets:from_list(InUseFrags)),
-    S2 = sets:from_list(lists:seq(1, 255)),
+    S2 = sets:from_list(lists:seq(1, 254)),
     %% Look away now - shuffle the available set of Pseudonodes
     L = [X||{_,X} <- lists:sort([ {random:uniform(), N} ||
-				    N <- sets:to_list(sets:subtract(S2, S1))])],
+    				    N <- sets:to_list(sets:subtract(S2, S1))])],
     NewPN = lists:nth(1, L),
     NewDict = dict:store(Pid, {Level, NewPN}, State#state.pseudonodes),
     NewFrag = create_frag(NewPN, Level),
@@ -951,8 +1045,8 @@ purge_lsps(MatchFun, State) ->
 %%--------------------------------------------------------------------
 purge_all_lsps(State) ->
     lager:error("!!!!!!!!!!!!!! ALL LSPS PURGED! !!!!!!!!!!!!!!!!", []),
-    NewFrags = purge_lsps(fun(_, _) -> true end, State),
-    State#state{frags = NewFrags}.
+    purge_lsps(fun(_, _) -> true end, State),
+    force_refresh_lsp(create_initial_frags(State)).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -991,7 +1085,7 @@ do_bump_lsp(Level, Node, Frag, SeqNo, State) ->
 %%%===================================================================
 %%% Add interface
 %%%===================================================================
-add_interface(#zclient_interface{
+add_interface(#isis_interface{
 		 name = Name, ifindex = Ifindex, flags = Flags,
 		 mtu = MTU, mtu6 = MTU6, mac = Mac}, State) ->
     {I, Autoconf} = 
@@ -1039,9 +1133,7 @@ autoconf_interface(#isis_interface{mac = Mac, name = Name} = I,
 		    _ -> <<ID:(6*8)>> = Mac,
 			 %%DynamicName = lists:flatten(io_lib:format("autoconf-~.16B", [ID])),
 			 {ok, DynamicName} = inet:gethostname(),
-			 isis_lspdb:set_system_id(level_1, Mac),
-			 isis_lspdb:set_system_id(level_2, Mac),
-			 lager:info("System ID set to ~p", [Mac]),
+			 change_system_id(Mac, State),
 			 NextState =
 			     set_tlv_hostname(DynamicName, State#state{system_id = Mac,
 								       system_id_set = true}),
@@ -1051,7 +1143,7 @@ autoconf_interface(#isis_interface{mac = Mac, name = Name} = I,
 	    %% Enable interface and level1...
 	    State2 = do_enable_interface(I, State1),
 	    [Interface] = ets:lookup(State2#state.interfaces, Name),
-	    do_enable_level(Interface, level_1),
+	    do_enable_level(Interface, level_1, State2#state.system_id),
 	    LevelPid = isis_interface:get_level_pid(Interface#isis_interface.pid, level_1),
 	    isis_interface_level:set(LevelPid,
 				     [{encryption, text, <<"isis-autoconf">>},
@@ -1107,8 +1199,8 @@ update_address_tlv(Updater, ipv6, Address, Mask, State) ->
 %%%===================================================================
 %%% Add address
 %%%===================================================================
-add_address(#zclient_prefix{afi = AFI, address = Address,
-			    mask_length = Mask},
+add_address(#isis_prefix{afi = AFI, address = Address,
+			 mask_length = Mask},
 	    Name, State) ->
     I = case ets:lookup(State#state.interfaces, Name) of
 	    [Intf] -> Intf;
@@ -1126,7 +1218,7 @@ add_address(#zclient_prefix{afi = AFI, address = Address,
 	end,
     NewState.
 
-delete_address(#zclient_prefix{afi = AFI, address = Address, mask_length = Mask} = R,
+delete_address(#isis_prefix{afi = AFI, address = Address, mask_length = Mask} = R,
 	       Name, State) ->
     A = #isis_address{afi = AFI, address = Address, mask = Mask},
     case ets:lookup(State#state.interfaces, Name) of
@@ -1144,9 +1236,9 @@ delete_address(#zclient_prefix{afi = AFI, address = Address, mask_length = Mask}
 	_ -> State
     end.
 
-add_redistribute(#zclient_route{route =
-				    #zclient_route_key{prefix = #zclient_prefix{afi = ipv4, address = Address,
-										mask_length = Mask},
+add_redistribute(#isis_route{route =
+				 #isis_route_key{prefix = #isis_prefix{afi = ipv4, address = Address,
+								       mask_length = Mask},
 						      source = undefined},
 				metric = Metric} = R, State) ->
     ets:insert(State#state.redistributed_routes, R),
@@ -1159,18 +1251,18 @@ add_redistribute(#zclient_route{route =
 		     up = true,
 		     sub_tlv = []}]},
     update_frags(fun isis_protocol:update_tlv/4, TLV, 0, State);
-add_redistribute(#zclient_route{route = #zclient_route_key{
-					   prefix = #zclient_prefix{afi = ipv6, address = Address,
-								    mask_length = Mask},
-					   source = Source},
-				metric = Metric, nexthops = NH} = R, State)
+add_redistribute(#isis_route{route = #isis_route_key{
+					prefix = #isis_prefix{afi = ipv6, address = Address,
+							      mask_length = Mask},
+					source = Source},
+			     metric = Metric, nexthops = NH} = R, State)
   when is_list(NH) ->
     ets:insert(State#state.redistributed_routes, R),
     MaskLenBytes = erlang:trunc((Mask + 7) / 8),
     A = Address bsr (128 - Mask),
     SubTLV =
 	case Source of
-	    #zclient_prefix{afi = ipv6,
+	    #isis_prefix{afi = ipv6,
 			    address = S,
 			    mask_length = M} ->
 		[#isis_subtlv_srcdst{prefix = S, prefix_length = M}];
@@ -1191,11 +1283,11 @@ add_redistribute(R, State) ->
     io:format("Ignoring redistributed route: ~p~n", [R]),
     State.
 
-delete_redistribute(#zclient_route{route = #zclient_route_key{
-					      prefix = #zclient_prefix{afi = ipv4, address = Address,
-								       mask_length = Mask},
-					      source = undefined},
-				   metric = Metric} = R, State) ->
+delete_redistribute(#isis_route{route = #isis_route_key{
+					   prefix = #isis_prefix{afi = ipv4, address = Address,
+								 mask_length = Mask},
+					   source = undefined},
+				metric = Metric} = R, State) ->
     ets:delete_object(State#state.redistributed_routes, R),
     TLV = 
      	#isis_tlv_extended_ip_reachability{
@@ -1209,19 +1301,19 @@ delete_redistribute(#zclient_route{route = #zclient_route_key{
 	true -> update_frags(fun isis_protocol:delete_tlv/4, TLV, 0, State);
 	_ -> State
     end;
-delete_redistribute(#zclient_route{route = #zclient_route_key{
-					      prefix = #zclient_prefix{afi = ipv6, address = Address,
-								       mask_length = Mask},
-					      source = Source},
-				   metric = Metric} = R, State) ->
+delete_redistribute(#isis_route{route = #isis_route_key{
+					   prefix = #isis_prefix{afi = ipv6, address = Address,
+								 mask_length = Mask},
+					   source = Source},
+				metric = Metric} = R, State) ->
     ets:delete_object(State#state.redistributed_routes, R),
     MaskLenBytes = erlang:trunc((Mask + 7) / 8),
     A = Address bsr (128 - Mask),
     SubTLV =
 	case Source of
-	    #zclient_prefix{afi = ipv6,
-			    address = S,
-			    mask_length = M} ->
+	    #isis_prefix{afi = ipv6,
+			 address = S,
+			 mask_length = M} ->
 		[#isis_subtlv_srcdst{prefix = S, prefix_length = M}];
 	    _ -> []
 	end,
@@ -1238,11 +1330,11 @@ delete_redistribute(#zclient_route{route = #zclient_route_key{
 	_ -> State
     end.
 
-update_router_id(#zclient_prefix{afi = ipv4, address = A},
+update_router_id(#isis_prefix{afi = ipv4, address = A},
 		 State) ->
     TLV = #isis_tlv_te_router_id{router_id = A},
     update_frags(fun isis_protocol:update_tlv/4, TLV, 0, State);
-update_router_id(#zclient_prefix{afi = ipv6, address = _A},
+update_router_id(#isis_prefix{afi = ipv6, address = _A},
 		 State) ->
     %% Not sure what to do with v6 router-ids just yet..
     State.
@@ -1303,14 +1395,14 @@ address_apply_mask(ipv6, Address, Mask) ->
 %%
 %% We should only remove the prefix from our TLVs if its not in either
 %% the redist list, or the interface address lists.
-%% In the case of #zclient_route{}, its been withdrawn from redist, so
+%% In the case of #isis_route{}, its been withdrawn from redist, so
 %% check the connected set.
-%% In the case of a #zclient_prefix{}, its a connected address being withdrawn
+%% In the case of a #isis_prefix{}, its a connected address being withdrawn
 %% so check the redist bag.
 %%%===================================================================
-should_withdraw_route(#zclient_route{
-			 route = #zclient_route_key{
-				    prefix = #zclient_prefix{
+should_withdraw_route(#isis_route{
+			 route = #isis_route_key{
+				    prefix = #isis_prefix{
 						afi = AFI,
 						address = Address,
 						mask_length = Mask},
@@ -1328,14 +1420,14 @@ should_withdraw_route(#zclient_route{
     Result = not lists:foldl(CheckInt, false, isis_system:list_interfaces()),
     lager:error("should_withdraw_route ~p: ~p", [R, Result]),
     Result;
-should_withdraw_route(#zclient_prefix{
-			afi = AFI,
-			address = Address,
-			mask_length = Mask} = R, State) ->
+should_withdraw_route(#isis_prefix{
+			 afi = AFI,
+			 address = Address,
+			 mask_length = Mask} = R, State) ->
     AddressClean = address_apply_mask(AFI, Address, Mask),
     Possibles = ets:lookup(State#state.redistributed_routes,
-			   #zclient_prefix{afi = AFI, address = AddressClean, mask_length = Mask}),
-    FilterFun = fun(#zclient_route{route = #zclient_route_key{source = undefined}}) -> true;
+			   #isis_prefix{afi = AFI, address = AddressClean, mask_length = Mask}),
+    FilterFun = fun(#isis_route{route = #isis_route_key{source = undefined}}) -> true;
 		   (_) -> false
 		end,
     Result = not (length(lists:filter(FilterFun, Possibles)) > 0),
@@ -1344,7 +1436,33 @@ should_withdraw_route(#zclient_prefix{
 should_withdraw_route(_, _) ->
     true.
 
-    
+change_system_id(Id, State) ->
+    lager:info("System ID set to ~p", [Id]),
+    isis_lspdb:set_system_id(level_1, Id),
+    isis_lspdb:set_system_id(level_2, Id),
+    PropogateFun
+	= fun(I, L) ->
+		  case isis_interface:get_level_pid(I#isis_interface.pid, L) of
+		      not_enabled -> ok;
+		      P -> isis_interface_level:set(P, [{system_id, Id}])
+		  end
+	  end,
+    lists:map(fun(I) -> PropogateFun(I, level_1) end, ets:tab2list(State#state.interfaces)),
+    lists:map(fun(I) -> PropogateFun(I, level_2) end, ets:tab2list(State#state.interfaces)).
+
+%%%===================================================================
+%% create_lowest_nexthop_map
+%%
+%% Convert the dict of (System -> {})
+%% into a map containing just the lowest cost nexthops.
+%%%===================================================================
+extract_lowest_cost_hops(IDs) ->
+    dict:map(
+      fun(_System, HopsTree) ->
+	      {_Metric, Hops, _NewTree} = 
+		  gb_trees:take_smallest(HopsTree),
+	      Hops
+      end, IDs).
 
 set_state([{lsp_lifetime, Value} | Vs], State) ->
     set_state(Vs, State#state{max_lsp_lifetime = Value});
@@ -1358,10 +1476,10 @@ extract_state(lsp_lifetime, State) ->
 extract_state(reachability, State) ->
     State#state.reachability;
 extract_state(system_ids, State) ->
-    State#state.system_ids;
+    {State#state.l1_system_ids, State#state.l2_system_ids};
 extract_state(hostname, State) ->
     State#state.hostname;
-extract_state(_, State) ->
+extract_state(_, _State) ->
     unknown_item.
 
 dump_config_fields([{autoconf, true} | Fs], State) ->
@@ -1399,6 +1517,14 @@ dump_config(State) ->
     S = lists:zip(record_info(fields, state),
 		  tl(erlang:tuple_to_list(State))),
     dump_config_fields(S, State).
+
+cull_tree(none, _, T) -> T;
+cull_tree({Key, Value, Iter}, Pid, T) ->
+    NewValue = lists:filter(fun({_AFI, {_A, _I, DPid}}) -> DPid =/= Pid end, Value),
+    case length(NewValue) of
+	0 -> cull_tree(gb_trees:next(Iter), Pid, gb_trees:delete(Key, T));
+	_ -> cull_tree(gb_trees:next(Iter), Pid, gb_trees:enter(Key, NewValue, T))
+    end.
 
 %%
 %% Debug stuff
