@@ -43,7 +43,7 @@
 	 clear_db/1,
 	 set_system_id/2,
 	 %% Feed Details
-	 subscribe/2, unsubscribe/2, initial_state/2]).
+	 subscribe/3, subscribe/2, unsubscribe/2, initial_state/3]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -162,15 +162,18 @@ summary(Args, DB) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
+subscribe(Level, Pid, Type) ->
+    gen_server:cast(Level, {subscribe, Pid, Type}).
+
 subscribe(Level, Pid) ->
-    gen_server:cast(Level, {subscribe, Pid}).
+    gen_server:cast(Level, {subscribe, Pid, web}).
 
 unsubscribe(Level, Pid) ->
     gen_server:cast(Level, {unsubscribe, Pid}).
 
-initial_state(Level, Pid) ->
+initial_state(Level, Pid, Type) ->
     DB = isis_lspdb:get_db(Level),
-    lists:map(fun(L) -> notify_subscriber(build_message(L), Pid) end,
+    lists:map(fun(L) -> notify_subscriber(build_message(add, Level, L, Type), Pid) end,
 	      ets:tab2list(DB)).
 
 %%--------------------------------------------------------------------
@@ -372,10 +375,10 @@ handle_cast({schedule_spf, Reason}, State) ->
 handle_cast({set_system_id, ID}, State) ->
     {noreply, State#state{system_id = ID}};
 
-handle_cast({subscribe, Pid}, #state{subscribers = S} = State) ->
+handle_cast({subscribe, Pid, Type}, #state{subscribers = S} = State) ->
     erlang:monitor(process, Pid),
     {noreply, State#state{subscribers =
-			      dict:store(Pid, [], S)}};
+			      dict:store(Pid, Type, S)}};
 
 handle_cast({unsubscribe, Pid}, State) ->
     {noreply, remove_subscriber(Pid, State)};
@@ -829,10 +832,12 @@ extract_source(SubTLVs, Afi) ->
 	    lists:nth(1, S)
     end.
 
-build_message(#isis_lsp{lsp_id = LSP_Id, sequence_number = SN,
+build_message(add, Level,
+	      #isis_lsp{lsp_id = LSP_Id, sequence_number = SN,
 			last_update = U, remaining_lifetime = L,
 			checksum = CSum,
-			tlv = TLV}) ->
+			tlv = TLV},
+	     web) ->
     <<ID:6/binary, PN:8, Frag:8>> = LSP_Id,
     Now = isis_protocol:current_timestamp(),
     RL = (L - (Now - U)),
@@ -842,32 +847,50 @@ build_message(#isis_lsp{lsp_id = LSP_Id, sequence_number = SN,
     SIDBin = lists:flatten(io_lib:format("~4.16.0B.~4.16.0B.~4.16.0B-~2.16.0B-~2.16.0B",
                                          [X || <<X:16>> <= ID] ++ [PN, Frag])),
     TLVAs = lists:map(fun isis_protocol:pp_tlv/1, TLV),
-    json2:encode({struct, [{"command", "add"}, 
-			   {"LSPId", SIDBin}, {"IDStr", LSPStr}, {"Sequence", SN},
-			   {"lifetime", RL}, {"checksum", CSum},
-			   {"tlvs", {struct, TLVAs}}]}).
-
-notify_subscribers(#isis_lsp{} = LSP, #state{subscribers = Subscribers}) ->
-    Message = build_message(LSP),
-    Pids = dict:fetch_keys(Subscribers),
-    lists:foreach(
-      fun(Pid) -> notify_subscriber(Message, Pid) end, Pids),
-    ok;
-notify_subscribers(LSP_Id, #state{subscribers = Subscribers}) when is_binary(LSP_Id) ->
+    list_to_binary(
+      json2:encode({struct, [{"command", "add"},
+			     {"level", erlang:atom_to_list(Level)},
+			     {"LSPId", SIDBin}, {"IDStr", LSPStr}, {"Sequence", SN},
+			     {"lifetime", RL}, {"checksum", CSum},
+			     {"tlvs", {struct, TLVAs}}]}));
+build_message(add, Level, #isis_lsp{} = L, struct) ->
+    {add, Level, L};
+build_message(delete, Level, LSP_Id, web) ->
     <<ID:6/binary, PN:8, Frag:8>> = LSP_Id,
     LSPStr = lists:flatten(
 	       io_lib:format("~s.~2.16.0B-~2.16.0B",
-			   [isis_system:lookup_name(ID), PN, Frag])),
+			     [isis_system:lookup_name(ID), PN, Frag])),
     SIDBin = lists:flatten(io_lib:format("~4.16.0B.~4.16.0B.~4.16.0B-~2.16.0B-~2.16.0B",
                                          [X || <<X:16>> <= ID] ++ [PN, Frag])),
-    Message = json2:encode({struct, [{"command", "delete"},
-			   {"LSPId", SIDBin}, {"IDStr", LSPStr}]}),
+    list_to_binary(
+      json2:encode({struct, [{"command", "delete"},
+			     {"level", erlang:atom_to_list(Level)},
+			     {"LSPId", SIDBin}, {"IDStr", LSPStr}]}));
+build_message(delete, Level, LSP_Id, struct) ->
+    {delete, Level, LSP_Id}.
+
+notify_subscribers(#isis_lsp{} = LSP,
+		   #state{level = Level, subscribers = Subscribers}) ->
     Pids = dict:fetch_keys(Subscribers),
-    lists:foreach(fun(Pid) -> notify_subscriber(Message, Pid) end, Pids),
+    lists:foreach(
+      fun(Pid) ->
+	      notify_subscriber(
+		build_message(add, Level, LSP, dict:fetch(Pid, Subscribers)),
+		Pid)
+      end, Pids),
+    ok;
+notify_subscribers(LSP_Id,
+		   #state{level = Level, subscribers = Subscribers}) when is_binary(LSP_Id) ->
+    Pids = dict:fetch_keys(Subscribers),
+    lists:foreach(
+      fun(Pid) ->
+	      notify_subscriber(build_message(delete, Level, LSP_Id,
+					      dict:fetch(Pid, Subscribers)), Pid)
+      end, Pids),
     ok.
 
 notify_subscriber(Message, Pid) ->
-    Pid ! {lsp_update, list_to_binary(Message)}.
+    Pid ! {lsp_update, Message}.
 
 remove_subscriber(Pid, #state{subscribers = Subscribers} = State) ->
     NewSubscribers =

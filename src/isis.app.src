@@ -2,7 +2,7 @@
  [{description, "IS-IS implementation in erlang"},
   {vsn, "0.9.0"},
   {registered, []},
-  {included_applications, [yaws]},
+  {included_applications, [yaws, hostinfo, dnssd]},
   {applications, [
 		  kernel,
 		  stdlib,

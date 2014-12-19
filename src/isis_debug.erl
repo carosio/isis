@@ -24,6 +24,7 @@
 %%%-------------------------------------------------------------------
 -module(isis_debug).
 
+-include("isis_system.hrl").
 -include("isis_protocol.hrl").
 
 -define(ETH_P_802_2, 16#0400).
@@ -121,7 +122,7 @@ invalid_lsp() ->
 %% We give them a hostname as well. Then we inject into the Database..
 inject_some_lsps(Level, Count, Seq)
   when Count < 50 ->
-    isis_system:add_sid_addresses(<<1:16, 0, 0, 0, 0>>,  [{ipv4, 3232298895}]),
+    isis_system:add_sid_addresses(Level, <<1:16, 0, 0, 0, 0>>,  10, [{ipv4, {3232298895, 1, self()}}]),
     Numbers = lists:seq(1, Count),
     PDU = case Level of
 	      level_1 -> level1_lsp;
@@ -131,6 +132,28 @@ inject_some_lsps(Level, Count, Seq)
 	fun(N, Acc) ->
 		NeighborID = <<N:16, 0, 0, 0, 0, 0>>,
 		NextNeighborID = <<(N+1):16, 0, 0, 0, 0, 0>>,
+		NReachability = 
+		    case N =:= Count of
+			true ->
+			    #isis_tlv_extended_reachability{
+			       reachability = [#isis_tlv_extended_reachability_detail{
+						  neighbor = Acc,
+						  metric = N,
+						  sub_tlv = []}
+					      ]};
+			_ ->
+			    #isis_tlv_extended_reachability{
+			       reachability = [#isis_tlv_extended_reachability_detail{
+						  neighbor = Acc,
+						  metric = N,
+						  sub_tlv = []},
+					       #isis_tlv_extended_reachability_detail{
+						  neighbor = NextNeighborID,
+						  metric = N,
+						  sub_tlv = []
+						 }
+					      ]}
+		    end,
 		LSPID = <<NeighborID/binary, 0>>,
 		Hostname = string:concat("injected", integer_to_list(N)),
 		PrefixBin = <<1:8, N:8, 0:16>>,
@@ -147,17 +170,7 @@ inject_some_lsps(Level, Count, Seq)
 		       tlv = [#isis_tlv_area_address{areas = isis_system:areas()},
 			      #isis_tlv_protocols_supported{protocols = [ipv4]},
 			      #isis_tlv_dynamic_hostname{hostname = Hostname},
-			      #isis_tlv_extended_reachability{
-				 reachability = [#isis_tlv_extended_reachability_detail{
-						    neighbor = Acc,
-						    metric = N,
-						    sub_tlv = []},
-						#isis_tlv_extended_reachability_detail{
-						   neighbor = NextNeighborID,
-						   metric = N,
-						   sub_tlv = []
-						  }
-						]},
+			      NReachability,
 			      #isis_tlv_extended_ip_reachability{
 				 reachability = [#isis_tlv_extended_ip_reachability_detail{
 						    prefix = Prefix,
@@ -165,6 +178,9 @@ inject_some_lsps(Level, Count, Seq)
 						    metric = 1,
 						    up = true,
 						    sub_tlv = []}]},
+			      #isis_tlv_geninfo{application_id = 2,
+						application_ip_address = undefined,
+						application_gunk = <<1,4,"Fred",2,6,"x86_64">>},
 			      #isis_tlv_unknown{type = 99, bytes = <<1,2,3,4,5,6,7,8,9,10>>}
 			     ]
 		      },
@@ -175,13 +191,16 @@ inject_some_lsps(Level, Count, Seq)
     Start = <<(isis_system:system_id()):6/binary, 0>>,
     {LSPs, _} = lists:mapfoldl(Creator, Start, Numbers),
     %% Now inject into the database
-    Injector = 	fun(L) -> isis_lspdb:store_lsp(Level, L) end,
+    Injector = 	fun(L) ->
+			isis_lspdb:store_lsp(Level, L),
+			isis_lspdb:flood_lsp(Level, isis_system:list_interfaces(), L)
+		end,
     lists:map(Injector, LSPs),
     ChainTLV = #isis_tlv_extended_reachability{
 		  reachability = [#isis_tlv_extended_reachability_detail{
 				     neighbor = <<1:16, 0, 0, 0, 0, 0>>,
 				     metric = 16819, sub_tlv=[]}]},
-    isis_system:update_tlv(ChainTLV, 0, Level),
+    isis_system:update_tlv(ChainTLV, 0, Level, "eth1"),
     ok;
 inject_some_lsps(_, _, _) ->
     error.
@@ -190,14 +209,14 @@ inject_some_lsps(_, _, _) ->
 purge_injected_lsps(Level, Count) ->
     IDCreator = fun(N) -> <<N:16, 0, 0, 0, 0, 0, 0>> end,
     LSPIDs = lists:map(IDCreator, lists:seq(1, Count)),
-    Purge = fun(LSPID) -> isis_system:purge_lsp(Level, LSPID) end,
+    Purge = fun(LSPID) -> isis_lspdb:purge_lsp(Level, LSPID) end,
     lists:map(Purge, LSPIDs),
     ChainTLV = #isis_tlv_extended_reachability{
 		  reachability = [#isis_tlv_extended_reachability_detail{
 				     neighbor = <<1:16, 0, 0, 0, 0, 0>>,
 				     metric = 10, sub_tlv=[]}]},
-    isis_system:delete_tlv(ChainTLV, 0, Level),
-    isis_system:delete_sid_addresses(<<1:16, 0, 0, 0, 0>>, [{ipv4, 3232298895}]),
+    isis_system:delete_tlv(ChainTLV, 0, Level, "eth1"),
+    isis_system:delete_sid_addresses(Level, <<1:16, 0, 0, 0, 0>>, [{ipv4, {3232298895, 1, self()}}]),
     ok.
 
 %%%===================================================================

@@ -206,6 +206,14 @@
 	   neighbor :: binary()}).
 -type isis_tlv_restart() :: #isis_tlv_restart{}.
 
+-record (isis_tlv_geninfo, {
+	   d_bit = false :: boolean(),
+	   s_bit = false :: boolean(),
+	   application_id :: integer(),
+	   application_ip_address = undefined :: undefined | tuple(), %% #isis_address{}
+	   application_gunk :: binary()}).
+-type isis_tlv_geninfo() :: #isis_tlv_geninfo{}.
+
 -record (isis_tlv_hardware_fingerprint, {
 	   fingerprint :: binary()}).
 -type isis_tlv_hardware_fingerprint() :: #isis_tlv_hardware_fingerprint{}.
@@ -227,6 +235,7 @@
 	isis_tlv_protocols_supported() |
 	isis_tlv_te_router_id() |
 	isis_tlv_restart() |
+	isis_tlv_geninfo() |
 	isis_tlv_hardware_fingerprint() |
 	isis_tlv_unknown().
 

@@ -20,9 +20,9 @@
 %%% under the License.
 %%%
 %%% @end
-%%% Created :  2 Jan 2014 by Rick Payne <rickp@rossfell.co.uk>
+%%% Created : 6 Dec 2014 by Rick Payne <rickp@rossfell.co.uk>
 %%%-------------------------------------------------------------------
--module(isis_sup).
+-module(hostinfo_sup).
 -author('Rick Payne <rickp@rossfell.co.uk>').
 
 -behaviour(supervisor).
@@ -68,49 +68,18 @@ start_link() ->
 %%--------------------------------------------------------------------
 init([]) ->
 
-    <<A:32,B:32,C:32>> = crypto:rand_bytes(12),
-    random:seed({A, B, C}),
-
     RestartStrategy = one_for_one,
     MaxRestarts = 1000,
     MaxSecondsBetweenRestarts = 3600,
-
     SupFlags = {RestartStrategy, MaxRestarts, MaxSecondsBetweenRestarts},
 
-    Restart = permanent,
-    Shutdown = 2000,
-    Type = worker,
+    HostInfo = {hostinfo, {hostinfo, start_link, []},
+		permanent, 100000, worker, []},
 
-    SPFSummary = {spf_summary, {spf_summary, start_link, []},
-		  permanent, 10000, worker, []},
-    RibChild = 
-	case application:get_env(isis, rib_client) of
-	    {ok, Client} -> {Client, {Client, start_link, [[{type, isis}]]},
-			     Restart, Shutdown, Type, [Client]};
-	    Oops -> lager:error("Got ~p for rib_client!", [Oops]),
-		    missing_rib_client
-	end,
-    L1DB = {level1_lspdb, {isis_lspdb, start_link, [[{table, level_1}]]},
-	    Restart, Shutdown, Type, [isis_lspdb]},
-    L2DB = {level2_lspdb, {isis_lspdb, start_link, [[{table, level_2}]]},
-	    Restart, Shutdown, Type, [isis_lspdb]},
-    StartupParams =
-	case application:get_env(isis, startup) of
-	    undefined -> [];
-	    {ok, Params} -> Params
-	end,
-    ISIS = {isis, {isis_system, start_link, [StartupParams]},
-	    Restart, Shutdown, Type, [isis_system, isis_protocol, isis_enum]},
-    ISISRib = {isis_rib, {isis_rib, start_link, []},
-	       permanent, 10000, worker, []},
-    ISISGenInfo = {isis_geninfo, {isis_geninfo, start_link, []},
-		   permanent, 10000, worker, []},
-    %% Demo = {demo, {demo, start_link, []},
-    %%  	    permanent, 1000, worker, []},
-    Webserver = {ybed_sup, {ybed_sup, start_link, []},
-      		 permanent, 10000, supervisor, []},
-    {ok, {SupFlags, [SPFSummary, RibChild, L1DB, L2DB, ISIS, ISISRib, ISISGenInfo
-		    , Webserver %% , Demo
+    %% Webserver = {ybed_sup, {ybed_sup, start_link, []},
+    %%   		 permanent, 10000, supervisor, []},
+
+    {ok, {SupFlags, [HostInfo %%, Webserver
 		    ]}}.
 
 %%%===================================================================

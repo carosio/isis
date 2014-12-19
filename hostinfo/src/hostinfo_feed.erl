@@ -3,8 +3,6 @@
 %%% @copyright (C) 2014, Alistair Woodman, California USA <awoodman@netdef.org>
 %%% @doc
 %%%
-%%% lsp_feed - provides a feed of LSP updates
-%%%
 %%% This file is part of AutoISIS.
 %%%
 %%% License:
@@ -22,20 +20,19 @@
 %%% under the License.
 %%%
 %%% @end
-%%% Created : 5 July 2014 by Rick Payne <rickp@rossfell.co.uk>
+%%% Created : 6 Dec 2014 by Rick Payne <rickp@rossfell.co.uk>
 %%%-------------------------------------------------------------------
--module(lsp_feed).
+-module(hostinfo_feed).
 
--include ("../deps/yaws/include/yaws_api.hrl").
--include ("isis_system.hrl").
--include ("isis_protocol.hrl").
+-include ("../../deps/yaws/include/yaws_api.hrl").
+-include ("../../src/isis_system.hrl").
+-include ("../../src/isis_protocol.hrl").
 
 -export([out/1, init/1, handle_message/2, terminate/2]).
 
 -export([handle_call/3, handle_info/2, handle_cast/2, code_change/3]).
 
 -record(state, {
-	  level
 	 }).
 
 out(A) ->
@@ -48,7 +45,7 @@ out(A) ->
 				      {keepalive_timeout, 10000},
 				      {drop_on_timeout,   true}
          ],
-      {websocket, lsp_feed, Opts};
+      {websocket, hostinfo_feed, Opts};
     Any ->
       error_logger:error_msg("Got ~p from the upgrade header!", [Any])
   end.
@@ -56,30 +53,24 @@ out(A) ->
 init(_Args) ->
     {ok, #state{}}.
 
-handle_message({text, <<"start level_1">>}, State) ->
-    lager:error("Subscription for l1 received"),
-    isis_lspdb:subscribe(level_1, self(), web),
-    isis_lspdb:initial_state(level_1, self(), web),
-    {noreply, State#state{level = level_1}};
-
-handle_message({text, <<"start level_2">>}, State) ->
-    lspdb:subscribe(level_2, self()),
-    {reply, {text, <<"buh">>}, State#state{level = level_2}};
+handle_message({text,<<"start">>}, State) ->
+    hostinfo:subscribe(),
+    {noreply, State#state{}};
 
 handle_message({close, Status, _Reason}, State) ->
     {close, Status, State};
 
 handle_message(Any, State) ->
-    error_logger:error_msg("Received ~p (~p) ~p", [Any, State, ?MODULE]),
+    error_logger:error_msg("buger ~p (~p)", [Any, State]),
     {noreply, State}.
 
-terminate(_Reason, #state{level = L}) when L =/= undefined ->
-    isis_lspdb:unsubscribe(L, self()),
+terminate(_Reason, #state{}) ->
+    hostinfo:unsubscribe(),
     ok;
 terminate(_, _) ->
     ok.
 
- handle_info({lsp_update, Message}, State) ->
+handle_info({host_update, Message}, State) ->
     {reply, {text, Message}, State};
 
 %% Gen Server functions

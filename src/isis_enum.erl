@@ -88,7 +88,8 @@
 	     {p2p_adjacency_state, 240},
 	     {iih_sequence_number, 241},
 	     {vendor_proprietary, 250},
-	     %%% when we get teh codepoint for this, we should change
+	     {geninfo, 251},
+	     %%% when we get the codepoint for this, we should change
 	     %%% it...
 	     {hardware_fingerprint, 254}
 	    ]}).
