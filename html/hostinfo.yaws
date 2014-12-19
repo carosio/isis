@@ -116,6 +116,9 @@ function connectToHostFeed() {
 		    }
 		}
 		updateList(hostData);
+	    } else if(obj.command == "stop") {
+	        hostData.length = 0;
+		updateList(hostData);
 	    }
 	    
 	    ws.onclose = function() {
