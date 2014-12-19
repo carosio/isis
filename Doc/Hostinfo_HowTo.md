@@ -6,13 +6,32 @@ By default, hostinfo is not automatically started. I can be started from the ISI
 
 (and to stop use `application:stop(hostinfo).` command)
 
+## Automatically start hostinfo with AutoISIS
+
+To start hostinfo automatically at start of AutoISIS, apply the following patch to the AutoISIS code:
+
+	diff --git a/src/isis_sup.erl b/src/isis_sup.erl
+	index 5063d2b..2c5fd17 100644
+	--- a/src/isis_sup.erl
+	+++ b/src/isis_sup.erl
+	@@ -123,6 +123,9 @@ init([]) ->
+		%%             permanent, 1000, worker, []},
+		Webserver = {ybed_sup, {ybed_sup, start_link, []},
+					permanent, 10000, supervisor, []},
+	+
+	+    timer:apply_after(10000, application, start, [hostinfo]),
+	+
+		{ok, {SupFlags, [SPFSummary, RibChild, L1DB, L2DB, ISIS, ISISRib, ISISGenIn
+					   , Webserver %% , Demo
+					   ]}}.
+
 # Monitor information from hostinfo
 
 To monitor the local and the remote hostinfo, use the web URL:
 
     http://x.x.x.x:8080/hostinfo.yaws
 
-or use the cli command:
+or use the cli debug command:
 
     hostinfo:get_state().
         
