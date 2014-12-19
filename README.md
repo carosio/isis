@@ -16,10 +16,8 @@ specific language governing permissions and limitations
 under the License.
 
 ## Pre-requisites:
-1. Erlang R16 (preferable B03-1 or later)
+1. Erlang R16 or R17 (preferable 16B03-1 or later)
     - (http://www.erlang.org)
-    - Note: Erlang R17 has currently some issue with some required
-      libraries.
 2. Rebar
     - (https://github.com/rebar/rebar)
 3. Relx

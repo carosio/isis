@@ -11,9 +11,6 @@ Installing require packages
 
 ### Install Erlang 16b3
 	sudo apt-get install erlang erlang-base-hipe
-(Only Erlang Version 16b3 supported at this time, no version 17. Ubuntu 14.04 
-includes 16b3  at the time when this was written, so it should work as long as 
-the package is not updated to version 17)
 
 ### Install required library for dns-sd (Hostinfo functionality)
 	sudo apt-get install libavahi-compat-libdnssd-dev
