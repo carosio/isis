@@ -105,12 +105,17 @@ init([]) ->
 	       permanent, 10000, worker, []},
     ISISGenInfo = {isis_geninfo, {isis_geninfo, start_link, []},
 		   permanent, 10000, worker, []},
+    ISISConfig = {isis_netconf, {isis_netconf, start_link, []},
+		  permanent, 1, worker, []},
     %% Demo = {demo, {demo, start_link, []},
     %%  	    permanent, 1000, worker, []},
     Webserver = {ybed_sup, {ybed_sup, start_link, []},
       		 permanent, 10000, supervisor, []},
+
+    timer:apply_after(10000, application, start, [hostinfo]),
+
     {ok, {SupFlags, [SPFSummary, RibChild, L1DB, L2DB, ISIS, ISISRib, ISISGenInfo
-		    , Webserver %% , Demo
+		    , ISISConfig, Webserver %% , Demo
 		    ]}}.
 
 %%%===================================================================
