@@ -367,8 +367,8 @@ decode_tlv(restart, _Type,
 decode_tlv(geninfo, _Type,
 	   <<_Reserved:4, 0:1, 1:1, D:1, S:1, AppID:16, Ip:32, AppGunk/binary>>) ->
     #isis_tlv_geninfo{
-       d_bit = isis_enum:to_atom(D),
-       s_bit = isis_enum:to_atom(S),
+       d_bit = isis_enum:to_atom(boolean, D),
+       s_bit = isis_enum:to_atom(boolean, S),
        application_id = AppID,
        application_ip_address = #isis_address{afi = ipv4, address = Ip},
        application_gunk = AppGunk
@@ -376,8 +376,8 @@ decode_tlv(geninfo, _Type,
 decode_tlv(geninfo, _Type,
 	   <<_Reserved:4, 1:1, 0:1, D:1, S:1, AppID:16, Ip:16/binary, AppGunk/binary>>) ->
     #isis_tlv_geninfo{
-       d_bit = isis_enum:to_atom(D),
-       s_bit = isis_enum:to_atom(S),
+       d_bit = isis_enum:to_atom(boolean, D),
+       s_bit = isis_enum:to_atom(boolean, S),
        application_id = AppID,
        application_ip_address = #isis_address{afi = ipv6, address = Ip},
        application_gunk = AppGunk
@@ -385,8 +385,8 @@ decode_tlv(geninfo, _Type,
 decode_tlv(geninfo, _Type,
 	   <<_Reserved:4, 0:1, 0:1, D:1, S:1, AppID:16, AppGunk/binary>>) ->
     #isis_tlv_geninfo{
-       d_bit = isis_enum:to_atom(D),
-       s_bit = isis_enum:to_atom(S),
+       d_bit = isis_enum:to_atom(boolean, D),
+       s_bit = isis_enum:to_atom(boolean, S),
        application_id = AppID,
        application_ip_address = undefined,
        application_gunk = AppGunk
