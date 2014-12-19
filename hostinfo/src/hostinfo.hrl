@@ -27,6 +27,9 @@
 -define(HOSTINFO_REFRESH_TIME, (5 * 60 * 1000)).
 -define(HOSTINFO_JITTER, 25).
 
+-define(HOSTINFO_SINGLE_TLVS,       %% List of TLVs for which we have 1 entry
+	[hostinfo_hostname, hostinfo_processor, hostinfo_memused]).
+
 %%%===================================================================
 %%% Hostinfo TLV details
 %%%===================================================================
@@ -38,3 +41,8 @@
 
 -record (hostinfo_memused, {
 	   memory_used :: integer()}).
+
+-record (hostinfo_dnssd, {
+	   service_name,
+	   service_type,
+	   service_domain}).

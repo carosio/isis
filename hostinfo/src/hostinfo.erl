@@ -43,7 +43,8 @@
 	  hosts,          %% Host -> TLVs mapping
 	  clients,        %% Websocket subscribers
 	  refresh_timer,
-	  tlvs
+	  tlvs = [],
+	  dnssd_tlvs = []
 	 }).
 
 %%%===================================================================
@@ -85,6 +86,7 @@ unsubscribe() ->
 %% @end
 %%--------------------------------------------------------------------
 init([]) ->
+    process_flag(trap_exit, true),
     application:ensure_started(isis),
     %% Register with no IP address for this application...
     GI = #isis_geninfo_client{
@@ -97,6 +99,8 @@ init([]) ->
     State1 = set_initial_state(),
     State2 = start_timer(State1),
     isis_geninfo:announce(State2#state.tlvs),
+    dnssd:start(),
+    dnssd:browse("_workstation._tcp"),
     {ok, State2}.
 
 %%--------------------------------------------------------------------
@@ -137,7 +141,7 @@ handle_cast({subscribe, Pid}, #state{hosts = Hosts, clients = C} = State) ->
     {noreply, State#state{clients = dict:store(Pid, [], C)}};
 handle_cast({unsubscribe, Pid}, State) ->
     {noreply, remove_client(Pid, State)};
-handle_cast(_Msg, State) ->
+handle_cast(Msg, State) ->
     {noreply, State}.
 
 %%--------------------------------------------------------------------
@@ -161,7 +165,15 @@ handle_info({timeout, _Ref, refresh}, State) ->
     {noreply, start_timer(NextState)};
 handle_info({'DOWN', _, process, Pid, _}, State) ->
     {noreply, remove_client(Pid, State)};
-handle_info(_Info, State) ->
+handle_info({dnssd, _Ref, {browse, add, {ServiceName, ServiceType, Domain}}}, State) ->
+    NewDNS =
+	[#hostinfo_dnssd{service_name = ServiceName,
+			 service_type = ServiceType,
+			 service_domain = Domain}
+	 | State#state.dnssd_tlvs],
+    {noreply, State#state{dnssd_tlvs = NewDNS}};
+handle_info(Info, State) ->
+    lager:error("Failed to handle info msg ~p", [Info]),
     {noreply, State}.
 
 %%--------------------------------------------------------------------
@@ -175,7 +187,11 @@ handle_info(_Info, State) ->
 %% @spec terminate(Reason, State) -> void()
 %% @end
 %%--------------------------------------------------------------------
-terminate(_Reason, _State) ->
+terminate(_Reason, State) ->
+    %% Command all our ws clients to delete all data...
+    Message = list_to_binary(
+		json2:encode({struct, [{"command", "stop"}]})),
+    notify_clients(Message, State),
     ok.
 
 %%--------------------------------------------------------------------
@@ -208,9 +224,9 @@ set_initial_state() ->
 	   clients = dict:new(),
 	   tlvs = lists:sort(TLVs)}.
 
-refresh_tlvs(#state{tlvs = TLVs} = State) ->
+refresh_tlvs(#state{tlvs = TLVs, dnssd_tlvs = DNSSD} = State) ->
     NewTLVs = lists:sort(get_hostinfo()),
-    isis_geninfo:announce(lists:subtract(NewTLVs, TLVs)),
+    isis_geninfo:announce(lists:subtract(NewTLVs, TLVs) ++ DNSSD),
     State#state{tlvs = NewTLVs}.
 
 start_timer(State) ->
@@ -219,7 +235,7 @@ start_timer(State) ->
     State#state{refresh_timer = T}.
 
 %%%===================================================================
-%%% Host Subscription service handlers, used by hostinfo_feed
+%%% Host/WS Subscription service handlers, used by hostinfo_feed
 %%%===================================================================
 remove_client(Pid, #state{clients = C} = State) ->
     NewC =
@@ -234,7 +250,7 @@ build_message({add, Host, TLVs}) ->
     HostID =
 	lists:flatten(io_lib:format("~4.16.0B.~4.16.0B.~4.16.0B",
 				    [X || <<X:16>> <= Host])),
-    TLVAs = lists:map(fun pp_hostinfo_tlv/1, TLVs),
+    TLVAs = build_message_tlvs(TLVs),
     list_to_binary(
       json2:encode({struct, [{"command", "add"},
 			     {"hostid", HostID},
@@ -247,6 +263,20 @@ build_message({delete, Host}) ->
     list_to_binary(
       json2:encode({struct, [{"command", "delete"},
 			     {"hostid", HostID}]})).
+
+build_message_tlvs(TLVs) ->
+    Converted =  lists:map(fun pp_hostinfo_tlv/1, TLVs),
+    D = 
+	lists:foldl(
+	  fun({Key, Value}, Acc) ->
+		  case dict:find(Key, Acc) of
+		      {ok, OldValue} ->
+			  dict:store(Key, OldValue ++ ", " ++ Value, Acc);
+		      _ ->
+			  dict:store(Key, Value, Acc)
+		  end
+	  end, dict:new(), Converted),
+    dict:to_list(D).
 
 notify_clients(Message, #state{clients = C}) ->
     Pids = dict:fetch_keys(C),
@@ -262,16 +292,24 @@ notify_client(Message, Pid) ->
 %%%===================================================================
 add_to_host(<<Host:6/binary, _:16>>, HostInfo,
 	    #state{hosts = Hs} = State) ->
+    DelTypes =
+	lists:filter(fun(E1) -> lists:member(E1, ?HOSTINFO_SINGLE_TLVS) end,
+		     lists:usort(
+		       lists:map(fun(E) -> element(1, E) end,
+				 HostInfo))),
     PrevTs =
 	case dict:find(Host, Hs) of
-	    {ok, Ts} -> dict_from_list(Ts);
-	    _ -> dict:new()		 
+	    {ok, Ts} -> sets:from_list(
+			  lists:filter(
+			    fun(T1) -> not lists:member(element(1, T1), DelTypes) end,
+			    Ts));
+	    _ -> sets:new()		 
 	end,
     NewTs = 
 	lists:foldl(
-	  fun(T, Acc) -> dict:store(element(1, T), T, Acc) end,
+	  fun(T, Acc) -> sets:add_element(T, Acc) end,
 	  PrevTs, HostInfo),
-    R = list_from_dict(NewTs),
+    R = sets:to_list(NewTs),
     notify_clients(build_message({add, Host, R}), State),
     State#state{hosts = dict:store(Host, R, Hs)}.
 
@@ -280,12 +318,12 @@ delete_from_host(<<Host:6/binary, _:16>>, HostInfo,
     NewDict = 
 	case dict:find(Host, Hs) of
 	    {ok, Ts} ->
-		D = dict_from_list(Ts),
+		S = sets:from_list(Ts),
 		NewTs = 
-		    list_from_dict(
+		    sets:to_list(
 		      lists:foldl(
-			fun(T, Acc) -> dict:erase(element(1, T), Acc) end,
-			D, HostInfo)),
+			fun(T, Acc) -> sets:del_element(T, Acc) end,
+			S, HostInfo)),
 		case length(NewTs) of
 		    0 -> notify_clients(build_message({delete, Host}), State),
 			 dict:erase(Host, Hs);
@@ -295,22 +333,7 @@ delete_from_host(<<Host:6/binary, _:16>>, HostInfo,
 	    _ -> Hs
 	end,
     State#state{hosts = NewDict}.			  
-					   
-%%%===================================================================
-%%% Dict / list of tuples manipulation
-%%%===================================================================
-dict_from_list(L) ->
-    lists:foldl(
-      fun(T, Acc) ->
-	      dict:store(element(1, T), T, Acc) end,
-      dict:new(), L).
-
-list_from_dict(D) ->
-    lists:reverse(
-      lists:foldl(
-	fun({_, T}, Acc) -> [T | Acc] end,
-	[], dict:to_list(D))).
-	      
+					   	      
 %%%===================================================================
 %%% TLV encode/decode/dump functions
 %%%===================================================================
@@ -319,7 +342,14 @@ encode_tlv(#hostinfo_hostname{hostname = H}) ->
 encode_tlv(#hostinfo_processor{processor = P}) ->
     encode_tlv(2, erlang:list_to_binary(P));
 encode_tlv(#hostinfo_memused{memory_used = M}) ->
-    encode_tlv(3, <<M:64>>).
+    encode_tlv(3, <<M:64>>);
+encode_tlv(#hostinfo_dnssd{service_name = N,
+			   service_type = T,
+			   service_domain = D}) ->
+    NL = byte_size(N),
+    TL = byte_size(T),
+    DL = byte_size(D),
+    encode_tlv(4, <<NL:8, N/binary, TL:8, T/binary, DL:8, D/binary>>).
 
 encode_tlv(T, V) ->
     S = byte_size(V),
@@ -330,15 +360,32 @@ decode_tlv(1, Value) ->
 decode_tlv(2, Value) ->
     #hostinfo_processor{processor = erlang:binary_to_list(Value)};
 decode_tlv(3, <<M:64>>) ->
-    #hostinfo_memused{memory_used = M}.
+    #hostinfo_memused{memory_used = M};
+decode_tlv(4, <<NL:8, N:NL/binary, TL:8, T:TL/binary, DL:8, D:DL/binary>>) ->
+    #hostinfo_dnssd{service_name = N,
+		    service_type = T,
+		    service_domain = D}.
 
-%% 1 TLV per type in hostinfo, so we replace
-mergetype_tlv(_) ->
-    replace.
+%% 1 TLV per type in hostinfo, so we replace Though with the dns-sd
+%% stuff, we must match exactly as we can have multiple of the same
+%% type of TLV
+mergetype_tlv(#hostinfo_hostname{}) -> replace;
+mergetype_tlv(#hostinfo_processor{}) -> replace;
+mergetype_tlv(#hostinfo_memused{}) -> replace;
+mergetype_tlv(#hostinfo_dnssd{}) -> match.
+
 
 pp_hostinfo_tlv(#hostinfo_hostname{hostname = H}) ->
     {"Hostname", H};
 pp_hostinfo_tlv(#hostinfo_processor{processor = P}) ->
     {"Processor", P};
 pp_hostinfo_tlv(#hostinfo_memused{memory_used = M}) ->
-    {"Memory Used", lists:flatten(io_lib:format("~p", [M]))}.
+    {"Memory Used", lists:flatten(io_lib:format("~p", [M]))};
+pp_hostinfo_tlv(#hostinfo_dnssd{service_name = N,
+				service_type = T,
+				service_domain = D}) ->
+    {"dns-sd", lists:flatten(
+		 io_lib:format("~s ~s ~s",
+			       [binary_to_list(N),
+				binary_to_list(T),
+				binary_to_list(D)]))}.

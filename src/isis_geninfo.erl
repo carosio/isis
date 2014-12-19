@@ -138,6 +138,8 @@ handle_call(_Request, _From, State) ->
 %%--------------------------------------------------------------------
 handle_cast({announce, TLVs, From}, State) ->
     {noreply, announce_tlvs(TLVs, From, State)};
+handle_cast({withdraw, TLVs, From}, State) ->
+    {noreply, withdraw_tlvs(TLVs, From, State)};
 handle_cast(Msg, State) ->
     lager:debug("Failed to handle cast ~p", [Msg]),
     {noreply, State}.
@@ -274,30 +276,39 @@ announce_frag(#isis_geninfo_frag{tlvs = TLVs,
 				 previous_encode = PreviousEncode},
 	      #isis_geninfo_client{app = App, ip = IP, level = Level,
 				   encode_func = EncodeFunc}) ->
-    case PreviousEncode of
-	<<>> ->
-	    ok;
-	PE -> 
-	    OldTLV = #isis_tlv_geninfo{
-			application_id = App,
-			application_ip_address = IP,
-			application_gunk = PE},
-	    isis_system:delete_tlv(OldTLV, 0, Level, undefined)
-    end,
     Gunk = 
 	lists:foldl(
 	  fun(T, Acc) -> <<Acc/binary, (EncodeFunc(T))/binary>> end,
-	  <<>>, TLVs),
-    NewTLV = #isis_tlv_geninfo{
-		application_id = App,
-		application_ip_address = IP,
-		application_gunk = Gunk},
-    isis_system:update_tlv(NewTLV, 0, Level, undefined),
-    #isis_geninfo_frag{
-       tlvs = TLVs,
-       remaining_size = RS,
-       previous_encode = Gunk,
-       updated = false}.
+	  <<>>, lists:sort(TLVs)),
+    case Gunk =:= PreviousEncode of
+	true ->
+	    #isis_geninfo_frag{
+	       tlvs = TLVs,
+	       remaining_size = RS,
+	       previous_encode = Gunk,
+	       updated = false};
+	false ->
+	    case PreviousEncode of
+		<<>> ->
+		    ok;
+		PE -> 
+		    OldTLV = #isis_tlv_geninfo{
+				application_id = App,
+				application_ip_address = IP,
+				application_gunk = PE},
+		    isis_system:delete_tlv(OldTLV, 0, Level, undefined)
+	    end,
+	    NewTLV = #isis_tlv_geninfo{
+			application_id = App,
+			application_ip_address = IP,
+			application_gunk = Gunk},
+	    isis_system:update_tlv(NewTLV, 0, Level, undefined),
+	    #isis_geninfo_frag{
+	       tlvs = TLVs,
+	       remaining_size = RS,
+	       previous_encode = Gunk,
+	       updated = false}
+    end.
 
 remove_all_tlvs(#isis_geninfo_client{
 		   app = App, ip = IP, level = Level,
@@ -338,7 +349,6 @@ update_subscribers(Added, Deleted, LSPId, State) ->
     Clients = dict:to_list(State#state.clients),
     lists:map(
       fun({Pid, #isis_geninfo_client{app = A, ip = I} = GI}) ->
-	      lager:error("Updating client: ~p ~p", [Added, Deleted]),
 	      case dict:find({A, I}, DeletedDict) of
 		  {ok, DelG} ->
 		      %% Update client
@@ -403,27 +413,58 @@ update_frags({TLV, MergeType, Size}, Frags, GI) ->
 			       update_individual_frag(MergeType, TLV, Size, Frag, GI);
 			  (Frag, true) ->
 			       %% We've already inserted it, so no need to do more...
-			       Frag
+			       {Frag, true}
 		       end, false, Frags),
     case Updated of
 	true ->
 	    %% No more work to do...
 	    NewFrags;
 	false ->
-	    %% Need to create a new frag
-	    [#isis_geninfo_frag{
-	       remaining_size = tlv_base_size(GI) - Size,
-	       tlvs = [TLV]
-	      } | NewFrags]
+	    %% Space in an existing frag?
+	    case lists:mapfoldl(fun(Frag, false) ->
+					add_to_existing_frag(TLV, Size, Frag, GI);
+				   (Frag, true) ->
+					{Frag, true}
+				end, false, Frags) of
+		{ExpandedFrag, true} ->
+		    ExpandedFrag;
+		_ ->
+		    %% Ok, new frag required...
+		    [#isis_geninfo_frag{
+			remaining_size = tlv_base_size(GI) - Size,
+			tlvs = [TLV]
+		       } | NewFrags]
+	    end	    
     end.
+
+add_to_existing_frag(TLV, Size,
+		     #isis_geninfo_frag{
+			remaining_size = RS} = F, _GI)
+  when Size > RS ->
+    {F, false};
+add_to_existing_frag(TLV, Size,
+		    #isis_geninfo_frag{
+		       remaining_size = RS,
+		       tlvs = T} = PF, _GI) ->
+    {PF#isis_geninfo_frag{
+       updated = true,
+       remaining_size = RS - Size,
+       tlvs = [TLV | T]},
+     true}.
 
 %% Given an expanded TLV and a Frag, so if we can
 %% replace/add/merge_array.  Return should be of the format {NewFrag,
 %% updated} where updated is true if we have managed to find a home
 %% for the given TLV.
+update_individual_frag(match, T, _TSize,
+		      #isis_geninfo_frag{tlvs = FragTLVs} = Frag,
+		       _GI) ->
+    FoundTLVs = 
+	lists:filter(fun(TT) -> T =:= TT end, FragTLVs),
+    {Frag, length(FoundTLVs) > 0};
 update_individual_frag(replace, T, TSize,
 		      #isis_geninfo_frag{remaining_size = RemainingSize,
-					 tlvs = FragTLVs},
+					 tlvs = FragTLVs} = PF,
 		       GI) ->
     FoundTLVs = 
 	lists:filter(fun(TT) -> element(1, T) =:= element(1, TT) end, FragTLVs),
@@ -433,23 +474,75 @@ update_individual_frag(replace, T, TSize,
     CleanedFrags = lists:filter(fun(CF) -> element(1, CF) =/= element(1, T) end, FragTLVs),
     case RemainingSize >= (OldSize - TSize) of
 	true ->
-	    {#isis_geninfo_frag{
-		updated = true,
-		remaining_size = RemainingSize + (OldSize - TSize),
-		tlvs = [T | CleanedFrags]},
+	    {PF#isis_geninfo_frag{
+	       updated = true,
+	       remaining_size = RemainingSize + (OldSize - TSize),
+	       tlvs = [T | CleanedFrags]},
 	     true};
 	false ->
-	    {#isis_geninfo_frag{
-		updated = OldSize =/= 0,
-		remaining_size = RemainingSize - OldSize,
-		tlvs = CleanedFrags},
+	    {PF#isis_geninfo_frag{
+	       updated = (OldSize =/= 0),
+	       remaining_size = RemainingSize - OldSize,
+	       tlvs = CleanedFrags},
 	     false}
     end;
 update_individual_frag(_, _, _, _, _) ->
     invalid.
+
+withdraw_tlvs(TLVs, From, #state{clients = C} = State) ->
+    case dict:find(From, C) of
+	{ok, GI} ->
+	    NewClient = withdraw_tlv_from_client(TLVs, GI),
+	    start_timer(State#state{clients = dict:store(From, NewClient, C)});
+	error ->
+	    State
+    end.
+
+%% Given a list of TLVs, iterate the Frags looking for the TLV and
+%% remove it.
+withdraw_tlv_from_client(TLVs, GI) ->
+    NewFrags =
+	lists:foldl(
+	  fun(T, NF) -> withdraw_tlv_from_frags(T, NF, GI) end,
+	  GI#isis_geninfo_client.frags, TLVs),
+    GI#isis_geninfo_client{frags = NewFrags}.
+
+withdraw_tlv_from_frags(TLV, Frags, GI) ->
+    MatchFun =
+	case (GI#isis_geninfo_client.mergetype_func)(TLV) of
+	    match -> fun(T1, T2) -> T1 =:= T2 end;
+	    replace -> fun(T1, T2) -> element(1, T1) =:= element(1, T2) end
+	end,
+    lists:map(
+      fun(F) -> withdraw_individual_frag(MatchFun, TLV, F, GI) end,
+      Frags).
+
+withdraw_individual_frag(Match, T,
+			 #isis_geninfo_frag{
+			    tlvs = FragTLVs,
+			    remaining_size = RS} = Frag,
+			 GI) ->
+    FoundTLVs = lists:filter(fun(TT) -> Match(T, TT) end, FragTLVs),
+    RemainingTLVs = lists:filter(fun(TT) -> not Match(T, TT) end, FragTLVs),
+    DelSize =
+	lists:foldl(
+	  fun(TT, Acc) -> Acc + byte_size((GI#isis_geninfo_client.encode_func)(TT)) end,
+	  FoundTLVs),
+    case DelSize > 0 of
+	true ->
+	    Frag#isis_geninfo_frag{
+	      updated = true,
+	      remaining_size = RS + DelSize,
+	      tlvs = RemainingTLVs};
+	_ ->
+	    Frag
+    end.
+			    
+	
+			      
 				      
 tlv_base_size(#isis_geninfo_client{
-	     ip = defined}) ->
+	     ip = undefined}) ->
     %% We use 1 + 2 bytes for header
     255 - 3;
 tlv_base_size(#isis_geninfo_client{
