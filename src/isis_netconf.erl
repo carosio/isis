@@ -183,16 +183,21 @@ handle_data(Bytes, #state{message_buffer = MB} = State) ->
     NewMB = <<MB/binary, BytesBin/binary>>,
     parse_message(NewMB, State).
 
-parse_message(<<0:32, Len:32, XML:Len/binary, R/binary>>, State) ->
+parse_message(<<Code:32, Len:32, Data:Len/binary, R/binary>>, State) ->
+    NewState = process_message(Code, Data, State),
+    parse_message(R, NewState);
+parse_message(MB, State) ->
+    State#state{message_buffer = MB}.
+
+process_message(0, XML, State) -> % Config request
     %% Parse XML
     {ParsedXML, []} = xmerl_scan:string(binary_to_list(XML),
 					[{namespace_conformant, true}]),
     NewState = process_config(ParsedXML, State),
     %% Done
-    NewState#state{message_buffer = R, last_message = ParsedXML};
-parse_message(MB, State) ->
-    
-    State#state{message_buffer = MB}.
+process_message(Code, _Data, State) ->
+    lager:warning("Netconf: Received unknown message with code: ~p", [Code]),
+    State.
 
 handle_close(State) ->
     State#state{socket = undefined}.
