@@ -342,11 +342,25 @@ get_level_database_state(Level) ->
 	content = [ level_element(Level) | LSPElements ]
     }.
 
+%% Formats a string for the yang type bits. To be
+%% called with a list [{BitName,boolean()}] as argument.
+yang_bits(KVList) ->
+    Bits = fmap(fun({_,false}) ->
+			undefined;
+		   ({Key,true}) ->
+			Key
+		end, KVList),
+    string:join(Bits, " ").
+
 format_lsp(LSP) ->
     LSPID = id_to_text(LSP#isis_lsp.lsp_id),
     Now = isis_protocol:current_timestamp(),
     RL = LSP#isis_lsp.remaining_lifetime - (Now - LSP#isis_lsp.last_update),
-    %% TODO: Flags
+
+    Attributes = yang_bits([
+	{"PARTITIONED", LSP#isis_lsp.partition},
+	{"OVERLOAD", LSP#isis_lsp.overload}
+    ]),
 
     #xmlElement{
 	name = 'lsp',
@@ -354,7 +368,8 @@ format_lsp(LSP) ->
 	    leaf('lsp-id', LSPID),
 	    leaf('checksum', LSP#isis_lsp.checksum),
 	    leaf('remaining-lifetime', RL),
-	    leaf('sequence', LSP#isis_lsp.sequence_number)
+	    leaf('sequence', LSP#isis_lsp.sequence_number),
+	    leaf('attributes', Attributes)
 	] ++ format_tlvs(LSP#isis_lsp.tlv)
     }.
 
