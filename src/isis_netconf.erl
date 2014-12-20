@@ -275,17 +275,13 @@ process_state(State) ->
 %% routing-state/routing-instance/routing-protocols/isis subtree
 get_isis_state(_State) ->
     [
-	#xmlElement{name = 'system-counters', content = [
-	]},
-	#xmlElement{name = 'interface-counters', content = [
-	]},
-	#xmlElement{name = 'packet-counters', content = [
-	]},
+	#xmlElement{name = 'system-counters', content = []},
+	#xmlElement{name = 'interface-counters', content = []},
+	#xmlElement{name = 'packet-counters', content = []},
 	#xmlElement{name = 'interfaces', content = get_interface_state()},
 	#xmlElement{name = 'adjacencies', content = get_adjacency_state()},
 	#xmlElement{name = 'spf-log', content = get_spf_log()},
-	#xmlElement{name = 'lsp-log', content = [
-	]},
+	#xmlElement{name = 'lsp-log', content = get_lsp_log()},
 	#xmlElement{name = 'database', content = get_database_state()},
 	#xmlElement{name = 'hostnames', content = get_hostnames_state()}
     ].
@@ -410,6 +406,34 @@ get_interface_adjacency_state(#isis_interface{} = _, Acc) ->
 get_adjacency_state() ->
     Interfaces = isis_system:list_interfaces(),
     lists:foldl(fun get_interface_adjacency_state/2, [], Interfaces).
+
+%% Formats current IS-IS interfaces to [#xmlElement] for subtree
+%% routing-state/routing-instance/routing-protocols/isis/lsp-log
+get_lsp_log() ->
+    FormatLSP = fun({add, Level, #isis_lsp{} = LSP, Time, Id}) ->
+	#xmlElement{
+	    name = 'event',
+	    content = [
+		leaf('id', Id),
+		level_number(Level),
+		#xmlElement{
+		    name = 'lsp',
+		    content = [
+			leaf('lsp', id_to_text(LSP#isis_lsp.lsp_id)),
+			leaf('sequence', LSP#isis_lsp.sequence_number)
+		    ]
+		},
+		leaf('received-timestamp', smiv2_ticks(Time))
+	    ]
+	};
+      %% XXX: The model for the lsp log is not that good, it is
+      %% Missing a way to convey what actually happened to the LSP
+      %% so with that, it might be better not to log deleted LSPs.
+      ({delete, Level, LSP_ID, Time, Id}) ->
+	undefined
+    end,
+    fmap(FormatLSP, isis_lspdb_log:get_log(level_1))
+      ++ fmap(FormatLSP, isis_lspdb_log:get_log(level_2)).
 
 %% Formats current IS-IS interfaces to [#xmlElement] for subtree
 %% routing-state/routing-instance/routing-protocols/isis/spf-log
