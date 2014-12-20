@@ -29,6 +29,7 @@
 -include_lib("xmerl/include/xmerl.hrl").
 -include("isis_protocol.hrl").
 -include("isis_system.hrl").
+-include("spf_summary.hrl").
 
 %% API
 -export([start_link/0, get_state/0]).
@@ -282,8 +283,7 @@ get_isis_state(_State) ->
 	]},
 	#xmlElement{name = 'interfaces', content = get_interface_state()},
 	#xmlElement{name = 'adjacencies', content = get_adjacency_state()},
-	#xmlElement{name = 'spf-log', content = [
-	]},
+	#xmlElement{name = 'spf-log', content = get_spf_log()},
 	#xmlElement{name = 'lsp-log', content = [
 	]},
 	#xmlElement{name = 'database', content = get_database_state()},
@@ -337,7 +337,7 @@ smiv2_ticks(undefined) ->
     0;
 smiv2_ticks(Timestamp) ->
     StartUp = isis_system:get_state(startup_time),
-    Ticks = round((Timestamp - StartUp) / 10000),
+    Ticks = round(timer:now_diff(Timestamp, StartUp) / 10000),
     if
 	Ticks < (1 bsl 32) ->
 	    Ticks;
@@ -410,6 +410,30 @@ get_interface_adjacency_state(#isis_interface{} = _, Acc) ->
 get_adjacency_state() ->
     Interfaces = isis_system:list_interfaces(),
     lists:foldl(fun get_interface_adjacency_state/2, [], Interfaces).
+
+%% Formats current IS-IS interfaces to [#xmlElement] for subtree
+%% routing-state/routing-instance/routing-protocols/isis/spf-log
+get_spf_log() ->
+    FormatSPF = fun({_Time, Level, _Table, _Reason, ExtInfo}) ->
+	TypeMap = [{full, "full"}],
+	Type = proplists:get_value(ExtInfo#spf_ext_info.spf_type, TypeMap),
+	#xmlElement{
+	    name = 'event',
+	    content = [
+		leaf('id', ExtInfo#spf_ext_info.id),
+		leaf('spf-type', Type),
+		level_number(Level),
+		leaf('spf-delay', ExtInfo#spf_ext_info.delayed),
+		leaf('schedule-timestamp', smiv2_ticks(ExtInfo#spf_ext_info.scheduled)),
+		leaf('start-timestamp', smiv2_ticks(ExtInfo#spf_ext_info.started)),
+		leaf('end-timestamp', smiv2_ticks(ExtInfo#spf_ext_info.ended))
+		%% TODO: Get trigger-lsp info from SPF and format it
+	    ]
+	}
+    end,
+    lists:map(FormatSPF, spf_summary:last_runs(level_1))
+      ++ lists:map(FormatSPF, spf_summary:last_runs(level_2)).
+
 
 format_interface_state(#isis_interface{name = Name, pid = Pid})
 	when is_pid(Pid) ->

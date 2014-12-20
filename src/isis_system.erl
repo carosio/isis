@@ -319,10 +319,8 @@ get_state(Item) ->
 dump_config() ->
     gen_server:call(?MODULE, {dump_config}).
 
-%% Returns a timestamp giving micro seconds since the Epoch
 get_time() ->
-    {MegaSecs, Secs, MicroSecs} = erlang:now(),
-    ((MegaSecs * 1000000) + Secs) * 1000000 + MicroSecs.
+    erlang:now().
 %%--------------------------------------------------------------------
 %% @private
 %% @doc
@@ -589,7 +587,7 @@ handle_cast({delete_all_sid, Pid}, State) ->
 	end,
     {noreply, State#state{l1_system_ids = F(State#state.l1_system_ids),
 			  l2_system_ids = F(State#state.l2_system_ids)}};
-handle_cast({process_spf, {Level, Time, SPF, Reason}}, State) ->
+handle_cast({process_spf, {Level, Time, SPF, Reason, ExtInfo}}, State) ->
     IDs = 
 	case Level of
 	    level_1 -> extract_lowest_cost_hops(State#state.l1_system_ids);
@@ -621,7 +619,7 @@ handle_cast({process_spf, {Level, Time, SPF, Reason}}, State) ->
 		  end;
 	     (_) -> false
 	  end, SPF),
-    spf_summary:notify_subscribers({Time, Level, Table, Reason}),
+    spf_summary:notify_subscribers({Time, Level, Table, Reason, ExtInfo}),
     {noreply, State};
 handle_cast({add_name, SID, Name}, State) ->
     N = #isis_name{system_id = SID, name = Name},
