@@ -492,7 +492,12 @@ format_lsp(LSP) ->
     LSPID = id_to_text(LSP#isis_lsp.lsp_id),
     Now = isis_protocol:current_timestamp(),
     RL = LSP#isis_lsp.remaining_lifetime - (Now - LSP#isis_lsp.last_update),
-
+    RLCapped = if
+	RL >= 0 ->
+		RL;
+	true ->
+		0
+    end,
     Attributes = yang_bits([
 	{"PARTITIONED", LSP#isis_lsp.partition},
 	{"OVERLOAD", LSP#isis_lsp.overload}
@@ -503,7 +508,7 @@ format_lsp(LSP) ->
 	content = [
 	    leaf('lsp-id', LSPID),
 	    leaf('checksum', LSP#isis_lsp.checksum),
-	    leaf('remaining-lifetime', RL),
+	    leaf('remaining-lifetime', RLCapped),
 	    leaf('sequence', LSP#isis_lsp.sequence_number),
 	    leaf('attributes', Attributes)
 	] ++ format_tlvs(LSP#isis_lsp.tlv)
