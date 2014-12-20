@@ -120,7 +120,9 @@ invalid_lsp() ->
 %% a list of 'Count' numbers, and then turn each one into an LSP that
 %% has 'reachability' to the previous and next LSP. ie. a long chain.
 %% We give them a hostname as well. Then we inject into the Database..
-inject_some_lsps(Level, Count, Seq)
+inject_some_lsps(Level, Count, Seq) ->
+    inject_some_lsps(Level, Count, Seq, false, false).
+inject_some_lsps(Level, Count, Seq, Overload, Partition)
   when Count < 50 ->
     isis_system:add_sid_addresses(Level, <<1:16, 0, 0, 0, 0>>,  10, [{ipv4, {3232298895, 1, self()}}]),
     Numbers = lists:seq(1, Count),
@@ -164,8 +166,8 @@ inject_some_lsps(Level, Count, Seq)
 		       pdu_type = PDU,
 		       remaining_lifetime = 500,
 		       sequence_number = Seq,
-		       partition = false,
-		       overload = false,
+		       partition = Partition,
+		       overload = Overload,
 		       isis_type = level_1_2,
 		       tlv = [#isis_tlv_area_address{areas = isis_system:areas()},
 			      #isis_tlv_protocols_supported{protocols = [ipv4]},
@@ -202,7 +204,7 @@ inject_some_lsps(Level, Count, Seq)
 				     metric = 16819, sub_tlv=[]}]},
     isis_system:update_tlv(ChainTLV, 0, Level, "eth1"),
     ok;
-inject_some_lsps(_, _, _) ->
+inject_some_lsps(_, _, _, _, _) ->
     error.
 
 
