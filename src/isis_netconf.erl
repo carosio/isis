@@ -434,17 +434,39 @@ format_ip_internal_reach(#isis_tlv_ip_internal_reachability_detail{
 				error = ErrorM
 			 }) ->
     #xmlElement{
-	name = 'prefixes', %% XXX: Maybe model should call this just 'prefix'?
+	name = 'prefixes',
 	content = grouping_prefix_ipv4_std(Addr, Mask, DefaultM,
 					   DelayM, ExpenseM, ErrorM)
     }.
+
+-record(ext_reach_subtlv_state, {
+		tag = [],
+		tag64 = []
+}).
+ext_reach_subtlv(#isis_subtlv_eir_admintag32{tag = Tag},
+		 #ext_reach_subtlv_state{tag = Out} = Acc) ->
+    Acc#ext_reach_subtlv_state{
+	tag = Out ++ leaf('tag', Tag)
+    };
+ext_reach_subtlv(#isis_subtlv_eir_admintag64{tag = Tag},
+		 #ext_reach_subtlv_state{tag64 = Out} = Acc) ->
+    Acc#ext_reach_subtlv_state{
+	tag64 = Out ++ leaf('tag64', Tag)
+    };
+ext_reach_subtlv(Other, Acc) ->
+    lager:debug("Netconf: unsupported sub-TLV: ~p", [Other]),
+    Acc.
+
+format_ip_ext_reach_subtlv(SubTLVs) ->
+    Acc = lists:foldl(fun ext_reach_subtlv/2, #ext_reach_subtlv_state{}, SubTLVs),
+    Acc#ext_reach_subtlv_state.tag ++ Acc#ext_reach_subtlv_state.tag64.
 
 format_ip_extended_reach(#isis_tlv_extended_ip_reachability_detail{
 				prefix = Prefix,
 				mask_len = PrefixLen,
 				metric = Metric,
 				up = UpDown,
-				sub_tlv = _SubTLVs
+				sub_tlv = SubTLVs
 			 }) ->
     UpDownText = case UpDown of
 	true -> "false";
@@ -454,12 +476,54 @@ format_ip_extended_reach(#isis_tlv_extended_ip_reachability_detail{
 	name = 'prefixes',
 	content = [
 	    leaf('ip-prefix', isis_system:address_to_string(ipv4, Prefix)),
-	    leaf('up-down', UpDownText),
 	    leaf('prefix-len', PrefixLen),
+	    leaf('up-down', UpDownText),
 	    leaf('metric', Metric)
-	    %% TODO: Process SubTLVs for Tags
-	]
+	] ++ format_ip_ext_reach_subtlv(SubTLVs)
     }.
+
+-record(ipv6_reach_subtlv_state, {
+		tag = [],
+		tag64 = [],
+		source_prefix = undefined
+}).
+ipv6_reach_subtlv(#isis_subtlv_eir_admintag32{tag = Tag},
+		  #ipv6_reach_subtlv_state{tag = Out} = Acc) ->
+    Acc#ipv6_reach_subtlv_state{
+	tag = Out ++ leaf('tag', Tag)
+    };
+ipv6_reach_subtlv(#isis_subtlv_eir_admintag64{tag = Tag},
+		  #ipv6_reach_subtlv_state{tag64 = Out} = Acc) ->
+    Acc#ipv6_reach_subtlv_state{
+	tag64 = Out ++ leaf('tag64', Tag)
+    };
+%% XXX: The model has to be extended to support this field
+ipv6_reach_subtlv(#isis_subtlv_srcdst{prefix = Prefix, prefix_length = PrefixLength},
+		  #ipv6_reach_subtlv_state{source_prefix = undefined} = Acc) ->
+    Acc#ipv6_reach_subtlv_state{
+	source_prefix = #xmlElement{
+	    name = 'source-prefix',
+	    content = [
+		leaf('ip-prefix', isis_system:address_to_string(ipv6, Prefix)),
+		leaf('prefix-len', PrefixLength)
+	    ]
+	}
+    };
+ipv6_reach_subtlv(#isis_subtlv_srcdst{} = _, Acc) ->
+    lager:warning("Netconf: multiple srcdest sub-TLVs in TLV"),
+    Acc;
+ipv6_reach_subtlv(Other, Acc) ->
+    lager:debug("Netconf: unsupported sub-TLV: ~p", [Other]),
+    Acc.
+
+format_ipv6_reach_subtlv(SubTLVs) ->
+    Acc = lists:foldl(fun ipv6_reach_subtlv/2, #ipv6_reach_subtlv_state{}, SubTLVs),
+    Elements = [
+	Acc#ipv6_reach_subtlv_state.source_prefix
+    ] ++ Acc#ipv6_reach_subtlv_state.tag ++ Acc#ipv6_reach_subtlv_state.tag64,
+    lists:filter(fun(undefined) -> false;
+		    (_)         -> true
+		 end, Elements).
 
 format_ipv6_reach(#isis_tlv_ipv6_reachability_detail{
 			metric = Metric,
@@ -467,7 +531,7 @@ format_ipv6_reach(#isis_tlv_ipv6_reachability_detail{
 			external = _External,
 			mask_len = PrefixLen,
 			prefix = Prefix,
-			sub_tlv = _SubTLVs
+			sub_tlv = SubTLVs
 		 }) ->
     UpDownText = case UpDown of
 	true -> "false";
@@ -477,11 +541,10 @@ format_ipv6_reach(#isis_tlv_ipv6_reachability_detail{
 	name = 'prefixes',
 	content = [
 	    leaf('ip-prefix', isis_system:address_to_string(ipv6, Prefix)),
-	    leaf('up-down', UpDownText),
 	    leaf('prefix-len', PrefixLen),
+	    leaf('up-down', UpDownText),
 	    leaf('metric', Metric)
-	    %% TODO: Process SubTLVs for Tags
-	]
+	] ++ format_ipv6_reach_subtlv(SubTLVs)
     }.
 
 -record (format_tlv_state, {
