@@ -391,7 +391,7 @@ get_interface_adjacency_state(#isis_interface{name = Name, pid = IP},
 			content = [
 			    leaf('interface', Name),
 			    level_enum('level', Level),
-			    leaf('neighbor-sysid', id_to_text(Sid)),
+			    leaf('neighbor-sysid', id_to_text(Sid) ++ ".00"),
 			    %% TODO: Do we support extended circuit-id?
 			    leaf('neighbor-snpa', mac_to_text(Mac))
 			] ++ NeighborLevel ++ HoldTimerElement ++ PriorityElement ++ [
