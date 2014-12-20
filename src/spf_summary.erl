@@ -129,7 +129,7 @@ handle_call({unsubscribe, Pid}, _From, State) ->
     {reply, ok, NewState};
 
 handle_call({notify, Summary}, _From, #state{subscribers = Subscribers} = State) ->
-    notify_subscribers(Summary, Subscribers),
+    notify_subscribers(Summary, Subscribers, true),
     {reply, ok, State};
 
 handle_call({last_run, level_1}, _From, #state{last_runs_level_1 = [LR|_]} = State) ->
@@ -145,7 +145,7 @@ handle_call({last_runs, level_2}, _From, #state{last_runs_level_2 = LR} = State)
     {reply, LR, State};
 
 handle_call({resend_last}, _From, #state{last_runs_level_1 = [LR|_]} = State) ->
-    notify_subscribers(LR, State#state.subscribers),
+    notify_subscribers(LR, State#state.subscribers, false),
     {reply, ok, State};
 handle_call({resend_last}, _From, State) ->
     {reply, ok, State};
@@ -226,10 +226,13 @@ remove_subscriber(Pid, #state{subscribers = Subscribers} = State) ->
 	end,
     State#state{subscribers = NewSubscribers}.
 
-notify_subscribers(Message, Subscribers) ->
+notify_subscribers(Message, Subscribers, Store) ->
     Pids = dict:fetch_keys(Subscribers),
     lists:foreach(
       fun(Pid) ->
 	      Pid ! {spf_summary, Message} end, Pids),
-    gen_server:cast(?MODULE, {last_run, Message}),
+    case Store of
+       true -> gen_server:cast(?MODULE, {last_run, Message});
+       _ -> ok
+    end,
     ok.
