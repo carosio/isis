@@ -99,8 +99,7 @@ get_state() ->
 %% @end
 %%--------------------------------------------------------------------
 init([]) ->
-    {ok, Socket} = gen_tcp:connect({0,0,0,0,0,0,0,1}, 8301, []),
-    {ok, #state{socket = Socket}}.
+    {ok, #state{}, 5000}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -149,7 +148,16 @@ handle_info({tcp, _Port, Bytes}, State) ->
     {noreply, handle_data(Bytes, State)};
 handle_info({tcp_closed, _Port}, State) ->
     lager:warning("Netconf: connection to server was closed"),
-    {noreply, handle_close(State)};
+    {noreply, handle_close(State), 30000};
+handle_info(timeout, State) ->
+    Socket = case gen_tcp:connect({0,0,0,0,0,0,0,1}, 8301, []) of
+	{ok, Sock} ->
+	    Sock;
+        Other ->
+	    lager:error("Netconf: Could not connect to netconf server: ~p", [Other]),
+	    undefined
+    end,
+    {noreply, State#state{socket = Socket}, 30000};
 handle_info(Info, State) ->
     lager:debug("Received unknown info: ~p", [Info]),
     {noreply, State}.
@@ -429,7 +437,7 @@ get_lsp_log() ->
       %% XXX: The model for the lsp log is not that good, it is
       %% Missing a way to convey what actually happened to the LSP
       %% so with that, it might be better not to log deleted LSPs.
-      ({delete, Level, LSP_ID, Time, Id}) ->
+      ({delete, _Level, _LSP_ID, _Time, _Id}) ->
 	undefined
     end,
     fmap(FormatLSP, isis_lspdb_log:get_log(level_1))
