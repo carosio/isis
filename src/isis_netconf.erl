@@ -145,6 +145,7 @@ handle_cast(_Msg, State) ->
 handle_info({tcp, _Port, Bytes}, State) ->
     {noreply, handle_data(Bytes, State)};
 handle_info({tcp_closed, _Port}, State) ->
+    lager:warning("Netconf: connection to server was closed"),
     {noreply, handle_close(State)};
 handle_info(Info, State) ->
     lager:debug("Received unknown info: ~p", [Info]),
@@ -197,6 +198,7 @@ parse_message(MB, State) ->
     State#state{message_buffer = MB}.
 
 process_message(0, XML, State) -> % Config request
+    lager:info("Netconf: Received a configuration request"),
     %% Parse XML
     {ParsedXML, []} = xmerl_scan:string(binary_to_list(XML),
 					[{namespace_conformant, true}]),
@@ -275,8 +277,9 @@ extract_level(Node, XML) ->
 %%%===================================================================
 %%% Configuration functions
 %%%===================================================================
-apply_system_id(Node, XML, State) ->
+apply_system_id(Node, _XML, _State) ->
     Value = xml_get_value(text, Node),
+    lager:info("Netconf: Found system-id ~p", [Value]),
     ID = string:tokens(Value, "."),
     IDBint = 
 	lists:map(
@@ -288,8 +291,9 @@ apply_system_id(Node, XML, State) ->
     SystemID = lists:foldl(fun(X, Acc) -> <<Acc/binary, X/binary>> end, <<>>, IDBint),
     isis_system:set_system_id(SystemID).
 
-apply_area_address(Node, XML, State) ->
+apply_area_address(Node, _XML, _State) ->
     Value = xml_get_value(text, Node),
+    lager:info("Netconf: Found area address ~p", [Value]),
     AreaBits = string:tokens(Value, "."),
     AreaBin = 
 	lists:map(
@@ -301,9 +305,11 @@ apply_area_address(Node, XML, State) ->
     Area = lists:foldl(fun(X, Acc) -> <<Acc/binary, X/binary>> end, <<>>, AreaBin),
     isis_system:add_area(Area).
 
-apply_interface_priority(Node, XML, State) ->
+apply_interface_priority(Node, XML, _State) ->
     Value = list_to_integer(xml_get_value(text, Node), 10),
+    lager:info("Netconf: Found interface priority ~p", [Value]),
     Interface = extract_interface(Node, XML),
+    lager:info("Netconf: Interface is ~p", [Interface]),
     Level = extract_level(Node, XML),
     isis_system:add_interface(Interface),
     isis_system:enable_level(Interface, Level),
