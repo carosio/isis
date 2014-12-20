@@ -178,6 +178,13 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+send_message(Code, Data, State) when is_list(Data) ->
+    send_message(Code, list_to_binary(Data), State);
+send_message(Code, Data, #state{socket = Socket} = State) ->
+    DataLen = byte_size(Data),
+    ok = gen_tcp:send(Socket, <<Code:32, DataLen:32, Data/binary>>),
+    State.
+
 handle_data(Bytes, #state{message_buffer = MB} = State) ->
     BytesBin = list_to_binary(Bytes),
     NewMB = <<MB/binary, BytesBin/binary>>,
@@ -195,6 +202,7 @@ process_message(0, XML, State) -> % Config request
 					[{namespace_conformant, true}]),
     NewState = process_config(ParsedXML, State),
     %% Done
+    send_message(1, <<>>, NewState#state{last_message = ParsedXML});
 process_message(Code, _Data, State) ->
     lager:warning("Netconf: Received unknown message with code: ~p", [Code]),
     State.
