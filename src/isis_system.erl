@@ -84,7 +84,7 @@
 		interfaces,             %% Our 'state' per interface
 		redistributed_routes,
 		ignore_list = [],       %% Interfaces to ignore
-		allowed_list = [],
+		allowed_list = undef,
 		l1_system_ids :: dict(),   %% SID -> Neighbor address
 		l2_system_ids :: dict(),
 		refresh_timer = undef,
@@ -1120,15 +1120,15 @@ is_valid_interface(Name, #state{ignore_list = Ignores,
 				allowed_list = Allowed}) when is_list(Name) ->
     % An interface name is expected to consist of a reasonable
     % subset of all characters, use a whitelist and extend it if needed
-    case length(Allowed) > 0 of
-	true -> lists:member(Name, Allowed);
-	_ ->
+    case Allowed of
+	undef ->
 	    case lists:member(Name, Ignores) of
 		true -> false;
 		_ ->
 		    Name == [C || C <- Name, (((C bor 32) >= $a) and ((C bor 32) =< $z))
 				      or ((C >= $0) and (C =< $9)) or (C == $.)]
 	    end
+	_ -> lists:member(Name, Allowed);
     end.
 
 autoconf_interface(#isis_interface{mac = Mac, name = Name} = I,
