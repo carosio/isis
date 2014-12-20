@@ -62,7 +62,7 @@
 		spf_reason = "",
 		spf_delayed,	  %% Delay used for SPF miliseconds
 		spf_scheduled,    %% Time when SPF was last scheduled, erlang timestamp
-		spf_id = 0,
+		spf_id,           %% Id of SPF; level 1 uses even and level 2 uses odd
 		hold_timer,        %% SPF Hold timer
 		subscribers
 	       }).
@@ -305,8 +305,13 @@ init([{table, Table_ID}]) ->
     DB = ets:new(Table_ID, [ordered_set, {keypos, #isis_lsp.lsp_id}]),
     NameDB = dict:new(),
     Timer = start_timer(expiry, #state{}),
+    InitialSPF_ID = case Table_ID of
+	level_1 -> 0;
+	level_2 -> 1
+    end,
     {ok, #state{db = DB, name_db = NameDB, level = Table_ID, 
 		expiry_timer = Timer, spf_timer = undef,
+		spf_id = InitialSPF_ID,
 		subscribers = dict:new()}}.
 
 %%--------------------------------------------------------------------
@@ -426,7 +431,7 @@ handle_info({timeout, _Ref, {run_spf, _Type}}, State) ->
     },
     isis_system:process_spf({State#state.level, Time, SPF,
 			     State#state.spf_reason, ExtInfo}),
-    {noreply, State#state{spf_timer = undef, spf_reason = "", spf_id = SPFID + 1}};
+    {noreply, State#state{spf_timer = undef, spf_reason = "", spf_id = SPFID + 2}};
 handle_info(_Info, State) ->
     {noreply, State}.
 
