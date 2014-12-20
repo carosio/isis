@@ -51,20 +51,25 @@
        ).
 
 -define(ISIS_XML_BASE,
-	"/routing/routing-instance/routing-protocols/routing-protocol/name[. = 'AutoISIS']/../*").
+	"/rt:routing/rt:routing-instance[rt:name=\"default\"]/rt:routing-protocols/rt:routing-protocol[rt:type=\"isis:isis\"]/isis:isis/isis:instance").
 
 -define(ISIS_Configurators,
 	[
-	 {"//isis:system-id", fun apply_system_id/3},
-	 {"//isis:area-address", fun apply_area_address/3},
-	 {"//isis:priority/isis:value", fun apply_interface_priority/3}
+%	 {"//isis:system-id", fun apply_system_id/3},
+%	 {"//isis:area-address", fun apply_area_address/3},
+	 {"./isis:interfaces", fun apply_interfaces/3},
+	 {"./isis:interfaces/isis:interface/isis:priority/isis:value",
+		fun apply_interface_priority/3},
+	 {"./isis:interfaces/isis:interface/isis:metric/isis:value",
+		fun apply_interface_metric/3}
 	]
        ).
 
 -record(state, {
 	  socket,
 	  message_buffer = <<>>,
-	  last_message
+	  last_message,
+	  enabled_interfaces = sets:new()
 	 }).
 
 %%%===================================================================
@@ -228,10 +233,19 @@ handle_close(State) ->
     State#state{socket = undefined}.
 
 process_config(ParsedXML, State) ->
-    lists:map(fun(Line) ->
-		      configurator(Line, ParsedXML, State)
-	      end, ?ISIS_Configurators),
-    State.
+    case xpath(?ISIS_XML_BASE, ParsedXML) of
+	[] ->
+	    lager:info("Netconf: did not find IS-IS config node."),
+	    State;
+	[Config] ->
+	    lager:info("Netconf: found IS-IS config node, processing..."),
+	    lists:foldl(fun(Line, StateAcc) ->
+			  configurator(Line, ParsedXML, Config, StateAcc)
+		        end, State, ?ISIS_Configurators);
+	_ ->
+	    lager:info("Netconf: multiple instances not supported yet."),
+	    State
+    end.
 
 get_namespace_uri(Prefix) ->
     {Prefix, Uri} = lists:keyfind(Prefix, 1, ?ISIS_NETCONF_NAMESPACES),
@@ -896,10 +910,10 @@ get_hostnames_state() ->
     end,
     lists:map(HostNameGen, isis_system:all_names()).
 
-configurator({Pattern, Applicator}, XML, State) ->
-    Nodes = xpath(Pattern, XML),
-    Apply = fun(N) -> Applicator(N, XML, State) end,
-    lists:map(Apply, Nodes).
+configurator({Pattern, Applicator}, XML, Config, State) ->
+    Nodes = xpath(Pattern, Config, Config#xmlElement.parents, XML, []),
+    Apply = fun(N, StateAcc) -> Applicator(N, XML, StateAcc) end,
+    lists:foldl(Apply, State, Nodes).
 
 %%%===================================================================
 %%% Configuration helpers
@@ -937,6 +951,10 @@ extract_interface(Node, XML) ->
 		   Node#xmlElement.parents, XML, []))),
     string:strip(Interface, both, $").
 
+read_leaf(Node, XML, Path) ->
+    Leaf = hd(xpath(Path, Node, Node#xmlElement.parents, XML, [])),
+    xml_get_value(text, Leaf).
+
 extract_level(Node, XML) ->
     Level =
 	xml_get_value(
@@ -955,7 +973,7 @@ extract_level(Node, XML) ->
 %%%===================================================================
 %%% Configuration functions
 %%%===================================================================
-apply_system_id(Node, _XML, _State) ->
+apply_system_id(Node, _XML, State) ->
     Value = xml_get_value(text, Node),
     lager:info("Netconf: Found system-id ~p", [Value]),
     ID = string:tokens(Value, "."),
@@ -967,9 +985,10 @@ apply_system_id(Node, _XML, _State) ->
 		  <<>>
 	  end, ID),
     SystemID = lists:foldl(fun(X, Acc) -> <<Acc/binary, X/binary>> end, <<>>, IDBint),
-    isis_system:set_system_id(SystemID).
+    isis_system:set_system_id(SystemID),
+    State.
 
-apply_area_address(Node, _XML, _State) ->
+apply_area_address(Node, _XML, State) ->
     Value = xml_get_value(text, Node),
     lager:info("Netconf: Found area address ~p", [Value]),
     AreaBits = string:tokens(Value, "."),
@@ -981,15 +1000,70 @@ apply_area_address(Node, _XML, _State) ->
 		  <<(list_to_integer(X, 16)):8>>
 	  end, AreaBits),
     Area = lists:foldl(fun(X, Acc) -> <<Acc/binary, X/binary>> end, <<>>, AreaBin),
-    isis_system:add_area(Area).
+    isis_system:add_area(Area),
+    State.
 
-apply_interface_priority(Node, XML, _State) ->
+apply_interfaces(Node, XML, State) ->
+    EnabledInterfaces = sets:from_list(fmap(
+	fun(#xmlElement{name = interface} = IF) ->
+	    IFName = read_leaf(IF, XML, "./isis:name"),
+	    IFEnabled = read_leaf(IF, XML, "./isis:enabled"),
+	    case IFEnabled of
+		"false" -> undefined;
+		_  -> IFName
+	    end;
+	(_) ->
+	    undefined
+    end, Node#xmlElement.content)),
+    lager:info("Netconf: Enabled interfaces are ~p", [sets:to_list(EnabledInterfaces)]),
+    ActiveInterfaces = sets:from_list(fmap(
+	fun(#isis_interface{name = Name, pid = Pid}) when is_pid(Pid) ->
+	    Name;
+	(_) ->
+	    undefined
+    end, isis_system:list_interfaces())),
+    DeleteInterfaces = sets:to_list(sets:subtract(ActiveInterfaces, EnabledInterfaces)),
+    AddInterfaces = sets:to_list(sets:subtract(EnabledInterfaces, ActiveInterfaces)),
+    lager:info("Netconf: Stopping IS-IS on interfaces ~p", [DeleteInterfaces]),
+    lager:info("Netconf: Starting IS-IS on interfaces ~p", [AddInterfaces]),
+    lists:map(fun(IF) ->
+        isis_system:del_interface(IF)
+    end, DeleteInterfaces),
+    lists:map(fun(IF) ->
+	isis_system:add_interface(IF),
+	isis_system:enable_level(IF, level_1),
+	isis_system:enable_level(IF, level_1),
+	isis_system:set_interface(IF, level_1, [{metric, 1000000}]),
+	isis_system:set_interface(IF, level_1, [{encryption, text, <<"isis-autoconf">>}])
+    end, AddInterfaces),
+    State#state{enabled_interfaces = EnabledInterfaces}.
+
+apply_interface_priority(Node, XML, #state{enabled_interfaces = EnabledIFs} = State) ->
+    %% TODO: Revert to default if leaf is absent
     Value = list_to_integer(xml_get_value(text, Node), 10),
-    lager:info("Netconf: Found interface priority ~p", [Value]),
     Interface = extract_interface(Node, XML),
-    lager:info("Netconf: Interface is ~p", [Interface]),
     Level = extract_level(Node, XML),
-    isis_system:add_interface(Interface),
-    isis_system:enable_level(Interface, Level),
-    isis_system:set_interface(Interface, Level,
-			      [{priority, Value}]).
+    case sets:is_element(Interface, EnabledIFs) of
+	true ->
+	    lager:info("Netconf: Setting interface ~s priority ~p for level ~p",
+		       [Interface, Value, Level]),
+	    isis_system:set_interface(Interface, Level, [{priority, Value}]);
+	_ ->
+	    ok
+    end,
+    State.
+
+apply_interface_metric(Node, XML, #state{enabled_interfaces = EnabledIFs} = State) ->
+    %% TODO: Revert to default if leaf is absent
+    Value = list_to_integer(xml_get_value(text, Node), 10),
+    Interface = extract_interface(Node, XML),
+    Level = extract_level(Node, XML),
+    case sets:is_element(Interface, EnabledIFs) of
+	true ->
+	    lager:info("Netconf: Setting interface ~s metric ~p for level ~p",
+		       [Interface, Value, Level]),
+	    isis_system:set_interface(Interface, Level, [{metric, Value}]);
+	_ ->
+	    ok
+    end,
+    State.

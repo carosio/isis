@@ -375,7 +375,7 @@ init(Args) ->
 %% @end
 %%--------------------------------------------------------------------
 handle_call({add_interface, _}, _From,
-	    #state{system_id = ID} = State) when is_binary(ID) == false ->
+	    #state{system_id = ID, autoconf = false} = State) when is_binary(ID) == false ->
     {reply, {error, "invalid system id"}, State};
 handle_call({add_interface, Name}, _From,
 	    #state{interfaces = Interfaces} = State) ->
@@ -384,7 +384,11 @@ handle_call({add_interface, Name}, _From,
 	    [I] -> I;
 	    _ -> #isis_interface{name = Name}
 	end,
-    NextState = do_enable_interface(Interface, State),
+    BringUp = case State#state.autoconf of
+	true -> fun do_autoconf_interface/2;
+	   _ -> fun do_enable_interface/2
+    end,
+    NextState = BringUp(Interface,State),
     {reply, ok, NextState};
 
 handle_call({del_interface, Name}, _From,
@@ -1127,42 +1131,49 @@ is_valid_interface(Name, #state{ignore_list = Ignores,
 		_ ->
 		    Name == [C || C <- Name, (((C bor 32) >= $a) and ((C bor 32) =< $z))
 				      or ((C >= $0) and (C =< $9)) or (C == $.)]
-	    end
-	_ -> lists:member(Name, Allowed);
+	    end;
+	_ -> lists:member(Name, Allowed)
     end.
 
-autoconf_interface(#isis_interface{mac = Mac, name = Name} = I,
-		   #state{autoconf = true} = State) 
-  when byte_size(Mac) =:= 6 ->
+
+autoconf_interface(#isis_interface{name = Name} = I,
+		   #state{autoconf = true} = State) ->
     case is_valid_interface(Name, State) of
 	true ->
-	    State1 = 
-		case State#state.system_id_set =:= true of
-		    true -> State;
-		    _ -> <<ID:(6*8)>> = Mac,
-			 %%DynamicName = lists:flatten(io_lib:format("autoconf-~.16B", [ID])),
-			 {ok, DynamicName} = inet:gethostname(),
-			 change_system_id(Mac, State),
-			 NextState =
-			     set_tlv_hostname(DynamicName, State#state{system_id = Mac,
-								       system_id_set = true}),
-			 force_refresh_lsp(NextState),
-			 NextState
-		end,
-	    %% Enable interface and level1...
-	    State2 = do_enable_interface(I, State1),
-	    [Interface] = ets:lookup(State2#state.interfaces, Name),
-	    do_enable_level(Interface, level_1, State2#state.system_id),
-	    LevelPid = isis_interface:get_level_pid(Interface#isis_interface.pid, level_1),
-	    isis_interface_level:set(LevelPid,
-				     [{encryption, text, <<"isis-autoconf">>},
-				      {metric, ?DEFAULT_AUTOCONF_METRIC},
-				      {priority, ?DEFAULT_PRIORITY}]),
-	    State2;
+	    do_autoconf_interface(I, State);
 	_ ->
 	    State
     end;
 autoconf_interface(_I, State) ->
+    State.
+
+do_autoconf_interface(#isis_interface{mac = Mac, name = Name} = I,
+		      #state{autoconf = true} = State)
+  when byte_size(Mac) =:= 6 ->
+    State1 =
+	case State#state.system_id_set =:= true of
+	    true -> State;
+	    _ -> <<ID:(6*8)>> = Mac,
+		 %%DynamicName = lists:flatten(io_lib:format("autoconf-~.16B", [ID])),
+		 {ok, DynamicName} = inet:gethostname(),
+		 change_system_id(Mac, State),
+		 NextState =
+		     set_tlv_hostname(DynamicName, State#state{system_id = Mac,
+							       system_id_set = true}),
+		 force_refresh_lsp(NextState),
+		 NextState
+	end,
+    %% Enable interface and level1...
+    State2 = do_enable_interface(I, State1),
+    [Interface] = ets:lookup(State2#state.interfaces, Name),
+    do_enable_level(Interface, level_1, State2#state.system_id),
+    LevelPid = isis_interface:get_level_pid(Interface#isis_interface.pid, level_1),
+    isis_interface_level:set(LevelPid,
+			     [{encryption, text, <<"isis-autoconf">>},
+			      {metric, ?DEFAULT_AUTOCONF_METRIC},
+			      {priority, ?DEFAULT_PRIORITY}]),
+    State2;
+do_autoconf_interface(_I, State) ->
     State.
 
 %%%===================================================================
