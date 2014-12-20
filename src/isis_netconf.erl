@@ -205,6 +205,10 @@ process_message(0, XML, State) -> % Config request
     NewState = process_config(ParsedXML, State),
     %% Done
     send_message(1, <<>>, NewState#state{last_message = ParsedXML});
+process_message(3, _Data, State) -> % State request
+    lager:info("Netconf: Received a state request"),
+    {ok, Reply} = process_state(State),
+    send_message(4, Reply, State);
 process_message(Code, _Data, State) ->
     lager:warning("Netconf: Received unknown message with code: ~p", [Code]),
     State.
@@ -217,6 +221,93 @@ process_config(ParsedXML, State) ->
 		      configurator(Line, ParsedXML, State)
 	      end, ?ISIS_Configurators),
     State.
+
+get_namespace_uri(Prefix) ->
+    {Prefix, Uri} = lists:keyfind(Prefix, 1, ?ISIS_NETCONF_NAMESPACES),
+    Uri.
+
+process_state(State) ->
+    MainNamespace = #xmlAttribute{name = 'xmlns', value = get_namespace_uri("rt")},
+    Namespaces = lists:map(fun({Prefix, Url}) ->
+			       #xmlAttribute{
+				   name = list_to_atom("xmlns:" ++ Prefix),
+				   value = Url
+			       }
+			   end, ?ISIS_NETCONF_NAMESPACES),
+    Root = #xmlElement{
+	name = 'routing-state',
+	attributes = [MainNamespace | Namespaces],
+	content = [
+	    #xmlElement{name = 'routing-instance', content = [
+		#xmlElement{name = 'name', content = [ #xmlText{value = "default"} ]},
+		#xmlElement{name = 'id', content = [ #xmlText{value = "1"} ]},
+		#xmlElement{name = 'type', content = [ #xmlText{value = "rt:default-routing-instance"} ]},
+		#xmlElement{name = 'default-ribs', content = [
+		    #xmlElement{name = 'default-rib', content = [
+		        #xmlElement{name = 'address-family', content = [ #xmlText{value = "ipv6"} ]},
+		        #xmlElement{name = 'rib-name', content = [ #xmlText{value = "main-ipv6"} ]}
+		    ]},
+		    #xmlElement{name = 'default-rib', content = [
+		        #xmlElement{name = 'address-family', content = [ #xmlText{value = "ipv4"} ]},
+		        #xmlElement{name = 'rib-name', content = [ #xmlText{value = "main-ipv4"} ]}
+		    ]}
+		]},
+		#xmlElement{name = 'interfaces', content = get_interface_state(State)},
+		#xmlElement{name = 'routing-protocols', content = [
+		    #xmlElement{name = 'routing-protocol', content = [
+			#xmlElement{name = 'type', content = [ #xmlText{value = "isis:isis"} ]},
+			#xmlElement{name = 'name', content = [ #xmlText{value = "AutoISIS"} ]},
+			#xmlElement{name = 'isis', content = get_isis_state(State), attributes = [
+			    #xmlAttribute{name = 'xmlns', value = get_namespace_uri("isis")}
+			]}
+		    ]}
+		]}
+	    ]}
+	]
+    },
+    {ok, lists:flatten(xmerl:export([Root], xmerl_xml))}.
+
+%% This function should return [#xmlElement] with the existing interfaces
+%% in the current routing-instance.
+%% That might be something we don't want to do in IS-IS, let's see whether we can
+get_interface_state(_State) ->
+    [].
+
+%% This function should return [#xmlElement] for the subtree
+%% routing-state/routing-instance/routing-protocols/isis subtree
+get_isis_state(State) ->
+    [
+	#xmlElement{name = 'system-counters', content = [
+	]},
+	#xmlElement{name = 'interface-counters', content = [
+	]},
+	#xmlElement{name = 'packet-counters', content = [
+	]},
+	#xmlElement{name = 'interfaces', content = [
+	]},
+	#xmlElement{name = 'adjacencies', content = [
+	]},
+	#xmlElement{name = 'spf-log', content = [
+	]},
+	#xmlElement{name = 'lsp-log', content = [
+	]},
+	#xmlElement{name = 'database', content = [
+	]},
+	#xmlElement{name = 'hostnames', content = get_isis_hostnames_state()}
+    ].
+
+%% This function should return [#xmlElement] for the subtree
+%% routing-state/routing-instance/routing-protocols/isis/hostnames
+get_isis_hostnames_state() ->
+    HostNameGen = fun({SystemId, Name}) ->
+	<<A:16, B:16, C:16>> = SystemId,
+	FormattedId = lists:flatten(io_lib:format("~4.16.0B.~4.16.0B.~4.16.0B.00", [A,B,C])),
+	#xmlElement{name = 'hostname', content = [
+	    #xmlElement{name = 'system-id', content = [ #xmlText{value = FormattedId} ]},
+	    #xmlElement{name = 'hostname', content = [ #xmlText{value = Name} ]}
+	]}
+    end,
+    lists:map(HostNameGen, isis_system:all_names()).
 
 configurator({Pattern, Applicator}, XML, State) ->
     Nodes = xpath(Pattern, XML),

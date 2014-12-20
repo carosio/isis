@@ -54,7 +54,7 @@
 	 %% TLV Update routines
 	 update_tlv/4, delete_tlv/4,
 	 %% System Name handling
-	 add_name/2, delete_name/1, lookup_name/1,
+	 add_name/2, delete_name/1, lookup_name/1, all_names/0,
 	 %% Handle System ID mapping
 	 add_sid_addresses/4, delete_sid_addresses/3, delete_all_sid_addresses/1,
 	 %% pseudonodes
@@ -294,6 +294,11 @@ lookup_name(<<SID:6/binary>>) ->
 	    lists:flatten(io_lib:format("~4.16.0B.~4.16.0B.~4.16.0B",
 					[X || <<X:16>> <= SID]))
     end.
+all_names() ->
+    lists:map(fun({_,SystemID,Name}) ->
+		  {SystemID,Name}
+	      end, ets:tab2list(isis_names)
+    ).
 
 allocate_pseudonode(Pid, Level) ->
     gen_server:call(?MODULE, {allocate_pseudonode, Pid, Level}).
