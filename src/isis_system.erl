@@ -60,7 +60,7 @@
 	 %% pseudonodes
 	 allocate_pseudonode/2, deallocate_pseudonode/2,
 	 %% Misc
-	 address_to_string/1, address_to_string/2, dump_config/0,
+	 address_to_string/1, address_to_string/2, dump_config/0, get_time/0,
 	 %% Debug
 	 load_state/1]).
 
@@ -70,7 +70,8 @@
 
 -define(SERVER, ?MODULE).
 
--record(state, {autoconf = false :: boolean(),
+-record(state, {startup_time :: integer(),
+		autoconf = false :: boolean(),
 		system_id,
 		system_id_set = false :: boolean(),
 		fingerprint = <<>> :: binary(),     %% For autoconfig collisions
@@ -318,6 +319,10 @@ get_state(Item) ->
 dump_config() ->
     gen_server:call(?MODULE, {dump_config}).
 
+%% Returns a timestamp giving micro seconds since the Epoch
+get_time() ->
+    {MegaSecs, Secs, MicroSecs} = erlang:now(),
+    ((MegaSecs * 1000000) + Secs) * 1000000 + MicroSecs.
 %%--------------------------------------------------------------------
 %% @private
 %% @doc
@@ -335,7 +340,8 @@ init(Args) ->
 					   {keypos, #isis_interface.name}]),
     Redist = ets:new(redistributed_routes, [named_table, bag,
 					    {keypos, #isis_route.route}]),
-    State = #state{l1_system_ids = dict:new(),
+    State = #state{startup_time = get_time(),
+		   l1_system_ids = dict:new(),
 		   l2_system_ids = dict:new(),
 		   interfaces = Interfaces,
 		   redistributed_routes = Redist,
@@ -1476,6 +1482,8 @@ set_state([_ | Vs], State) ->
 set_state([], State) ->
     State.
 
+extract_state(startup_time, State) ->
+    State#state.startup_time;
 extract_state(lsp_lifetime, State) ->
     State#state.max_lsp_lifetime;
 extract_state(reachability, State) ->

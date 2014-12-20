@@ -281,8 +281,7 @@ get_isis_state(_State) ->
 	#xmlElement{name = 'packet-counters', content = [
 	]},
 	#xmlElement{name = 'interfaces', content = get_interface_state()},
-	#xmlElement{name = 'adjacencies', content = [
-	]},
+	#xmlElement{name = 'adjacencies', content = get_adjacency_state()},
 	#xmlElement{name = 'spf-log', content = [
 	]},
 	#xmlElement{name = 'lsp-log', content = [
@@ -301,10 +300,17 @@ leaf(Name, Content) ->
 
 %% Generates an XML element like <level>1</level> from a given atom
 %% which should either be level_1 or level_2.
-level_element(level_1) ->
+level_number(level_1) ->
     leaf(level, 1);
-level_element(level_2) ->
+level_number(level_2) ->
     leaf(level, 2).
+
+level_enum(Name, level_1) ->
+    leaf(Name, "level-1");
+level_enum(Name, level_2) ->
+    leaf(Name, "level-2");
+level_enum(Name, "level_1_2") ->
+    leaf(Name, "level-all").
 
 id_to_text(<<ID:6/binary>>) ->
     io_lib:format("~4.16.0B.~4.16.0B.~4.16.0B", [X || <<X:16>> <= ID]);
@@ -312,6 +318,10 @@ id_to_text(<<Head:6/binary, PN:8>>) ->
     io_lib:format("~s.~2.16.0B", [id_to_text(Head), PN]);
 id_to_text(<<Head:7/binary, Frag:8>>) ->
     io_lib:format("~s-~2.16.0B", [id_to_text(Head), Frag]).
+
+mac_to_text(<<Mac:6/binary>>) ->
+    io_lib:format("~2.16.0B:~2.16.0B:~2.16.0B:~2.16.0B:~2.16.0B:~2.16.0B",
+		  [ X || <<X:8>> <= Mac ]).
 
 fmap(Function, List) ->
     Intermediate = lists:map(Function, List),
@@ -322,6 +332,84 @@ fmap(Function, List) ->
 %% Helper to generate state that is a list with one entry per level
 perlevel_state(LevelStateFun) ->
     fmap(LevelStateFun, [level_1,level_2]).
+
+smiv2_ticks(undefined) ->
+    0;
+smiv2_ticks(Timestamp) ->
+    StartUp = isis_system:get_state(startup_time),
+    Ticks = round((Timestamp - StartUp) / 10000),
+    if
+	Ticks < (1 bsl 32) ->
+	    Ticks;
+	true ->
+	    0
+    end.
+
+get_interface_adjacency_state(#isis_interface{name = Name, pid = IP},
+			      Acc) when is_pid(IP) ->
+    LPids = [
+	{level_1, isis_interface:get_level_pid(IP, level_1)},
+	{level_2, isis_interface:get_level_pid(IP, level_2)}
+    ],
+    Acc ++ lists:foldl(
+	fun({Level, LPid}, Acc1) when is_pid(LPid) ->
+	    AH = dict:to_list(isis_interface_level:get_state(LPid, adjacencies)),
+	    Acc1 ++ lists:map(
+		fun({Mac, {Sid, AdjPid}}) ->
+		    ISType = isis_adjacency:get_state(AdjPid, is_type),
+		    NeighborLevel = if
+			ISType =:= level_1; ISType =:= level_2; ISType =:= level_1_2 ->
+			    [level_enum('neighbor-level', ISType)];
+			true ->
+			    []
+		    end,
+		    HoldTimer = isis_adjacency:get_state(AdjPid, timer),
+		    HoldTimerElement = if
+		        is_integer(HoldTimer) ->
+			    [leaf('hold-timer', round(HoldTimer / 1000))];
+			true ->
+			    []
+		    end,
+		    Priority = isis_adjacency:get_state(AdjPid, priority),
+		    PriorityElement = if
+			is_integer(Priority) ->
+			    [leaf('neighbor-priority', Priority)];
+			true ->
+			    []
+		    end,
+		    LastUpTime = smiv2_ticks(isis_adjacency:get_state(AdjPid, last_uptime)),
+		    StateMap = [{new, "Init"}, {init, "Init"}, {up, "Up"}, {down, "Down"}],
+		    State = proplists:get_value(isis_adjacency:get_state(AdjPid), StateMap),
+		    StateElement = if
+			is_list(State) ->
+			    [leaf('state', State)];
+			true ->
+			    []
+		    end,
+		    #xmlElement{
+			name = 'adjacency',
+			content = [
+			    leaf('interface', Name),
+			    level_enum('level', Level),
+			    leaf('neighbor-sysid', id_to_text(Sid)),
+			    %% TODO: Do we support extended circuit-id?
+			    leaf('neighbor-snpa', mac_to_text(Mac))
+			] ++ NeighborLevel ++ HoldTimerElement ++ PriorityElement ++ [
+			    leaf('lastuptime', LastUpTime)
+			] ++ StateElement
+		    }
+		end, AH);
+	(_, Acc1) ->
+	    Acc1
+	end, [], LPids);
+get_interface_adjacency_state(#isis_interface{} = _, Acc) ->
+    Acc.
+
+%% Formats current IS-IS interfaces to [#xmlElement] for subtree
+%% routing-state/routing-instance/routing-protocols/isis/adjacencies
+get_adjacency_state() ->
+    Interfaces = isis_system:list_interfaces(),
+    lists:foldl(fun get_interface_adjacency_state/2, [], Interfaces).
 
 format_interface_state(#isis_interface{name = Name, pid = Pid})
 	when is_pid(Pid) ->
@@ -387,7 +475,7 @@ get_level_database_state(Level) ->
     LSPElements = lists:map(fun format_lsp/1, LSPs),
     #xmlElement{
 	name = 'level-db',
-	content = [ level_element(Level) | LSPElements ]
+	content = [ level_number(Level) | LSPElements ]
     }.
 
 %% Formats a string for the yang type bits. To be
