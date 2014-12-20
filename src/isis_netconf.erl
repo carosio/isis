@@ -38,14 +38,23 @@
 	 terminate/2, code_change/3]).
 
 -define(SERVER, ?MODULE).
+-define(ISIS_NETCONF_NAMESPACES,
+	[
+	 {"rt", "urn:ietf:params:xml:ns:yang:ietf-routing"},
+	 {"v4ur", "urn:ietf:params:xml:ns:yang:ietf-ipv4-unicast-routing"},
+	 {"v6ur", "urn:ietf:params:xml:ns:yang:ietf-ipv6-unicast-routing"},
+	 {"isis", "urn:ietf:params:xml:ns:yang:ietf-isis"}
+	]
+       ).
+
 -define(ISIS_XML_BASE,
 	"/routing/routing-instance/routing-protocols/routing-protocol/name[. = 'AutoISIS']/../*").
 
 -define(ISIS_Configurators,
 	[
-	 {"//system-id", fun apply_system_id/3},
-	 {"//area-address", fun apply_area_address/3},
-	 {"//priority/value", fun apply_interface_priority/3}
+	 {"//isis:system-id", fun apply_system_id/3},
+	 {"//isis:area-address", fun apply_area_address/3},
+	 {"//isis:priority/isis:value", fun apply_interface_priority/3}
 	]
        ).
 
@@ -176,7 +185,8 @@ handle_data(Bytes, #state{message_buffer = MB} = State) ->
 
 parse_message(<<0:32, Len:32, XML:Len/binary, R/binary>>, State) ->
     %% Parse XML
-    {ParsedXML, []} = xmerl_scan:string(binary_to_list(XML)),
+    {ParsedXML, []} = xmerl_scan:string(binary_to_list(XML),
+					[{namespace_conformant, true}]),
     NewState = process_config(ParsedXML, State),
     %% Done
     NewState#state{message_buffer = R, last_message = ParsedXML};
@@ -194,13 +204,26 @@ process_config(ParsedXML, State) ->
     State.
 
 configurator({Pattern, Applicator}, XML, State) ->
-    Nodes = xmerl_xpath:string(Pattern, XML),
+    Nodes = xpath(Pattern, XML),
     Apply = fun(N) -> Applicator(N, XML, State) end,
     lists:map(Apply, Nodes).
 
 %%%===================================================================
 %%% Configuration helpers
 %%%===================================================================
+
+xpath(Pattern, XML) ->
+    xpath(Pattern, XML, []).
+xpath(Pattern, XML, Options) ->
+    xpath(Pattern, XML, [], XML, Options).
+xpath(Pattern, Node, Parents, Doc, Options) ->
+    DefaultOptions =
+      [
+       {namespace, ?ISIS_NETCONF_NAMESPACES}
+      ],
+    xmerl_xpath:string(Pattern, Node, Parents,
+		       Doc, DefaultOptions ++ Options).
+
 xml_get_value(text, Node) ->
     Content = Node#xmlElement.content,
     [T] =
@@ -217,16 +240,16 @@ extract_interface(Node, XML) ->
     Interface =
 	xml_get_value(
 	  text,
-	  hd(xmerl_xpath:string("../../../interface/name", Node,
-				Node#xmlElement.parents, XML, []))),
+	  hd(xpath("../../../isis:interface/isis:name", Node,
+		   Node#xmlElement.parents, XML, []))),
     string:strip(Interface, both, $").
 
 extract_level(Node, XML) ->
     Level =
 	xml_get_value(
 	  text,
-	  hd(xmerl_xpath:string("../level", Node,
-				Node#xmlElement.parents, XML, []))),
+	  hd(xpath("../isis:level", Node,
+		   Node#xmlElement.parents, XML, []))),
     case Level of
 	"level-1" ->
 	    level_1;
