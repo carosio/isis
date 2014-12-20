@@ -42,6 +42,7 @@
 	 links/1,
 	 clear_db/1,
 	 set_system_id/2,
+	 count_leading_ones/1,
 	 %% Feed Details
 	 subscribe/3, subscribe/2, unsubscribe/2, initial_state/3]).
 

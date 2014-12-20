@@ -27,6 +27,7 @@
 -behaviour(gen_server).
 
 -include_lib("xmerl/include/xmerl.hrl").
+-include("isis_protocol.hrl").
 
 %% API
 -export([start_link/0, get_state/0]).
@@ -239,24 +240,25 @@ process_state(State) ->
 	attributes = [MainNamespace | Namespaces],
 	content = [
 	    #xmlElement{name = 'routing-instance', content = [
-		#xmlElement{name = 'name', content = [ #xmlText{value = "default"} ]},
-		#xmlElement{name = 'id', content = [ #xmlText{value = "1"} ]},
-		#xmlElement{name = 'type', content = [ #xmlText{value = "rt:default-routing-instance"} ]},
+		leaf(name, "default"),
+		leaf(id, 1),
+		leaf(type, "rt:default-routing-instance"),
 		#xmlElement{name = 'default-ribs', content = [
 		    #xmlElement{name = 'default-rib', content = [
-		        #xmlElement{name = 'address-family', content = [ #xmlText{value = "ipv6"} ]},
-		        #xmlElement{name = 'rib-name', content = [ #xmlText{value = "main-ipv6"} ]}
+			leaf('address-family', "ipv6"),
+			leaf('rib-name', "main-ipv6")
 		    ]},
 		    #xmlElement{name = 'default-rib', content = [
-		        #xmlElement{name = 'address-family', content = [ #xmlText{value = "ipv4"} ]},
-		        #xmlElement{name = 'rib-name', content = [ #xmlText{value = "main-ipv4"} ]}
+			leaf('address-family', "ipv4"),
+			leaf('rib-name', "main-ipv4")
 		    ]}
 		]},
 		#xmlElement{name = 'interfaces', content = get_interface_state(State)},
 		#xmlElement{name = 'routing-protocols', content = [
 		    #xmlElement{name = 'routing-protocol', content = [
-			#xmlElement{name = 'type', content = [ #xmlText{value = "isis:isis"} ]},
-			#xmlElement{name = 'name', content = [ #xmlText{value = "AutoISIS"} ]},
+			leaf(type, "isis:isis"),
+			leaf(name, "AutoISIS"),
+			leaf('route-preference', 100),
 			#xmlElement{name = 'isis', content = get_isis_state(State), attributes = [
 			    #xmlAttribute{name = 'xmlns', value = get_namespace_uri("isis")}
 			]}
@@ -265,7 +267,7 @@ process_state(State) ->
 	    ]}
 	]
     },
-    {ok, lists:flatten(xmerl:export([Root], xmerl_xml))}.
+    {ok, xmerl:export([Root], xmerl_xml)}.
 
 %% This function should return [#xmlElement] with the existing interfaces
 %% in the current routing-instance.
@@ -275,7 +277,7 @@ get_interface_state(_State) ->
 
 %% This function should return [#xmlElement] for the subtree
 %% routing-state/routing-instance/routing-protocols/isis subtree
-get_isis_state(State) ->
+get_isis_state(_State) ->
     [
 	#xmlElement{name = 'system-counters', content = [
 	]},
@@ -291,20 +293,331 @@ get_isis_state(State) ->
 	]},
 	#xmlElement{name = 'lsp-log', content = [
 	]},
-	#xmlElement{name = 'database', content = [
-	]},
-	#xmlElement{name = 'hostnames', content = get_isis_hostnames_state()}
+	#xmlElement{name = 'database', content = get_database_state()},
+	#xmlElement{name = 'hostnames', content = get_hostnames_state()}
     ].
+
+%% Helper that generates a text element
+leaf(Name, Content) when is_integer(Content) ->
+    leaf(Name, integer_to_list(Content));
+leaf(Name, Content) ->
+    #xmlElement{name = Name, content = [
+        #xmlText{value = lists:flatten(Content)}
+    ]}.
+
+%% Generates an XML element like <level>1</level> from a given atom
+%% which should either be level_1 or level_2.
+level_element(level_1) ->
+    leaf(level, 1);
+level_element(level_2) ->
+    leaf(level, 2).
+
+id_to_text(<<ID:6/binary>>) ->
+    io_lib:format("~4.16.0B.~4.16.0B.~4.16.0B", [X || <<X:16>> <= ID]);
+id_to_text(<<Head:6/binary, PN:8>>) ->
+    io_lib:format("~s.~2.16.0B", [id_to_text(Head), PN]);
+id_to_text(<<Head:7/binary, Frag:8>>) ->
+    io_lib:format("~s-~2.16.0B", [id_to_text(Head), Frag]).
+
+fmap(Function, List) ->
+    Intermediate = lists:map(Function, List),
+    lists:filter(fun (undefined) -> false;
+                     (_) -> true
+                 end, Intermediate).
+
+%% Helper to generate state that is a list with one entry per level
+perlevel_state(LevelStateFun) ->
+    fmap(LevelStateFun, [level_1,level_2]).
+
+%% Formats current database to [#xmlElement] for subtree
+%% routing-state/routing-instance/routing-protocols/isis/database
+get_database_state() ->
+    perlevel_state(fun get_level_database_state/1).
+
+get_level_database_state(Level) ->
+    LSPs = ets:tab2list(isis_lspdb:get_db(Level)),
+    LSPElements = lists:map(fun format_lsp/1, LSPs),
+    #xmlElement{
+	name = 'level-db',
+	content = [ level_element(Level) | LSPElements ]
+    }.
+
+format_lsp(LSP) ->
+    LSPID = id_to_text(LSP#isis_lsp.lsp_id),
+    Now = isis_protocol:current_timestamp(),
+    RL = LSP#isis_lsp.remaining_lifetime - (Now - LSP#isis_lsp.last_update),
+    %% TODO: Flags
+
+    #xmlElement{
+	name = 'lsp',
+	content = [
+	    leaf('lsp-id', LSPID),
+	    leaf('checksum', LSP#isis_lsp.checksum),
+	    leaf('remaining-lifetime', RL),
+	    leaf('sequence', LSP#isis_lsp.sequence_number)
+	] ++ format_tlvs(LSP#isis_lsp.tlv)
+    }.
+
+format_metric({Name, #isis_metric_information{
+			    metric_supported = Supported,
+			    metric = Metric 
+		     }}) ->
+    case Supported of
+	false -> undefined;
+	    _ -> #xmlElement{
+		     name = Name,
+		     content = [
+			 leaf(metric, Metric),
+			 leaf(supported, "true")
+		 ]}
+    end.
+
+format_is_reach(#isis_tlv_is_reachability_detail{
+			neighbor = NID,
+			default = DM
+		} = Neighbor) ->
+    External = case DM#isis_metric_information.metric_type of
+	internal -> "true";
+	       _ -> "false"
+    end,
+    #xmlElement{
+	name = 'neighbor',
+	content = [
+	    leaf('neighbor-id', id_to_text(NID)),
+	    leaf('i-e', External),
+	    leaf('default-metric', DM#isis_metric_information.metric)
+	] ++ fmap(fun format_metric/1, [
+			{'delay-metric', Neighbor#isis_tlv_is_reachability_detail.delay},
+			{'expense-metric', Neighbor#isis_tlv_is_reachability_detail.expense},
+			{'error-metric', Neighbor#isis_tlv_is_reachability_detail.error}
+	])
+    }.
+
+grouping_prefix_ipv4_std(Addr, Mask, DefaultM, DelayM, ExpenseM, ErrorM) ->
+    External = case DefaultM#isis_metric_information.metric_type of
+	internal -> "true";
+	       _ -> "false"
+    end,
+    [
+	%% TODO: up/down bit
+	leaf('i-e', External),
+	leaf('ip-prefix', isis_system:address_to_string(ipv4, Addr)),
+	leaf('prefix-len', isis_lspdb:count_leading_ones(Mask)),
+	leaf('default-metric', DefaultM#isis_metric_information.metric)
+    ] ++ fmap(fun format_metric/1, [
+		{'delay-metric', DelayM},
+		{'expense-metric', ExpenseM},
+		{'error-metric', ErrorM}
+    ]).
+
+format_ip_internal_reach(#isis_tlv_ip_internal_reachability_detail{
+				ip_address = Addr,
+				subnet_mask = Mask,
+				default = DefaultM,
+				delay = DelayM,
+				expense = ExpenseM,
+				error = ErrorM
+			 }) ->
+    #xmlElement{
+	name = 'prefixes', %% XXX: Maybe model should call this just 'prefix'?
+	content = grouping_prefix_ipv4_std(Addr, Mask, DefaultM,
+					   DelayM, ExpenseM, ErrorM)
+    }.
+
+format_ip_extended_reach(#isis_tlv_extended_ip_reachability_detail{
+				prefix = Prefix,
+				mask_len = PrefixLen,
+				metric = Metric,
+				up = UpDown,
+				sub_tlv = _SubTLVs
+			 }) ->
+    UpDownText = case UpDown of
+	true -> "false";
+	_    -> "true"
+    end,
+    #xmlElement{
+	name = 'prefixes',
+	content = [
+	    leaf('ip-prefix', isis_system:address_to_string(ipv4, Prefix)),
+	    leaf('up-down', UpDownText),
+	    leaf('prefix-len', PrefixLen),
+	    leaf('metric', Metric)
+	    %% TODO: Process SubTLVs for Tags
+	]
+    }.
+
+format_ipv6_reach(#isis_tlv_ipv6_reachability_detail{
+			metric = Metric,
+			up = UpDown,
+			external = _External,
+			mask_len = PrefixLen,
+			prefix = Prefix,
+			sub_tlv = _SubTLVs
+		 }) ->
+    UpDownText = case UpDown of
+	true -> "false";
+	_    -> "true"
+    end,
+    #xmlElement{
+	name = 'prefixes',
+	content = [
+	    leaf('ip-prefix', isis_system:address_to_string(ipv6, Prefix)),
+	    leaf('up-down', UpDownText),
+	    leaf('prefix-len', PrefixLen),
+	    leaf('metric', Metric)
+	    %% TODO: Process SubTLVs for Tags
+	]
+    }.
+
+-record (format_tlv_state, {
+	    is_neighbors = [],
+	    authentication = undefined,
+	    extended_is_neighbors = [],
+	    ipv4_internal_reach = [],
+	    protocols_supported = [],
+	    ipv4_external_reach = [],
+	    ipv4_addresses = [],
+	    ipv4_te_routerid = undefined,
+	    ipv4_extended_reach = [],
+	    dynamic_hostname = undefined,
+	    ipv6_te_routerid = undefined,
+	    ipv6_addresses = [],
+	    ipv6_reach = []
+}).
+
+list_container(_Name, []) ->
+    undefined;
+list_container(Name, Content) ->
+    #xmlElement{ name = Name, content = Content }.
+
+format_tlvs(TLVs) ->
+    Acc = lists:foldl(fun format_tlv/2, #format_tlv_state{}, TLVs),
+    Elements = [
+	list_container('is-neighbor', Acc#format_tlv_state.is_neighbors),
+	Acc#format_tlv_state.authentication,
+	list_container('extended-is-neighbor', Acc#format_tlv_state.extended_is_neighbors),
+	list_container('ipv4-internal-reachability', Acc#format_tlv_state.ipv4_internal_reach)
+    ] ++ Acc#format_tlv_state.protocols_supported ++ [
+	list_container('ipv4-external-reachability', Acc#format_tlv_state.ipv4_external_reach)
+    ] ++ Acc#format_tlv_state.ipv4_addresses ++ [
+	Acc#format_tlv_state.ipv4_te_routerid,
+	list_container('extended-ipv4-reachability', Acc#format_tlv_state.ipv4_extended_reach),
+	Acc#format_tlv_state.dynamic_hostname,
+	Acc#format_tlv_state.ipv6_te_routerid
+    ] ++ Acc#format_tlv_state.ipv6_addresses ++ [
+	list_container('ipv6-reachability', Acc#format_tlv_state.ipv6_reach)
+    ],
+    lists:filter(fun(undefined) -> false;
+                    (_)         -> true
+                 end, Elements).
+
+format_tlv(#isis_tlv_is_reachability{is_reachability = R},
+	   #format_tlv_state{is_neighbors = Out} = Acc) ->
+    Acc#format_tlv_state{
+	is_neighbors = Out ++ lists:map(fun format_is_reach/1, R)
+    };
+format_tlv(#isis_tlv_authentication{type = Type, signature = Signature},
+	   #format_tlv_state{authentication = undefined} = Acc) ->
+    {OutputType, OutputKey} = case Type of
+	text -> { "plaintext", crypto:hash(md5,Signature) };
+	md5 -> { "message-digest", Signature};
+	_ -> { "none", Signature } %% XXX: Maybe allow for something better in the model?
+    end,
+    Acc#format_tlv_state{
+	authentication = #xmlElement{name = 'authentication', content = [
+	    leaf('authentication-type', OutputType),
+	    leaf('authentication-key', OutputKey)
+        ]}
+    };
+format_tlv(#isis_tlv_authentication{} = _, Acc) ->
+    lager:warning("Netconf: multiple authentication TLVs in LSP"),
+    Acc;
+format_tlv(#isis_tlv_extended_reachability{reachability = R},
+	   #format_tlv_state{extended_is_neighbors = Out} = Acc) ->
+    FormatExtReach = fun(#isis_tlv_extended_reachability_detail{
+			      neighbor = NID,
+			      metric = Metric
+			 }) ->
+	#xmlElement{
+	    name = 'neighbor',
+	    content = [
+		leaf('neighbor-id', id_to_text(NID)),
+		leaf('metric', Metric)
+	    ]
+	}
+    end,
+    Acc#format_tlv_state{
+	extended_is_neighbors = Out ++ lists:map(FormatExtReach, R)
+    };
+format_tlv(#isis_tlv_ip_internal_reachability{ip_reachability = R},
+	   #format_tlv_state{ipv4_internal_reach = Out} = Acc) ->
+    Acc#format_tlv_state{
+	ipv4_internal_reach = Out ++ lists:map(fun format_ip_internal_reach/1, R)
+    };
+format_tlv(#isis_tlv_protocols_supported{protocols = Protocols},
+	   #format_tlv_state{protocols_supported = Out} = Acc) ->
+    ProtoLeaf = fun (Protocol) ->
+	leaf('protocol-supported', isis_enum:to_int(protocols, Protocol))
+    end,
+    Acc#format_tlv_state{
+	protocols_supported = Out ++ lists:map(ProtoLeaf, Protocols)
+    };
+%format_tlv(#isis_tlv_ip_external_reach) %% TODO: This is required by the model, bleh.
+format_tlv(#isis_tlv_ip_interface_address{addresses = Addresses},
+	   #format_tlv_state{ipv4_addresses = Out} = Acc) ->
+    AddrLeaf = fun(Address) ->
+	leaf('ipv4-addresses', isis_system:address_to_string(ipv4, Address))
+    end,
+    Acc#format_tlv_state{
+	ipv4_addresses = Out ++ lists:map(AddrLeaf, Addresses)
+    };
+format_tlv(#isis_tlv_te_router_id{router_id = ID},
+	   #format_tlv_state{ipv4_te_routerid = undefined} = Acc) ->
+    Acc#format_tlv_state{
+	ipv4_te_routerid = leaf('ipv4-te-routerid',
+				isis_system:address_to_string(ipv4, ID))
+    };
+format_tlv(#isis_tlv_te_router_id{} = _, Acc) ->
+    lager:warning("Netconf: multiple router ids in LSP"),
+    Acc;
+format_tlv(#isis_tlv_extended_ip_reachability{reachability = R},
+	   #format_tlv_state{ipv4_extended_reach = Out} = Acc) ->
+    Acc#format_tlv_state{
+	ipv4_extended_reach = Out ++ lists:map(fun format_ip_extended_reach/1, R)
+    };
+format_tlv(#isis_tlv_dynamic_hostname{hostname = Hostname},
+	   #format_tlv_state{dynamic_hostname = undefined} = Acc) ->
+    Acc#format_tlv_state{
+        dynamic_hostname = leaf('dynamic-hostname', Hostname)
+    };
+format_tlv(#isis_tlv_dynamic_hostname{} = _, Acc) ->
+    lager:warning("Netconf: multiple hostnames in LSP"),
+    Acc;
+%format_tlv(#isis_tlv_ipv6_te_router_id) %% TODO: This is required by the model
+format_tlv(#isis_tlv_ipv6_interface_address{addresses = Addresses},
+	   #format_tlv_state{ipv6_addresses = Out} = Acc) ->
+    AddrLeaf = fun(Address) ->
+	leaf('ipv6-addresses', isis_system:address_to_string(ipv6, Address))
+    end,
+    Acc#format_tlv_state{
+	ipv6_addresses = Out ++ lists:map(AddrLeaf, Addresses)
+    };
+format_tlv(#isis_tlv_ipv6_reachability{reachability = R},
+	   #format_tlv_state{ipv6_reach = Out} = Acc) ->
+    Acc#format_tlv_state{
+	ipv6_reach = Out ++ lists:map(fun format_ipv6_reach/1, R)
+    };
+format_tlv(Other, Acc) ->
+    lager:debug("Netconf: unsupported TLV: ~p", [Other]),
+    Acc.
 
 %% This function should return [#xmlElement] for the subtree
 %% routing-state/routing-instance/routing-protocols/isis/hostnames
-get_isis_hostnames_state() ->
-    HostNameGen = fun({SystemId, Name}) ->
-	<<A:16, B:16, C:16>> = SystemId,
-	FormattedId = lists:flatten(io_lib:format("~4.16.0B.~4.16.0B.~4.16.0B.00", [A,B,C])),
+get_hostnames_state() ->
+    HostNameGen = fun({SystemID, Name}) ->
 	#xmlElement{name = 'hostname', content = [
-	    #xmlElement{name = 'system-id', content = [ #xmlText{value = FormattedId} ]},
-	    #xmlElement{name = 'hostname', content = [ #xmlText{value = Name} ]}
+	    leaf('system-id', id_to_text(SystemID) ++ ".00"),
+	    leaf('hostname', Name)
 	]}
     end,
     lists:map(HostNameGen, isis_system:all_names()).
