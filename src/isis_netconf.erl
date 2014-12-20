@@ -28,6 +28,7 @@
 
 -include_lib("xmerl/include/xmerl.hrl").
 -include("isis_protocol.hrl").
+-include("isis_system.hrl").
 
 %% API
 -export([start_link/0, get_state/0]).
@@ -253,7 +254,7 @@ process_state(State) ->
 			leaf('rib-name', "main-ipv4")
 		    ]}
 		]},
-		#xmlElement{name = 'interfaces', content = get_interface_state(State)},
+		#xmlElement{name = 'interfaces', content = []}, %% TODO: Figure out which program populates this
 		#xmlElement{name = 'routing-protocols', content = [
 		    #xmlElement{name = 'routing-protocol', content = [
 			leaf(type, "isis:isis"),
@@ -269,12 +270,6 @@ process_state(State) ->
     },
     {ok, xmerl:export([Root], xmerl_xml)}.
 
-%% This function should return [#xmlElement] with the existing interfaces
-%% in the current routing-instance.
-%% That might be something we don't want to do in IS-IS, let's see whether we can
-get_interface_state(_State) ->
-    [].
-
 %% This function should return [#xmlElement] for the subtree
 %% routing-state/routing-instance/routing-protocols/isis subtree
 get_isis_state(_State) ->
@@ -285,8 +280,7 @@ get_isis_state(_State) ->
 	]},
 	#xmlElement{name = 'packet-counters', content = [
 	]},
-	#xmlElement{name = 'interfaces', content = [
-	]},
+	#xmlElement{name = 'interfaces', content = get_interface_state()},
 	#xmlElement{name = 'adjacencies', content = [
 	]},
 	#xmlElement{name = 'spf-log', content = [
@@ -328,6 +322,60 @@ fmap(Function, List) ->
 %% Helper to generate state that is a list with one entry per level
 perlevel_state(LevelStateFun) ->
     fmap(LevelStateFun, [level_1,level_2]).
+
+format_interface_state(#isis_interface{name = Name, pid = Pid})
+	when is_pid(Pid) ->
+    %% XXX: The current model only accommodates a single Circuit-ID.
+    %% "Merging" them is obviously not optimal.
+    L1CircuitId = isis_interface:get_state(Pid, level_1, pseudonode),
+    L2CircuitId = isis_interface:get_state(Pid, level_2, pseudonode),
+    CircuitId = if
+	is_integer(L1CircuitId), L1CircuitId =/= 0 ->
+	    L1CircuitId;
+	is_integer(L2CircuitId), L2CircuitId =/= 0 ->
+	    L2CircuitId;
+	true ->
+	    0
+    end,
+    L1Pid = isis_interface:get_level_pid(Pid, level_1),
+    L2Pid = isis_interface:get_level_pid(Pid, level_2),
+    Level = if
+	is_pid(L1Pid), is_pid(L2Pid) ->
+	    "level-all";
+	is_pid(L1Pid) ->
+	    "level-1";
+	is_pid(L2Pid) ->
+	    "level-2";
+	true ->
+	    undefined
+    end,
+    case Level of
+	undefined ->
+	    undefined;
+	_ ->
+	    #xmlElement{
+		name = 'interfaces',
+		content = [
+		    leaf('interface', Name),
+		    leaf('circuit-id', CircuitId),
+		    %% TODO: I could not figure out how to get admin-state and oper-state
+		    %% from here.
+		    %% zclient puts something into #isis_interface.flags while isis_netlink
+		    %% seems to set #isis_interface.enabled
+		    leaf('interface-type', "broadcast"), %% We don't seem to support anything else?
+		    leaf('level', Level)
+		    %% Passive and Three-Way-Handshake don't seem to be supported
+		]
+	    }
+   end;
+format_interface_state(#isis_interface{} = _) ->
+    undefined.
+
+%% Formats current IS-IS interfaces to [#xmlElement] for subtree
+%% routing-state/routing-instance/routing-protocols/isis/interfaces
+get_interface_state() ->
+    fmap(fun format_interface_state/1,
+	 isis_system:list_interfaces()).
 
 %% Formats current database to [#xmlElement] for subtree
 %% routing-state/routing-instance/routing-protocols/isis/database
@@ -497,7 +545,6 @@ ipv6_reach_subtlv(#isis_subtlv_eir_admintag64{tag = Tag},
     Acc#ipv6_reach_subtlv_state{
 	tag64 = Out ++ leaf('tag64', Tag)
     };
-%% XXX: The model has to be extended to support this field
 ipv6_reach_subtlv(#isis_subtlv_srcdst{prefix = Prefix, prefix_length = PrefixLength},
 		  #ipv6_reach_subtlv_state{source_prefix = undefined} = Acc) ->
     Acc#ipv6_reach_subtlv_state{
