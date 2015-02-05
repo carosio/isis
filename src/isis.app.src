@@ -9,7 +9,8 @@
 		  crypto,
 		  procket,
 		  lager,
-		  gen_netlink
+		  gen_netlink,
+		  xmerl
 		  ]},
   {mod, { isis_app, []}},
   {env, []}

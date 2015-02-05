@@ -172,6 +172,8 @@ handle_call({get_state, csnp_interval}, _From, State) ->
 handle_call({get_state, authentication}, _From, State) ->
     {reply, {State#state.authentication_type,
 	     State#state.authentication_key}, State};
+handle_call({get_state, pseudonode}, _From, State) ->
+    {reply, State#state.pseudonode, State};
 
 handle_call({clear_neighbors, all}, _From, State) ->
     dict:map(fun(_, {_, Pid}) ->

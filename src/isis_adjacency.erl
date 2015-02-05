@@ -30,7 +30,7 @@
 -include("isis_protocol.hrl").
 
 %% API
--export([start_link/1]).
+-export([start_link/1, get_state/1, get_state/2]).
 
 %% gen_fsm callbacks
 -export([init/1,
@@ -46,6 +46,7 @@
 	  neighbor_id,   %% Neighbor ID
 	  lan_id,        %% Who the negihbor believes is DIS
 	  priority,      %% Priority it advertises
+	  is_type,       %% Circuit Type as transmitted by the neighbor
 	  metric,        %% Our metric for this interface
 	  ip_addresses = [],  %% IP address of the neighbor
           ipv6_addresses = [], %% IPv6 address of the neighbor
@@ -53,7 +54,8 @@
 	  interface_name,%% Name of our interface
 	  level_pid,     %% PID handling the level
 	  snpa,          %% Our SNPA
-	  timer          %% Hold timer for this adjacency
+	  timer,         %% Hold timer for this adjacency
+	  last_uptime    %% Time when we last changed to up
 	 }).
 
 %%%===================================================================
@@ -72,6 +74,18 @@
 start_link(Args) ->
     %% gen_fsm:start_link(?MODULE, Args, []).
     gen_fsm:start(?MODULE, Args, []).
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Queries the adjacency fsm for specificic status information
+%% @end
+%%--------------------------------------------------------------------
+get_state(Pid) ->
+    {_, _, _, [_, _, _, _, Misc]} = sys:get_status(Pid),
+    proplists:get_value("StateName", proplists:get_value(data, Misc)).
+
+get_state(Pid, Field) ->
+    gen_fsm:sync_send_all_state_event(Pid, {get, Field}).
 
 %%%===================================================================
 %%% gen_fsm callbacks
@@ -125,7 +139,9 @@ init({iih, IIH}, State) ->
 		NS = State#state{
 		       neighbor_id = IIH#isis_iih.source_id,
 		       lan_id = IIH#isis_iih.dis,
-		       priority = IIH#isis_iih.priority},
+		       priority = IIH#isis_iih.priority,
+		       is_type = IIH#isis_iih.circuit_type,
+		       last_uptime = isis_system:get_time()},
 		update_adjacency(up, NS),
 		{up, NS};
 	    _ -> {init, State}
@@ -211,6 +227,9 @@ handle_event(_Event, StateName, State) ->
 %%                   {stop, Reason, Reply, NewState}
 %% @end
 %%--------------------------------------------------------------------
+handle_sync_event({get, Field}, _From, StateName, State) ->
+    Reply = get_state_reply(Field, State),
+    {reply, Reply, StateName, State};
 handle_sync_event(_Event, _From, StateName, State) ->
     Reply = ok,
     {reply, Reply, StateName, State}.
@@ -281,6 +300,17 @@ parse_args([{metric, M} | T], State) ->
     parse_args(T, State#state{metric = M});
 parse_args([], State) ->
     State.
+
+get_state_reply(priority, #state{priority = P}) ->
+    P;
+get_state_reply(is_type, #state{is_type = T}) ->
+    T;
+get_state_reply(timer, #state{timer = Timer}) ->
+    erlang:read_timer(Timer);
+get_state_reply(last_uptime, #state{last_uptime = Last}) ->
+    Last;
+get_state_reply(_,_) ->
+    unknown_field.
 
 start_timer(State) ->
     cancel_timer(State),

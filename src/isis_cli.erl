@@ -78,7 +78,13 @@ show_database_detail(Level) ->
     do_show_database_detail(Level).
 
 show_routes(Level) ->
-    {_Time, _Level, SPF, _Reason} = spf_summary:last_run(Level),
+    case spf_summary:last_run(Level) of
+	{_Time, _Level, SPF, _Reason, _ExtInfo} ->
+	    show_routes(Level, SPF);
+	_ ->
+	    ok
+    end.
+show_routes(Level, SPF) ->
     Interfaces = 
 	dict:from_list(
 	  lists:map(fun(#isis_interface{name = Name, ifindex = IFIndex}) -> {IFIndex, Name} end,
@@ -98,6 +104,7 @@ show_routes(Level) ->
 			{ok, Value} -> Value;
 			_ -> "unknown"
 		    end,
+		%% TODO: This fails as Nodes is a list of a list of nodes - maybe a multipath related problem?
 		NodesStrList = lists:map(fun(N) -> isis_system:lookup_name(N) end, Nodes),
 		NodesStr = string:join(NodesStrList, ", "),
 		io:format("~s/~p via ~s (~s) path: ~s~n",

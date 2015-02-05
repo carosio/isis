@@ -34,6 +34,7 @@
 	 subscribe/1, unsubscribe/1,
 	 notify_subscribers/1,
 	 last_run/1,
+	 last_runs/1,
 	 resend_last/0]).
 
 %% gen_server callbacks
@@ -44,8 +45,8 @@
 
 -record(state, {
 	  subscribers,
-	  last_run_level_1 = undef,
-	  last_run_level_2 = undef
+	  last_runs_level_1 = [],
+	  last_runs_level_2 = []
 	 }).
 
 %%%===================================================================
@@ -62,6 +63,9 @@ notify_subscribers(Summary) ->
 
 last_run(Level) ->
     gen_server:call(?MODULE, {last_run, Level}).
+
+last_runs(Level) ->
+    gen_server:call(?MODULE, {last_runs, Level}).
 
 resend_last() ->
     gen_server:call(?MODULE, {resend_last}).
@@ -110,13 +114,13 @@ init([]) ->
 %% @end
 %%--------------------------------------------------------------------
 handle_call({subscribe, Pid}, _From, #state{subscribers = Subscribers,
-					    last_run_level_1 = LR} = State) ->
+					    last_runs_level_1 = LR} = State) ->
     %% Monitor the subscribing process, so we know if they die
     erlang:monitor(process, Pid),
     NewDict = dict:store(Pid, [], Subscribers),
     case LR of
-	undef -> ok;
-	M -> Pid ! {spf_summary, M}
+	[] -> ok;
+	[M|_] -> Pid ! {spf_summary, M}
     end,
     {reply, ok, State#state{subscribers = NewDict}};
 
@@ -125,18 +129,25 @@ handle_call({unsubscribe, Pid}, _From, State) ->
     {reply, ok, NewState};
 
 handle_call({notify, Summary}, _From, #state{subscribers = Subscribers} = State) ->
-    notify_subscribers(Summary, Subscribers),
+    notify_subscribers(Summary, Subscribers, true),
     {reply, ok, State};
 
-handle_call({last_run, level_1}, _From, #state{last_run_level_1 = LR} = State) ->
+handle_call({last_run, level_1}, _From, #state{last_runs_level_1 = [LR|_]} = State) ->
     {reply, LR, State};
-handle_call({last_run, level_2}, _From, #state{last_run_level_2 = LR} = State) ->
+handle_call({last_run, level_2}, _From, #state{last_runs_level_2 = [LR|_]} = State) ->
     {reply, LR, State};
 handle_call({last_run, _}, _From, State) ->
     {reply, not_run, State};
 
-handle_call({resend_last}, _From, #state{last_run_level_1 = LR} = State) ->
-    notify_subscribers(LR, State#state.subscribers),
+handle_call({last_runs, level_1}, _From, #state{last_runs_level_1 = LR} = State) ->
+    {reply, LR, State};
+handle_call({last_runs, level_2}, _From, #state{last_runs_level_2 = LR} = State) ->
+    {reply, LR, State};
+
+handle_call({resend_last}, _From, #state{last_runs_level_1 = [LR|_]} = State) ->
+    notify_subscribers(LR, State#state.subscribers, false),
+    {reply, ok, State};
+handle_call({resend_last}, _From, State) ->
     {reply, ok, State};
 
 handle_call(_Request, _From, State) ->
@@ -153,10 +164,14 @@ handle_call(_Request, _From, State) ->
 %%                                  {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_cast({last_run, {_, level_1, _, _} = Message}, State) ->
-    {noreply, State#state{last_run_level_1 = Message}};
-handle_cast({last_run, {_, level_2, _, _} = Message}, State) ->
-    {noreply, State#state{last_run_level_2 = Message}};
+handle_cast({last_run, {_, level_1, _, _, _} = Message},
+	    #state{last_runs_level_1 = LR} = State) ->
+    NewLR = lists:sublist([Message|LR], 10),
+    {noreply, State#state{last_runs_level_1 = NewLR}};
+handle_cast({last_run, {_, level_2, _, _, _} = Message},
+	    #state{last_runs_level_2 = LR} = State) ->
+    NewLR = lists:sublist([Message|LR], 10),
+    {noreply, State#state{last_runs_level_2 = NewLR}};
 
 handle_cast(_Msg, State) ->
     {noreply, State}.
@@ -211,10 +226,13 @@ remove_subscriber(Pid, #state{subscribers = Subscribers} = State) ->
 	end,
     State#state{subscribers = NewSubscribers}.
 
-notify_subscribers(Message, Subscribers) ->
+notify_subscribers(Message, Subscribers, Store) ->
     Pids = dict:fetch_keys(Subscribers),
     lists:foreach(
       fun(Pid) ->
 	      Pid ! {spf_summary, Message} end, Pids),
-    gen_server:cast(?MODULE, {last_run, Message}),
+    case Store of
+       true -> gen_server:cast(?MODULE, {last_run, Message});
+       _ -> ok
+    end,
     ok.

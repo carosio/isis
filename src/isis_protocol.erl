@@ -234,7 +234,7 @@ decode_tlv_extended_ip_reachability(
 		{ok, STLVs} = {decode_tlvs(SubTLVb, subtlv_eir, fun decode_subtlv_eir/3, []), Rest3},
 		{STLVs, Rest3}
 	end,
-    UpA = isis_enum:to_atom(boolean, Up),
+    UpA = isis_enum:to_atom(boolean, 1 - Up),
     EIR = #isis_tlv_extended_ip_reachability_detail{
 	     prefix = Prefix,
 	     mask_len = Mask_Len,
@@ -261,7 +261,7 @@ decode_tlv_ipv6_reachability(<<Metric:32, Up:1, X:1, S:1,
 	end,
     decode_tlv_ipv6_reachability(Remainder,
 				 Acc ++ [#isis_tlv_ipv6_reachability_detail{metric = Metric,
-									    up = isis_enum:to_atom(boolean, Up),
+									    up = isis_enum:to_atom(boolean, 1 - Up),
 									    external = isis_enum:to_atom(boolean, X),
 									    mask_len = PLen,
 									    prefix = Prefix,
@@ -517,7 +517,7 @@ encode_tlv_extended_ip_reachability(
     PLenBytes = erlang:trunc((Mask_Len + 7) / 8),
     PLenBits = PLenBytes * 8,
     Calc_Prefix = Prefix bsr (32 - PLenBits),
-    Up = isis_enum:to_int(boolean, UpA),
+    Up = 1 - isis_enum:to_int(boolean, UpA),
     [<<Metric:32, Up:1, Present:1, Mask_Len:6,
       Calc_Prefix:PLenBits, SubTLV_LenB/binary>> | SubTLVB].
 
@@ -526,7 +526,7 @@ encode_tlv_ipv6_reachability_detail(
      metric = Metric, up = Up, external = External,
      mask_len = Mask_Len, prefix = Prefix,
      sub_tlv = Sub_TLVs}) ->
-    U = isis_enum:to_int(boolean, Up),
+    U = 1 - isis_enum:to_int(boolean, Up),
     E = isis_enum:to_int(boolean, External),
     PBytes = erlang:trunc((Mask_Len + 7) / 8),
     {P, SLen, SBin}

@@ -94,6 +94,8 @@ init([]) ->
 	    Restart, Shutdown, Type, [isis_lspdb]},
     L2DB = {level2_lspdb, {isis_lspdb, start_link, [[{table, level_2}]]},
 	    Restart, Shutdown, Type, [isis_lspdb]},
+    DBLog = {lspdb_log, {isis_lspdb_log, start_link, []},
+	       Restart, Shutdown, Type, [isis_lspdb_log]},
     StartupParams =
 	case application:get_env(isis, startup) of
 	    undefined -> [];
@@ -105,12 +107,17 @@ init([]) ->
 	       permanent, 10000, worker, []},
     ISISGenInfo = {isis_geninfo, {isis_geninfo, start_link, []},
 		   permanent, 10000, worker, []},
+    ISISConfig = {isis_netconf, {isis_netconf, start_link, []},
+		  permanent, 1, worker, []},
     %% Demo = {demo, {demo, start_link, []},
     %%  	    permanent, 1000, worker, []},
     Webserver = {ybed_sup, {ybed_sup, start_link, []},
       		 permanent, 10000, supervisor, []},
-    {ok, {SupFlags, [SPFSummary, RibChild, L1DB, L2DB, ISIS, ISISRib, ISISGenInfo
-		    , Webserver %% , Demo
+
+    timer:apply_after(10000, application, start, [hostinfo]),
+
+    {ok, {SupFlags, [SPFSummary, RibChild, L1DB, L2DB, DBLog, ISIS, ISISRib, ISISGenInfo
+		    , ISISConfig, Webserver %% , Demo
 		    ]}}.
 
 %%%===================================================================

@@ -30,6 +30,7 @@
 
 -include("isis_system.hrl").
 -include("isis_protocol.hrl").
+-include("spf_summary.hrl").
 -include_lib("stdlib/include/ms_transform.hrl").
 
 %% API
@@ -42,6 +43,7 @@
 	 links/1,
 	 clear_db/1,
 	 set_system_id/2,
+	 count_leading_ones/1,
 	 %% Feed Details
 	 subscribe/3, subscribe/2, unsubscribe/2, initial_state/3]).
 
@@ -58,6 +60,9 @@
 	        expiry_timer = undef,  %% We expire LSPs based on this timer
 		spf_timer = undef, %% Dijkestra timer
 		spf_reason = "",
+		spf_delayed,	  %% Delay used for SPF miliseconds
+		spf_scheduled,    %% Time when SPF was last scheduled, erlang timestamp
+		spf_id,           %% Id of SPF; level 1 uses even and level 2 uses odd
 		hold_timer,        %% SPF Hold timer
 		subscribers
 	       }).
@@ -300,8 +305,13 @@ init([{table, Table_ID}]) ->
     DB = ets:new(Table_ID, [ordered_set, {keypos, #isis_lsp.lsp_id}]),
     NameDB = dict:new(),
     Timer = start_timer(expiry, #state{}),
+    InitialSPF_ID = case Table_ID of
+	level_1 -> 0;
+	level_2 -> 1
+    end,
     {ok, #state{db = DB, name_db = NameDB, level = Table_ID, 
 		expiry_timer = Timer, spf_timer = undef,
+		spf_id = InitialSPF_ID,
 		subscribers = dict:new()}}.
 
 %%--------------------------------------------------------------------
@@ -405,10 +415,23 @@ handle_info({timeout, _Ref, {run_spf, _Type}}, State) ->
     %% Ignoring type for now...
     erlang:cancel_timer(State#state.spf_timer),
     %% Dijkestra...
-    {Time, SPF} = timer:tc(fun() -> do_spf(State#state.system_id, State) end),
+    SPFID = State#state.spf_id,
+    StartTime = isis_system:get_time(),
+    SPF = do_spf(State#state.system_id, State),
+    EndTime = isis_system:get_time(),
+    Time = timer:now_diff(EndTime, StartTime),
+    ExtInfo = #spf_ext_info{
+	id = SPFID,
+	spf_type = full,
+	delayed = State#state.spf_delayed,
+	scheduled = State#state.spf_scheduled,
+	started = StartTime,
+	ended = EndTime,
+	trigger_lsp = [] %% TODO: This should get populated
+    },
     isis_system:process_spf({State#state.level, Time, SPF,
-			     State#state.spf_reason}),
-    {noreply, State#state{spf_timer = undef, spf_reason = ""}};
+			     State#state.spf_reason, ExtInfo}),
+    {noreply, State#state{spf_timer = undef, spf_reason = "", spf_id = SPFID + 2}};
 handle_info(_Info, State) ->
     {noreply, State}.
 
@@ -598,10 +621,17 @@ spf_type_required([OldLSP], NewLSP) ->
 -spec schedule_spf(full | partial | incremental, string(), tuple()) -> tuple().
 schedule_spf(Type, Reason, #state{spf_timer = undef} = State) ->
     lager:warning("Scheduling ~p SPF due to ~s~n", [State#state.level, Reason]),
+    Delay = isis_protocol:jitter(?ISIS_SPF_DELAY, 10),
+    Scheduled = isis_system:get_time(),
     Timer = erlang:start_timer(
-	      isis_protocol:jitter(?ISIS_SPF_DELAY, 10),
+	      Delay,
 	      self(), {run_spf, Type}),
-    State#state{spf_timer = Timer, spf_reason = Reason};
+    State#state{
+	spf_timer = Timer,
+	spf_reason = Reason,
+	spf_delayed = Delay,
+	spf_scheduled = Scheduled
+    };
 schedule_spf(_, Reason, State) ->
     %% Timer already primed...
     lager:warning("SPF required due to ~s (but already scheduled)~n", [Reason]),

@@ -54,13 +54,13 @@
 	 %% TLV Update routines
 	 update_tlv/4, delete_tlv/4,
 	 %% System Name handling
-	 add_name/2, delete_name/1, lookup_name/1,
+	 add_name/2, delete_name/1, lookup_name/1, all_names/0,
 	 %% Handle System ID mapping
 	 add_sid_addresses/4, delete_sid_addresses/3, delete_all_sid_addresses/1,
 	 %% pseudonodes
 	 allocate_pseudonode/2, deallocate_pseudonode/2,
 	 %% Misc
-	 address_to_string/1, address_to_string/2, dump_config/0,
+	 address_to_string/1, address_to_string/2, dump_config/0, get_time/0,
 	 %% Debug
 	 load_state/1]).
 
@@ -70,7 +70,8 @@
 
 -define(SERVER, ?MODULE).
 
--record(state, {autoconf = false :: boolean(),
+-record(state, {startup_time :: integer(),
+		autoconf = false :: boolean(),
 		system_id,
 		system_id_set = false :: boolean(),
 		fingerprint = <<>> :: binary(),     %% For autoconfig collisions
@@ -83,7 +84,7 @@
 		interfaces,             %% Our 'state' per interface
 		redistributed_routes,
 		ignore_list = [],       %% Interfaces to ignore
-		allowed_list = [],
+		allowed_list = undef,
 		l1_system_ids :: dict(),   %% SID -> Neighbor address
 		l2_system_ids :: dict(),
 		refresh_timer = undef,
@@ -294,6 +295,11 @@ lookup_name(<<SID:6/binary>>) ->
 	    lists:flatten(io_lib:format("~4.16.0B.~4.16.0B.~4.16.0B",
 					[X || <<X:16>> <= SID]))
     end.
+all_names() ->
+    lists:map(fun({_,SystemID,Name}) ->
+		  {SystemID,Name}
+	      end, ets:tab2list(isis_names)
+    ).
 
 allocate_pseudonode(Pid, Level) ->
     gen_server:call(?MODULE, {allocate_pseudonode, Pid, Level}).
@@ -313,6 +319,8 @@ get_state(Item) ->
 dump_config() ->
     gen_server:call(?MODULE, {dump_config}).
 
+get_time() ->
+    erlang:now().
 %%--------------------------------------------------------------------
 %% @private
 %% @doc
@@ -330,7 +338,8 @@ init(Args) ->
 					   {keypos, #isis_interface.name}]),
     Redist = ets:new(redistributed_routes, [named_table, bag,
 					    {keypos, #isis_route.route}]),
-    State = #state{l1_system_ids = dict:new(),
+    State = #state{startup_time = get_time(),
+		   l1_system_ids = dict:new(),
 		   l2_system_ids = dict:new(),
 		   interfaces = Interfaces,
 		   redistributed_routes = Redist,
@@ -366,7 +375,7 @@ init(Args) ->
 %% @end
 %%--------------------------------------------------------------------
 handle_call({add_interface, _}, _From,
-	    #state{system_id = ID} = State) when is_binary(ID) == false ->
+	    #state{system_id = ID, autoconf = false} = State) when is_binary(ID) == false ->
     {reply, {error, "invalid system id"}, State};
 handle_call({add_interface, Name}, _From,
 	    #state{interfaces = Interfaces} = State) ->
@@ -375,7 +384,11 @@ handle_call({add_interface, Name}, _From,
 	    [I] -> I;
 	    _ -> #isis_interface{name = Name}
 	end,
-    NextState = do_enable_interface(Interface, State),
+    BringUp = case State#state.autoconf of
+	true -> fun do_autoconf_interface/2;
+	   _ -> fun do_enable_interface/2
+    end,
+    NextState = BringUp(Interface,State),
     {reply, ok, NextState};
 
 handle_call({del_interface, Name}, _From,
@@ -578,7 +591,7 @@ handle_cast({delete_all_sid, Pid}, State) ->
 	end,
     {noreply, State#state{l1_system_ids = F(State#state.l1_system_ids),
 			  l2_system_ids = F(State#state.l2_system_ids)}};
-handle_cast({process_spf, {Level, Time, SPF, Reason}}, State) ->
+handle_cast({process_spf, {Level, Time, SPF, Reason, ExtInfo}}, State) ->
     IDs = 
 	case Level of
 	    level_1 -> extract_lowest_cost_hops(State#state.l1_system_ids);
@@ -610,7 +623,7 @@ handle_cast({process_spf, {Level, Time, SPF, Reason}}, State) ->
 		  end;
 	     (_) -> false
 	  end, SPF),
-    spf_summary:notify_subscribers({Time, Level, Table, Reason}),
+    spf_summary:notify_subscribers({Time, Level, Table, Reason, ExtInfo}),
     {noreply, State};
 handle_cast({add_name, SID, Name}, State) ->
     N = #isis_name{system_id = SID, name = Name},
@@ -1111,49 +1124,56 @@ is_valid_interface(Name, #state{ignore_list = Ignores,
 				allowed_list = Allowed}) when is_list(Name) ->
     % An interface name is expected to consist of a reasonable
     % subset of all characters, use a whitelist and extend it if needed
-    case length(Allowed) > 0 of
-	true -> lists:member(Name, Allowed);
-	_ ->
+    case Allowed of
+	undef ->
 	    case lists:member(Name, Ignores) of
 		true -> false;
 		_ ->
 		    Name == [C || C <- Name, (((C bor 32) >= $a) and ((C bor 32) =< $z))
 				      or ((C >= $0) and (C =< $9)) or (C == $.)]
-	    end
+	    end;
+	_ -> lists:member(Name, Allowed)
     end.
 
-autoconf_interface(#isis_interface{mac = Mac, name = Name} = I,
-		   #state{autoconf = true} = State) 
-  when byte_size(Mac) =:= 6 ->
+
+autoconf_interface(#isis_interface{name = Name} = I,
+		   #state{autoconf = true} = State) ->
     case is_valid_interface(Name, State) of
 	true ->
-	    State1 = 
-		case State#state.system_id_set =:= true of
-		    true -> State;
-		    _ -> <<ID:(6*8)>> = Mac,
-			 %%DynamicName = lists:flatten(io_lib:format("autoconf-~.16B", [ID])),
-			 {ok, DynamicName} = inet:gethostname(),
-			 change_system_id(Mac, State),
-			 NextState =
-			     set_tlv_hostname(DynamicName, State#state{system_id = Mac,
-								       system_id_set = true}),
-			 force_refresh_lsp(NextState),
-			 NextState
-		end,
-	    %% Enable interface and level1...
-	    State2 = do_enable_interface(I, State1),
-	    [Interface] = ets:lookup(State2#state.interfaces, Name),
-	    do_enable_level(Interface, level_1, State2#state.system_id),
-	    LevelPid = isis_interface:get_level_pid(Interface#isis_interface.pid, level_1),
-	    isis_interface_level:set(LevelPid,
-				     [{encryption, text, <<"isis-autoconf">>},
-				      {metric, ?DEFAULT_AUTOCONF_METRIC},
-				      {priority, ?DEFAULT_PRIORITY}]),
-	    State2;
+	    do_autoconf_interface(I, State);
 	_ ->
 	    State
     end;
 autoconf_interface(_I, State) ->
+    State.
+
+do_autoconf_interface(#isis_interface{mac = Mac, name = Name} = I,
+		      #state{autoconf = true} = State)
+  when byte_size(Mac) =:= 6 ->
+    State1 =
+	case State#state.system_id_set =:= true of
+	    true -> State;
+	    _ -> <<ID:(6*8)>> = Mac,
+		 %%DynamicName = lists:flatten(io_lib:format("autoconf-~.16B", [ID])),
+		 {ok, DynamicName} = inet:gethostname(),
+		 change_system_id(Mac, State),
+		 NextState =
+		     set_tlv_hostname(DynamicName, State#state{system_id = Mac,
+							       system_id_set = true}),
+		 force_refresh_lsp(NextState),
+		 NextState
+	end,
+    %% Enable interface and level1...
+    State2 = do_enable_interface(I, State1),
+    [Interface] = ets:lookup(State2#state.interfaces, Name),
+    do_enable_level(Interface, level_1, State2#state.system_id),
+    LevelPid = isis_interface:get_level_pid(Interface#isis_interface.pid, level_1),
+    isis_interface_level:set(LevelPid,
+			     [{encryption, text, <<"isis-autoconf">>},
+			      {metric, ?DEFAULT_AUTOCONF_METRIC},
+			      {priority, ?DEFAULT_PRIORITY}]),
+    State2;
+do_autoconf_interface(_I, State) ->
     State.
 
 %%%===================================================================
@@ -1471,6 +1491,8 @@ set_state([_ | Vs], State) ->
 set_state([], State) ->
     State.
 
+extract_state(startup_time, State) ->
+    State#state.startup_time;
 extract_state(lsp_lifetime, State) ->
     State#state.max_lsp_lifetime;
 extract_state(reachability, State) ->

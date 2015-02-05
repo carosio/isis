@@ -210,7 +210,7 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 get_hostinfo() ->
     {ok, Hostname} = inet:gethostname(),
-    Processor = os:cmd("uname -p"),
+    Processor = os:cmd("uname -m"),
     MemUsed = erlang:memory(processes_used),
     [
      #hostinfo_hostname{hostname = Hostname},

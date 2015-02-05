@@ -30,14 +30,16 @@
 	   tlv
 	  }).
 
-format_last_run({Time, Level, SPF, Reason}) ->
+format_last_run({Time, Level, SPF, Reason, ExtInfo}) ->
     FixNHPid = fun({Afi, {NHA, NHI, _Pid}}) ->
 		       {Afi, {NHA, NHI, undefined}}
 	       end,
     F = fun({Node, NexthopNode, NextHops, Metric, Routes, Nodes}) ->
 		{Node, NexthopNode, lists:map(FixNHPid, NextHops), Metric, Routes, Nodes}
 	end,
-    {Time, Level, lists:map(F, SPF), Reason}.
+    {Time, Level, lists:map(F, SPF), Reason, ExtInfo};
+format_last_run(M) ->
+    M.
 
 fixup_lsps(LSPs) ->
     Now = isis_protocol:current_timestamp(),
@@ -57,7 +59,7 @@ out(Arg) ->
 	 {lspdb_level_2, fixup_lsps(ets:tab2list(isis_lspdb:get_db(level_2)))},
 	 {rib, ets:tab2list(isis_rib:get_rib_table())},
 	 {spf_level_1, format_last_run(spf_summary:last_run(level_1))},
-	 {spf_level_2, format_last_run(spf_summary:last_run(level_1))},
+	 {spf_level_2, format_last_run(spf_summary:last_run(level_1))}, %% TODO: Is that actually correct??
 	 {frags, isis_system:lsps()},
 	 {redistributed_routes, dict:to_list(zclient:get_redistributed_routes())}
 	],

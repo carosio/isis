@@ -71,10 +71,10 @@ terminate(_Reason, _State) ->
     spf_summary:unsubscribe(self()),
     ok.
 
- handle_info({spf_summary, {Time, level_1, SPF, Reason}}, State) ->
+ handle_info({spf_summary, {Time, level_1, SPF, Reason, _ExtInfo}}, State) ->
     Json = generate_update(Time, level_1, SPF, Reason),
     {reply, {text, list_to_binary(Json)}, State};
- handle_info({spf_summary, {_, level_2, _, _Reason}}, State) ->
+ handle_info({spf_summary, {_, level_2, _, _Reason, _ExtInfo}}, State) ->
     {noreply, State};
 
 
