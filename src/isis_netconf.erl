@@ -155,14 +155,14 @@ handle_info({tcp_closed, _Port}, State) ->
     lager:warning("Netconf: connection to server was closed"),
     {noreply, handle_close(State), 30000};
 handle_info(timeout, State) ->
-    Socket = case gen_tcp:connect({0,0,0,0,0,0,0,1}, 8301, []) of
-	{ok, Sock} ->
-	    Sock;
+    lager:debug("Netconf: Connecting to Netopeer..."),
+    case gen_tcp:connect({0,0,0,0,0,0,0,1}, 8301, []) of
+	{ok, Socket} ->
+	    {noreply, State#state{socket = Socket}};
         Other ->
 	    lager:error("Netconf: Could not connect to netconf server: ~p", [Other]),
-	    undefined
-    end,
-    {noreply, State#state{socket = Socket}, 30000};
+	    {noreply, State#state{socket = undefined}, 30000}
+    end;
 handle_info(Info, State) ->
     lager:debug("Received unknown info: ~p", [Info]),
     {noreply, State}.
