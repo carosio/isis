@@ -575,7 +575,7 @@ expire_lsps(#state{db = DB, level = Level} = State) ->
 	  end, "", Deletes),
     case length(Deletes) of
 	0 -> State;
-	C -> lager:info("Expired ~B ~p LSPs (~s)~n", [C, Level, LSPs]),
+	C -> isis_logger:info("Expired ~B ~p LSPs (~s)~n", [C, Level, LSPs]),
 	     lists:map(fun(BDel) -> notify_subscribers(BDel, State) end, Deletes),
 	     schedule_spf(full, "LSPs deleted", State)
     end.
@@ -620,7 +620,7 @@ spf_type_required([OldLSP], NewLSP) ->
 %%--------------------------------------------------------------------
 -spec schedule_spf(full | partial | incremental, string(), tuple()) -> tuple().
 schedule_spf(Type, Reason, #state{spf_timer = undef} = State) ->
-    lager:warning("Scheduling ~p SPF due to ~s~n", [State#state.level, Reason]),
+    isis_logger:warning("Scheduling ~p SPF due to ~s~n", [State#state.level, Reason]),
     Delay = isis_protocol:jitter(?ISIS_SPF_DELAY, 10),
     Scheduled = isis_system:get_time(),
     Timer = erlang:start_timer(
@@ -634,7 +634,7 @@ schedule_spf(Type, Reason, #state{spf_timer = undef} = State) ->
     };
 schedule_spf(_, Reason, State) ->
     %% Timer already primed...
-    lager:warning("SPF required due to ~s (but already scheduled)~n", [Reason]),
+    isis_logger:warning("SPF required due to ~s (but already scheduled)~n", [Reason]),
     State.
 
 -spec start_timer(atom(), tuple()) -> integer() | ok.
@@ -728,14 +728,15 @@ do_spf(SID, State) ->
 
 lookup_prefixes(Node, State) ->
     LSPs = lookup_lsps_by_node(Node, State#state.db),
-    TLVs = lists:foldl(fun(L, Ts) ->
-			     isis_protocol:filter_tlvs(
-			       [isis_tlv_ip_internal_reachability,
-				isis_tlv_extended_ip_reachability,
-				isis_tlv_ipv6_reachability],
-			       L#isis_lsp.tlv)
-				   ++ Ts
-		       end, [], LSPs),
+    TLVs = lists:foldl(
+		fun(L, Ts) ->
+			isis_protocol:filter_tlvs(
+			  [isis_tlv_ip_internal_reachability,
+			   isis_tlv_extended_ip_reachability,
+			   isis_tlv_ipv6_reachability],
+			  L#isis_lsp.tlv)
+			    ++ Ts
+		end, [], LSPs),
     IPs = lists:foldl(fun extract_ip_addresses/2, [], TLVs),
     IPs.
     
@@ -813,8 +814,9 @@ extract_reachability(D, From, TLV) ->
 populate_links(DB) ->
     Now = isis_protocol:current_timestamp(),
     F = ets:fun2ms(fun(#isis_lsp{lsp_id = LSP_Id, remaining_lifetime = L, id_length = ILen,
-				 last_update = U, sequence_number = N, tlv = TLV})
-			 when (ILen =:= 0),(L - (Now - U)) >= 0 ->
+				 last_update = U, sequence_number = N, tlv = TLV,
+				 overload = Ol})
+			 when (ILen =:= 0), (Ol =:= false), (L - (Now - U)) >= 0 ->
 			   {LSP_Id, TLV}
 		   end),
     ValidLSPs = ets:select(DB, F),

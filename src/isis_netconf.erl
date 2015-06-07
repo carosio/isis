@@ -152,19 +152,19 @@ handle_cast(_Msg, State) ->
 handle_info({tcp, _Port, Bytes}, State) ->
     {noreply, handle_data(Bytes, State)};
 handle_info({tcp_closed, _Port}, State) ->
-    lager:warning("Netconf: connection to server was closed"),
+    isis_logger:warning("Netconf: connection to server was closed"),
     {noreply, handle_close(State), 30000};
 handle_info(timeout, State) ->
-    lager:debug("Netconf: Connecting to Netopeer..."),
+    isis_logger:debug("Netconf: Connecting to Netopeer..."),
     case gen_tcp:connect({0,0,0,0,0,0,0,1}, 8301, []) of
 	{ok, Socket} ->
 	    {noreply, State#state{socket = Socket}};
         Other ->
-	    lager:error("Netconf: Could not connect to netconf server: ~p", [Other]),
+	    isis_logger:error("Netconf: Could not connect to netconf server: ~p", [Other]),
 	    {noreply, State#state{socket = undefined}, 30000}
     end;
 handle_info(Info, State) ->
-    lager:debug("Received unknown info: ~p", [Info]),
+    isis_logger:debug("Received unknown info: ~p", [Info]),
     {noreply, State}.
 
 %%--------------------------------------------------------------------
@@ -214,7 +214,7 @@ parse_message(MB, State) ->
     State#state{message_buffer = MB}.
 
 process_message(0, XML, State) -> % Config request
-    lager:info("Netconf: Received a configuration request"),
+    isis_logger:info("Netconf: Received a configuration request"),
     %% Parse XML
     {ParsedXML, []} = xmerl_scan:string(binary_to_list(XML),
 					[{namespace_conformant, true}]),
@@ -222,11 +222,11 @@ process_message(0, XML, State) -> % Config request
     %% Done
     send_message(1, <<>>, NewState#state{last_message = ParsedXML});
 process_message(3, _Data, State) -> % State request
-    lager:info("Netconf: Received a state request"),
+    isis_logger:info("Netconf: Received a state request"),
     {ok, Reply} = process_state(State),
     send_message(4, Reply, State);
 process_message(Code, _Data, State) ->
-    lager:warning("Netconf: Received unknown message with code: ~p", [Code]),
+    isis_logger:warning("Netconf: Received unknown message with code: ~p", [Code]),
     State.
 
 handle_close(State) ->
@@ -235,15 +235,15 @@ handle_close(State) ->
 process_config(ParsedXML, State) ->
     case xpath(?ISIS_XML_BASE, ParsedXML) of
 	[] ->
-	    lager:info("Netconf: did not find IS-IS config node."),
+	    isis_logger:info("Netconf: did not find IS-IS config node."),
 	    State;
 	[Config] ->
-	    lager:info("Netconf: found IS-IS config node, processing..."),
+	    isis_logger:info("Netconf: found IS-IS config node, processing..."),
 	    lists:foldl(fun(Line, StateAcc) ->
 			  configurator(Line, ParsedXML, Config, StateAcc)
 		        end, State, ?ISIS_Configurators);
 	_ ->
-	    lager:info("Netconf: multiple instances not supported yet."),
+	    isis_logger:info("Netconf: multiple instances not supported yet."),
 	    State
     end.
 
@@ -665,7 +665,7 @@ ext_reach_subtlv(#isis_subtlv_eir_admintag64{tag = Tag},
 	tag64 = Out ++ leaf('tag64', Tag)
     };
 ext_reach_subtlv(Other, Acc) ->
-    lager:debug("Netconf: unsupported sub-TLV: ~p", [Other]),
+    isis_logger:debug("Netconf: unsupported sub-TLV: ~p", [Other]),
     Acc.
 
 format_ip_ext_reach_subtlv(SubTLVs) ->
@@ -720,10 +720,10 @@ ipv6_reach_subtlv(#isis_subtlv_srcdst{prefix = Prefix, prefix_length = PrefixLen
 	}
     };
 ipv6_reach_subtlv(#isis_subtlv_srcdst{} = _, Acc) ->
-    lager:warning("Netconf: multiple srcdest sub-TLVs in TLV"),
+    isis_logger:warning("Netconf: multiple srcdest sub-TLVs in TLV"),
     Acc;
 ipv6_reach_subtlv(Other, Acc) ->
-    lager:debug("Netconf: unsupported sub-TLV: ~p", [Other]),
+    isis_logger:debug("Netconf: unsupported sub-TLV: ~p", [Other]),
     Acc.
 
 format_ipv6_reach_subtlv(SubTLVs) ->
@@ -818,7 +818,7 @@ format_tlv(#isis_tlv_authentication{type = Type, signature = Signature},
         ]}
     };
 format_tlv(#isis_tlv_authentication{} = _, Acc) ->
-    lager:warning("Netconf: multiple authentication TLVs in LSP"),
+    isis_logger:warning("Netconf: multiple authentication TLVs in LSP"),
     Acc;
 format_tlv(#isis_tlv_extended_reachability{reachability = R},
 	   #format_tlv_state{extended_is_neighbors = Out} = Acc) ->
@@ -866,7 +866,7 @@ format_tlv(#isis_tlv_te_router_id{router_id = ID},
 				isis_system:address_to_string(ipv4, ID))
     };
 format_tlv(#isis_tlv_te_router_id{} = _, Acc) ->
-    lager:warning("Netconf: multiple router ids in LSP"),
+    isis_logger:warning("Netconf: multiple router ids in LSP"),
     Acc;
 format_tlv(#isis_tlv_extended_ip_reachability{reachability = R},
 	   #format_tlv_state{ipv4_extended_reach = Out} = Acc) ->
@@ -879,7 +879,7 @@ format_tlv(#isis_tlv_dynamic_hostname{hostname = Hostname},
         dynamic_hostname = leaf('dynamic-hostname', Hostname)
     };
 format_tlv(#isis_tlv_dynamic_hostname{} = _, Acc) ->
-    lager:warning("Netconf: multiple hostnames in LSP"),
+    isis_logger:warning("Netconf: multiple hostnames in LSP"),
     Acc;
 %format_tlv(#isis_tlv_ipv6_te_router_id) %% TODO: This is required by the model
 format_tlv(#isis_tlv_ipv6_interface_address{addresses = Addresses},
@@ -896,7 +896,7 @@ format_tlv(#isis_tlv_ipv6_reachability{reachability = R},
 	ipv6_reach = Out ++ lists:map(fun format_ipv6_reach/1, R)
     };
 format_tlv(Other, Acc) ->
-    lager:debug("Netconf: unsupported TLV: ~p", [Other]),
+    isis_logger:debug("Netconf: unsupported TLV: ~p", [Other]),
     Acc.
 
 %% This function should return [#xmlElement] for the subtree
@@ -975,7 +975,7 @@ extract_level(Node, XML) ->
 %%%===================================================================
 apply_system_id(Node, _XML, State) ->
     Value = xml_get_value(text, Node),
-    lager:info("Netconf: Found system-id ~p", [Value]),
+    isis_logger:info("Netconf: Found system-id ~p", [Value]),
     ID = string:tokens(Value, "."),
     IDBint = 
 	lists:map(
@@ -990,7 +990,7 @@ apply_system_id(Node, _XML, State) ->
 
 apply_area_address(Node, _XML, State) ->
     Value = xml_get_value(text, Node),
-    lager:info("Netconf: Found area address ~p", [Value]),
+    isis_logger:info("Netconf: Found area address ~p", [Value]),
     AreaBits = string:tokens(Value, "."),
     AreaBin = 
 	lists:map(
@@ -1015,7 +1015,7 @@ apply_interfaces(Node, XML, State) ->
 	(_) ->
 	    undefined
     end, Node#xmlElement.content)),
-    lager:info("Netconf: Enabled interfaces are ~p", [sets:to_list(EnabledInterfaces)]),
+    isis_logger:info("Netconf: Enabled interfaces are ~p", [sets:to_list(EnabledInterfaces)]),
     ActiveInterfaces = sets:from_list(fmap(
 	fun(#isis_interface{name = Name, pid = Pid}) when is_pid(Pid) ->
 	    Name;
@@ -1024,8 +1024,8 @@ apply_interfaces(Node, XML, State) ->
     end, isis_system:list_interfaces())),
     DeleteInterfaces = sets:to_list(sets:subtract(ActiveInterfaces, EnabledInterfaces)),
     AddInterfaces = sets:to_list(sets:subtract(EnabledInterfaces, ActiveInterfaces)),
-    lager:info("Netconf: Stopping IS-IS on interfaces ~p", [DeleteInterfaces]),
-    lager:info("Netconf: Starting IS-IS on interfaces ~p", [AddInterfaces]),
+    isis_logger:info("Netconf: Stopping IS-IS on interfaces ~p", [DeleteInterfaces]),
+    isis_logger:info("Netconf: Starting IS-IS on interfaces ~p", [AddInterfaces]),
     lists:map(fun(IF) ->
         isis_system:del_interface(IF)
     end, DeleteInterfaces),
@@ -1045,7 +1045,7 @@ apply_interface_priority(Node, XML, #state{enabled_interfaces = EnabledIFs} = St
     Level = extract_level(Node, XML),
     case sets:is_element(Interface, EnabledIFs) of
 	true ->
-	    lager:info("Netconf: Setting interface ~s priority ~p for level ~p",
+	    isis_logger:info("Netconf: Setting interface ~s priority ~p for level ~p",
 		       [Interface, Value, Level]),
 	    isis_system:set_interface(Interface, Level, [{priority, Value}]);
 	_ ->
@@ -1060,7 +1060,7 @@ apply_interface_metric(Node, XML, #state{enabled_interfaces = EnabledIFs} = Stat
     Level = extract_level(Node, XML),
     case sets:is_element(Interface, EnabledIFs) of
 	true ->
-	    lager:info("Netconf: Setting interface ~s metric ~p for level ~p",
+	    isis_logger:info("Netconf: Setting interface ~s metric ~p for level ~p",
 		       [Interface, Value, Level]),
 	    isis_system:set_interface(Interface, Level, [{metric, Value}]);
 	_ ->

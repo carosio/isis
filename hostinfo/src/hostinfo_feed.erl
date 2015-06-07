@@ -79,7 +79,6 @@ handle_info(Info, State) ->
     {noreply, State}.
 
 handle_cast(Msg, State) ->
-    lager:error("Got msg ~p, state ~p", [Msg, State]),
     {noreply, State}.
 
 handle_call(Request, _From, State) ->

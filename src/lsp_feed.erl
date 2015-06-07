@@ -57,7 +57,7 @@ init(_Args) ->
     {ok, #state{}}.
 
 handle_message({text, <<"start level_1">>}, State) ->
-    lager:error("Subscription for l1 received"),
+    isis_logger:error("Subscription for l1 received"),
     isis_lspdb:subscribe(level_1, self(), web),
     isis_lspdb:initial_state(level_1, self(), web),
     {noreply, State#state{level = level_1}};
@@ -88,7 +88,7 @@ handle_info(Info, State) ->
     {noreply, State}.
 
 handle_cast(Msg, State) ->
-    lager:error("Got msg ~p, state ~p", [Msg, State]),
+    isis_logger:error("Got msg ~p, state ~p", [Msg, State]),
     {noreply, State}.
 
 handle_call(Request, _From, State) ->

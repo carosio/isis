@@ -46,6 +46,8 @@
 	 add_area/1, del_area/1,
 	 %% System ID
 	 set_system_id/1,
+	 %% Overload
+	 set_overload/2,
 	 %% Query
 	 areas/0, lsps/0, system_id/0, autoconf_status/0,
 	 %% Misc APIs - check autoconf collision etc
@@ -87,6 +89,8 @@
 		allowed_list = undef,
 		l1_system_ids :: dict(),   %% SID -> Neighbor address
 		l2_system_ids :: dict(),
+		l1_overload = false :: boolean(),
+		l2_overload = false :: boolean(),
 		refresh_timer = undef,
 		periodic_refresh,
 		names,
@@ -216,6 +220,15 @@ set_system_id(Id) when is_binary(Id), byte_size(Id) =:= 6->
 set_system_id(_) ->
     io:format("System ID should be a 6 byte binary~n", []),
     bad_systemid.
+
+set_overload(level_1, O) ->
+    gen_server:call(?MODULE, {set_overload, level_1, O});
+set_overload(level_2, O) ->
+    gen_server:call(?MODULE, {set_overload, level_2, O});
+set_overload(_, _) ->
+    io:format("Invalid level, should be either level_1 or level_2~n", []),
+    bad_level.
+
 
 
 autoconf_status() ->
@@ -356,7 +369,7 @@ init(Args) ->
     isis_lspdb:set_system_id(level_2, StartState2#state.system_id),
     case application:get_env(isis, rib_client) of
 	{ok, Rib} -> Rib:subscribe(self());
-	_ -> lager:error("No rib client specified, not subscribing..")
+	_ -> isis_logger:error("No rib client specified, not subscribing..")
     end,
     {ok, StartState2#state{periodic_refresh = Timer, names = Names}}.
 
@@ -413,7 +426,7 @@ handle_call({system_id}, _From,
 	    #state{system_id = ID} = State) ->
     {reply, ID, State};
 handle_call({set_system_id, undefined}, _From, State) ->
-    lager:info("System ID has been unset", []),
+    isis_logger:info("System ID has been unset", []),
     isis_lspdb:set_system_id(level_1, undefined),
     isis_lspdb:set_system_id(level_2, undefined),
     NewState = purge_all_lsps(State),
@@ -436,6 +449,9 @@ handle_call({set_system_id, Id}, _From, State)
     {reply, ok, refresh_lsps(NextState)};
 handle_call({set_system_id, _}, _From, State) ->
     {reply, invalid_sid, State};
+
+handle_call({set_overload, Level, Ol}, _From, State) ->
+    {reply, ok, set_overload(Level, Ol, State)};
 
 handle_call({autoconf_status}, _From,
 	    #state{autoconf = A, system_id_set = B} = State) ->
@@ -522,7 +538,7 @@ handle_cast({delete_tlv, TLV, Node, Level, Interface}, State) ->
     delete_tlv(TLV, Node, Level, Interface, State);
 
 handle_cast({add_sid, Level, SID, Metric, Addresses}, State) ->
-    lager:error("Adding SID Address for level ~p ~p -> ~p", [Level, SID, Addresses]),
+    isis_logger:error("Adding SID Address for level ~p ~p -> ~p", [Level, SID, Addresses]),
     IDs = 
 	case Level of
 	    level_1 -> State#state.l1_system_ids;
@@ -870,7 +886,8 @@ create_lsp_from_frag(#lsp_frag{level = Level, sequence = SN} = Frag,
     LSP = #isis_lsp{lsp_id = LSP_Id, remaining_lifetime = State#state.max_lsp_lifetime,
 		    last_update = isis_protocol:current_timestamp(),
 		    sequence_number = SeqNo, partition = false,
-		    overload = false, isis_type = level_1_2,
+		    overload = system_overload(Level, State),
+		    isis_type = level_1_2,
 		    pdu_type = PDUType,
 		    tlv = Frag#lsp_frag.tlvs},
     CSum = isis_protocol:checksum(LSP),
@@ -927,7 +944,7 @@ update_tlv(#isis_tlv_extended_reachability{reachability =
 		end;
 	    _ -> {dict:store({Node, Level, D}, [Interface], Reachability), [Interface]}
 	end,
-    lager:debug("Reachability for {~p, ~p, ~p} now via ~p", [Node, Level, D, NewIs]),
+    isis_logger:debug("Reachability for {~p, ~p, ~p} now via ~p", [Node, Level, D, NewIs]),
     NewFrags = isis_protocol:update_tlv(TLV, Node, Level, Frags),
     schedule_lsp_refresh(),
     isis_lspdb:schedule_spf(level_1, "Self-originated TLV change"),
@@ -954,11 +971,11 @@ delete_tlv(#isis_tlv_extended_reachability{reachability =
 			    _ -> {dict:store({Node, Level, D}, TIs, Reachability), TIs}
 			end;
 	    _ -> %% Removing something we don't know about?
-		lager:error("Removing {~p, ~p, ~p} for ~s but we have no state!",
+		isis_logger:error("Removing {~p, ~p, ~p} for ~s but we have no state!",
 			    [Node, Level, D, Interface]),
 		{Reachability, []}
 	end,
-    lager:debug("Reachability for {~p, ~p, ~p} now via ~p", [Node, Level, D, NewIs]),
+    isis_logger:debug("Reachability for {~p, ~p, ~p} now via ~p", [Node, Level, D, NewIs]),
     {NewD2, NewFrags} = 
 	case length(NewIs) =:= 0 of
 	    true ->
@@ -1057,7 +1074,7 @@ purge_lsps(MatchFun, State) ->
 %% @end
 %%--------------------------------------------------------------------
 purge_all_lsps(State) ->
-    lager:error("!!!!!!!!!!!!!! ALL LSPS PURGED! !!!!!!!!!!!!!!!!", []),
+    isis_logger:error("!!!!!!!!!!!!!! ALL LSPS PURGED! !!!!!!!!!!!!!!!!", []),
     purge_lsps(fun(_, _) -> true end, State),
     force_refresh_lsp(create_initial_frags(State)).
 
@@ -1069,7 +1086,7 @@ purge_all_lsps(State) ->
 %% @end
 %%--------------------------------------------------------------------
 purge_lsp(Level, LSP, _State) ->
-    lager:error("Purging LSP: ~p", [LSP]),
+    isis_logger:error("Purging LSP: ~p", [LSP]),
     isis_lspdb:purge_lsp(Level, LSP).
 
 %%--------------------------------------------------------------------
@@ -1079,6 +1096,11 @@ purge_lsp(Level, LSP, _State) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
+do_bump_work(BumpFun, State) ->
+    NewFrags = lists:map(BumpFun, State#state.frags),
+    schedule_lsp_refresh(),
+    State#state{frags = NewFrags}.
+
 do_bump_lsp(Level, Node, Frag, SeqNo, State) ->
     DoBump = fun(#lsp_frag{level = L, pseudonode = N,
 			   fragment = F} = LspFrag)
@@ -1087,9 +1109,16 @@ do_bump_lsp(Level, Node, Frag, SeqNo, State) ->
 				      updated = true};
 		(F) -> F
 	     end,
-    NewFrags = lists:map(DoBump, State#state.frags),
-    schedule_lsp_refresh(),
-    State#state{frags = NewFrags}.
+    do_bump_work(DoBump, State).
+
+refresh_nonpn_lsps(Level, State) ->
+    DoBump = fun(#lsp_frag{level = L, pseudonode = 0, sequence = SeqNo} = LspFrag)
+		   when L =:= Level ->
+		     LspFrag#lsp_frag{sequence = (SeqNo + 1),
+				      updated = true};
+		(F) -> F
+	     end,
+    do_bump_work(DoBump, State).
 
 %%%===================================================================
 %%% ZAPI callbacks - handle messages from Zebra/Quagga
@@ -1438,7 +1467,7 @@ should_withdraw_route(#isis_route{
 		  (#isis_interface{addresses = A}, false) -> lists:foldl(FindAddr, false, A)
 	       end,
     Result = not lists:foldl(CheckInt, false, isis_system:list_interfaces()),
-    lager:error("should_withdraw_route ~p: ~p", [R, Result]),
+    isis_logger:error("should_withdraw_route ~p: ~p", [R, Result]),
     Result;
 should_withdraw_route(#isis_prefix{
 			 afi = AFI,
@@ -1451,13 +1480,13 @@ should_withdraw_route(#isis_prefix{
 		   (_) -> false
 		end,
     Result = not (length(lists:filter(FilterFun, Possibles)) > 0),
-    lager:error("should_withdraw_route ~p: ~p (possibles: ~p)", [R, Result, Possibles]),
+    isis_logger:error("should_withdraw_route ~p: ~p (possibles: ~p)", [R, Result, Possibles]),
     Result;
 should_withdraw_route(_, _) ->
     true.
 
 change_system_id(Id, State) ->
-    lager:info("System ID set to ~p", [Id]),
+    isis_logger:info("System ID set to ~p", [Id]),
     isis_lspdb:set_system_id(level_1, Id),
     isis_lspdb:set_system_id(level_2, Id),
     PropogateFun
@@ -1484,6 +1513,26 @@ extract_lowest_cost_hops(IDs) ->
 	      Hops
       end, IDs).
 
+system_overload(level_1, #state{l1_overload = Ol}) ->
+    Ol;
+system_overload(level_2, #state{l2_overload = Ol}) ->
+    Ol;
+system_overload(_, _) ->
+    true.
+
+set_overload(level_1, Ol, #state{l1_overload = OriginalOl} = State) ->
+    case Ol =:= OriginalOl of
+	true -> State;
+	_ ->
+	    refresh_nonpn_lsps(level_1, State#state{l1_overload = Ol})
+    end;
+set_overload(level_2, Ol, #state{l2_overload = OriginalOl} = State) ->
+    case Ol =:= OriginalOl of
+	true -> State;
+	_ ->
+	    refresh_nonpn_lsps(level_2, State#state{l1_overload = Ol})
+    end.    
+
 set_state([{lsp_lifetime, Value} | Vs], State) ->
     set_state(Vs, State#state{max_lsp_lifetime = Value});
 set_state([_ | Vs], State) ->
@@ -1499,6 +1548,8 @@ extract_state(reachability, State) ->
     State#state.reachability;
 extract_state(system_ids, State) ->
     {State#state.l1_system_ids, State#state.l2_system_ids};
+extract_state(overload, State) ->
+    {State#state.l1_overload, State#state.l2_overload};
 extract_state(hostname, State) ->
     State#state.hostname;
 extract_state(_, _State) ->

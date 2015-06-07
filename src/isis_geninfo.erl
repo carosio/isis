@@ -141,7 +141,7 @@ handle_cast({announce, TLVs, From}, State) ->
 handle_cast({withdraw, TLVs, From}, State) ->
     {noreply, withdraw_tlvs(TLVs, From, State)};
 handle_cast(Msg, State) ->
-    lager:debug("Failed to handle cast ~p", [Msg]),
+    isis_logger:debug("Failed to handle cast ~p", [Msg]),
     {noreply, State}.
 
 %%--------------------------------------------------------------------
@@ -163,7 +163,7 @@ handle_info({lsp_update, Message}, State) ->
 handle_info({'DOWN', _, process, Pid, _}, State) ->
     {noreply, unregister(Pid, State)};
 handle_info(Info, State) ->
-    lager:debug("Failed to handle Info ~p", [Info]),
+    isis_logger:debug("Failed to handle Info ~p", [Info]),
     {noreply, State}.
 
 %%--------------------------------------------------------------------

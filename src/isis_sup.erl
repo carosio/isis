@@ -68,8 +68,9 @@ start_link() ->
 %%--------------------------------------------------------------------
 init([]) ->
 
-    <<A:32,B:32,C:32>> = crypto:rand_bytes(12),
-    random:seed({A, B, C}),
+    %% <<A:32,B:32,C:32>> = crypto:rand_bytes(12),
+    %% random:seed({A, B, C}),
+    random:seed(now()),
 
     RestartStrategy = one_for_one,
     MaxRestarts = 1000,
@@ -87,7 +88,7 @@ init([]) ->
 	case application:get_env(isis, rib_client) of
 	    {ok, Client} -> {Client, {Client, start_link, [[{type, isis}]]},
 			     Restart, Shutdown, Type, [Client]};
-	    Oops -> lager:error("Got ~p for rib_client!", [Oops]),
+	    Oops -> isis_logger:error("Got ~p for rib_client!", [Oops]),
 		    missing_rib_client
 	end,
     L1DB = {level1_lspdb, {isis_lspdb, start_link, [[{table, level_1}]]},

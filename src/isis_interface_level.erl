@@ -336,7 +336,7 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 handle_iih(_, _, #state{system_id = SID} = State) when SID =:= undefined ->
     %% Ignore IIH until we have a system id...
-    lager:debug("Ignoring IIH as no system_id set"),
+    isis_logger:debug("Ignoring IIH as no system_id set"),
     State;
 handle_iih(From, IIH, #state{adj_handlers = Adjs} = State) ->
     {NewAdjs, NewUpAdjs, AdjPid} = 
@@ -365,7 +365,7 @@ handle_iih(From, IIH, #state{adj_handlers = Adjs} = State) ->
 		{dict:store(From, {IIH#isis_iih.source_id, NewPid}, Adjs), State#state.up_adjacencies, NewPid}
 	end,
     AdjState = State#state{adj_handlers = NewAdjs, up_adjacencies = NewUpAdjs},
-    lager:debug("DIS Election on ~s: Us: ~B, Them: ~B From > Our: ~p (From: ~p, Our ~p)",
+    isis_logger:debug("DIS Election on ~s: Us: ~B, Them: ~B From > Our: ~p (From: ~p, Our ~p)",
                [State#state.interface_name,
                 State#state.priority, IIH#isis_iih.priority,
                 (From > State#state.snpa),
@@ -418,14 +418,14 @@ handle_dis_election(_From,
 		    #state{priority = OurP, are_we_dis = Us, snpa = OurM} = State)
   when Us =:= false ->
     %% Any one else likely to take over?
-    lager:debug("up_adj: ~p", [dict:to_list(State#state.up_adjacencies)]),
+    isis_logger:debug("up_adj: ~p", [dict:to_list(State#state.up_adjacencies)]),
     BetterAdj = dict:to_list(
 		  dict:filter(
 		    fun(_, {_, _, P}) when P > OurP -> true;
 		       (_, {_, M, P}) when P =:= OurP, M > OurM -> true;
 		       (_, {_, _, _}) -> false
 		    end, State#state.up_adjacencies)),
-    lager:debug("DIS Election: we beat adj, but not these: ~p", [BetterAdj]),
+    isis_logger:debug("DIS Election: we beat adj, but not these: ~p", [BetterAdj]),
     case length(BetterAdj) of
 	0 -> assume_dis(State);
 	_ -> State
@@ -438,7 +438,7 @@ handle_dis_election(_From,
 assume_dis(State) ->
     %% Get pseudo-node here, create LSP etc..
     Node = isis_system:allocate_pseudonode(self(), State#state.level),
-    lager:info("Allocated pseudo-node ~p to ~p ~s~n",
+    isis_logger:info("Allocated pseudo-node ~p to ~p ~s~n",
 	       [Node, State#state.level,  State#state.interface_name]),
     DIS_Timer = start_timer(dis, State),
     ID = State#state.system_id,
@@ -695,7 +695,7 @@ process_pdu(From, #isis_iih{} = IIH, State) ->
 	false -> State
     end;
 process_pdu(_From, #isis_lsp{} = LSP, State) ->
-    lager:debug("Handling LSP: ~p", [LSP]),
+    isis_logger:debug("Handling LSP: ~p", [LSP]),
     handle_lsp(LSP, State),
     State;
 process_pdu(_From, #isis_csnp{} = CSNP, State) ->
@@ -811,11 +811,11 @@ send_lsps(LSPs, State) ->
 		      %% NewTLVs = AuthTLV ++ TLVs,
 		      try isis_protocol:encode(L) of
 			  {ok, Bin, Len} -> send_pdu(lsp, Bin, Len, State);
-			  _ -> lager:error("Failed to encode LSP ~p~n",
+			  _ -> isis_logger:error("Failed to encode LSP ~p~n",
 					   [L#isis_lsp.lsp_id])
 		      catch
 			  error:Fail ->
-			      lager:error("Failed to encode: ~p (~p)", [L, Fail])
+			      isis_logger:error("Failed to encode: ~p (~p)", [L, Fail])
 		      end
 	      end, LSPs),
     ok.
@@ -931,7 +931,7 @@ handle_psnp(#isis_psnp{tlv = TLVs}, State) ->
 -spec handle_lsp(isis_lsp(), tuple()) -> tuple().
 handle_lsp(#isis_lsp{lsp_id = ID, remaining_lifetime = 0} = LSP, State) ->
     %% Purging the lsp...
-    lager:info("Purging LSP ~p", [ID]),
+    isis_logger:info("Purging LSP ~p", [ID]),
     isis_lspdb:store_lsp(State#state.level,
 			 LSP#isis_lsp{tlv = [],
 				      remaining_lifetime = 0,
@@ -949,7 +949,7 @@ handle_lsp(#isis_lsp{lsp_id = ID, sequence_number = TheirSeq} = LSP,
 			 OurSeq = OurLSP#isis_lsp.sequence_number,
 			 case (OurSeq < TheirSeq) of
 			     true -> isis_lspdb:store_lsp(State#state.level, LSP),
-				     lager:warning("Updated LSP (~b vs ~b)~n", [OurSeq, TheirSeq]),
+				     isis_logger:warning("Updated LSP (~b vs ~b)~n", [OurSeq, TheirSeq]),
 				     true;
 			     _ -> case State#state.are_we_dis of
 				      true -> send_lsps([OurLSP], State);
@@ -958,7 +958,7 @@ handle_lsp(#isis_lsp{lsp_id = ID, sequence_number = TheirSeq} = LSP,
 				  false
 			 end;
 		    0 -> isis_lspdb:store_lsp(State#state.level, LSP),
-			 lager:warning("New LSP, storing..~n", []),
+			 isis_logger:warning("New LSP, storing..~n", []),
 			 true;
 		    _ -> false
 		end,
@@ -982,7 +982,7 @@ handle_old_lsp(#isis_lsp{lsp_id = ID, tlv = TLVs,
 			_ -> ok
 		    end;
 		_ ->
-		    lager:error("Purging an old LSP that claims to be from us: ~p",
+		    isis_logger:error("Purging an old LSP that claims to be from us: ~p",
 				[ID]),
 		    PLSP = LSP#isis_lsp{tlv = [],
 					remaining_lifetime = 0,
@@ -1037,9 +1037,9 @@ handle_csnp(#isis_csnp{start_lsp_id = Start,
     %% Compare the 2 lists, to get our announce/request sets
     {Request, Announce} = compare_lsp_entries(DB_LSPs, CSNP_LSPs, {[], []}),
     announce_lsps(Announce, State),
-    lager:debug("CSNP on ~s: ~p", [State#state.interface_name, lager:pr(CSNP, isis_protocol)]),
-    lager:debug("DB: ~p", [lager:pr(DB_LSPs, isis_protocol)]),
-    lager:debug("Announce: ~p, Request: ~p", [Announce, Request]),
+    isis_logger:debug("CSNP on ~s: ~p", [State#state.interface_name, isis_logger:pr(CSNP, isis_protocol)]),
+    isis_logger:debug("DB: ~p", [isis_logger:pr(DB_LSPs, isis_protocol)]),
+    isis_logger:debug("Announce: ~p, Request: ~p", [Announce, Request]),
     NewState = update_ssn(Request, State),
     NewState.
 
@@ -1235,11 +1235,11 @@ do_update_reachability_tlv(del, N, PN, Metric,
     isis_system:delete_tlv(TLV, PN, State#state.level, State#state.interface_name).
 
 update_reachability_tlv(Dir, <<_:6/binary, PN:8>> = N, 0, Metric, State) when PN =:= 0 ->
-    lager:info("Updating reachability TLV ~s neighbor ~p (pseudonode ~B) ~s",
+    isis_logger:info("Updating reachability TLV ~s neighbor ~p (pseudonode ~B) ~s",
 	       [Dir, N, 0, State#state.interface_name]),
     do_update_reachability_tlv(Dir, N, PN, Metric, State);
 update_reachability_tlv(Dir, N, PN, Metric, State) ->
-    lager:info("Updating reachability TLV ~s neighbor ~p (pseudonode ~B) ~s",
+    isis_logger:info("Updating reachability TLV ~s neighbor ~p (pseudonode ~B) ~s",
 	       [Dir, N, PN, State#state.interface_name]),
     do_update_reachability_tlv(Dir, N, PN, Metric, State).
 

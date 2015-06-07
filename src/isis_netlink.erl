@@ -126,7 +126,7 @@ init([{type, _}]) ->
 		  lists:map(fun(#isis_interface{ifindex = IfIndex} = Int) -> {IfIndex, Int} end,
 			    lists:map(fun convert_netlink_interface_to_isis/1,
 				      NetlinkInterfaces)));
-	    Error -> lager:error("Error requesting interfaces: ~p", [Error]),
+	    Error -> isis_logger:error("Error requesting interfaces: ~p", [Error]),
 		     dict:new()
 	end,
     InitialState = #state{listeners = dict:new(), interfaces = Interfaces,
@@ -214,7 +214,7 @@ handle_call(_Request, _From, State) ->
 %% @end
 %%--------------------------------------------------------------------
 handle_cast(Msg, State) ->
-    lager:error("Handling cast: ~p", [Msg]),
+    isis_logger:error("Handling cast: ~p", [Msg]),
     {noreply, State}.
 
 %%--------------------------------------------------------------------
@@ -234,7 +234,7 @@ handle_info({rtnetlink, Msgs}, State) ->
     {noreply, NewState};
 
 handle_info(Info, State) ->
-    lager:error("Received unknown message: ~p", [Info]),
+    isis_logger:error("Received unknown message: ~p", [Info]),
     {noreply, State}.
 
 %%--------------------------------------------------------------------
@@ -534,7 +534,7 @@ process_netlink_update(#rtnetlink{type = Cmd} = RTM, State)
 	end,
     NewState;
 process_netlink_update(#rtnetlink{type = T, msg = Msg}, State) ->
-    lager:debug("Ignoring netlink message type ~p (~p)", [T, Msg]),
+    isis_logger:debug("Ignoring netlink message type ~p (~p)", [T, Msg]),
     State.
 
 convert_addr(ipv4, A) when is_binary(A) ->
@@ -589,7 +589,7 @@ install_route_via_netlink(#isis_route
 			       seq = 0, pid = 0,
 			       msg = Msg},
 	      Result = netlink:request(rt, Req),
-	      lager:debug("Sent: ~p, Result: ~p", [Req, Result])
+	      isis_logger:debug("Sent: ~p, Result: ~p", [Req, Result])
       end, lists:zip(NHs, IFs)),
     State.
 
@@ -622,6 +622,6 @@ delete_route_via_netlink(#isis_route_key
 		     seq = 0, pid = 0,
 		     msg = Msg},
     Result = netlink:request(rt, Req),
-    lager:debug("Sent: ~p, Result: ~p", [Req, Result]),
+    isis_logger:debug("Sent: ~p, Result: ~p", [Req, Result]),
     State.
 

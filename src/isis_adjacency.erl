@@ -164,8 +164,8 @@ up({iih, IIH}, State) ->
 	verify_interface_addresses(IIH, NewState),
     {next_state, NextState, NewState2};
 up({timeout}, State) ->
-    lager:debug("Timeout on adjacency with ~p", 
-		[State#state.neighbor_id]),
+    isis_logger:debug("Timeout on adjacency with ~p", 
+		      [State#state.neighbor_id]),
     NewState = start_timer(State),
     update_adjacency(down, State),
     isis_system:delete_all_sid_addresses(self()),
@@ -264,7 +264,7 @@ handle_info({timeout, _Ref, trigger}, StateName, State) ->
 %% @end
 %%--------------------------------------------------------------------
 terminate(_Reason, _StateName, State) ->
-    lager:info("Adjacency with ~p ~p down due to timeout",
+    isis_logger:info("Adjacency with ~p ~p down due to timeout",
 	       [State#state.neighbor, State#state.level]),
     ok.
 
@@ -335,7 +335,7 @@ cancel_timer(State) ->
 seen_ourselves(#isis_iih{tlv = TLVs}, State) ->
     R = lists:filter(fun(A) -> seen_ourselves_tlv(A, State) end,
 		  TLVs),
-    lager:debug("Seen ourselves in IIH from ~p: ~p",
+    isis_logger:debug("Seen ourselves in IIH from ~p: ~p",
 		[State#state.neighbor_id, length(R) > 0]),
     length(R) > 0.
 

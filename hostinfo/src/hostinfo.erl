@@ -173,7 +173,6 @@ handle_info({dnssd, _Ref, {browse, add, {ServiceName, ServiceType, Domain}}}, St
 	 | State#state.dnssd_tlvs],
     {noreply, State#state{dnssd_tlvs = NewDNS}};
 handle_info(Info, State) ->
-    lager:error("Failed to handle info msg ~p", [Info]),
     {noreply, State}.
 
 %%--------------------------------------------------------------------

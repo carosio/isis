@@ -2,13 +2,17 @@
  [{description, "IS-IS implementation in erlang"},
   {vsn, "1"},
   {registered, []},
-  {included_applications, [yaws, hostinfo, dnssd]},
+  {included_applications,
+   [yaws, hostinfo, dnssd
+   %% , recon
+   ]},
   {applications, [
 		  kernel,
 		  stdlib,
 		  crypto,
 		  procket,
-		  lager,
+		  %% Uncomment to include lager
+		  %% lager,
 		  gen_netlink,
 		  xmerl
 		  ]},

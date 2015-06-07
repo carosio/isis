@@ -410,7 +410,7 @@ decode_tlvs(<<Type:8, Length:8, Value:Length/binary, Rest/binary>>,
 	catch
 	    bad_enum -> unknown
 	end,
-    %% lager:info("Decoding TLV: ~p", [<<Type:8, Length:8, Value/binary>>]),
+    %% isis_logger:info("Decoding TLV: ~p", [<<Type:8, Length:8, Value/binary>>]),
     case TLVDecode(TLV_Type, Type, Value) of
 	error -> throw(decode_error);
 	TLV ->
@@ -688,12 +688,12 @@ do_update_tlv(TLV, Node, Level, Frags) ->
     merge_whole_tlv(F, TLV, Node, Level, Frags).
 update_tlv(TLV, Node, Level, Frags) ->
     {TLVName, TLVDetails} = pp_tlv(TLV),
-    lager:warning("Updating TLV for ~p PN ~B: ~s: ~s",
+    isis_logger:warning("Updating TLV for ~p PN ~B: ~s: ~s",
 		  [Level, Node, TLVName, TLVDetails]),
     try do_update_tlv(TLV, Node, Level, Frags) of
 	F -> F
     catch
-	Class:Error -> lager:error("update_tlv: ~p:~p", [Class, Error]),
+	Class:Error -> isis_logger:error("update_tlv: ~p:~p", [Class, Error]),
 		       Frags
     end.
 
@@ -722,12 +722,12 @@ do_delete_tlv(TLV, Node, Level, Frags) ->
     delete_whole_tlv(fun(T) -> element(1, T) =/= element(1, TLV) end,
 		     Node, Level, Frags).
 delete_tlv(TLV, Node, Level, Frags) ->
-    lager:warning("Deleting TLV for ~p PN ~B: ~p",
-		  [Level, Node, lager:pr(TLV, ?MODULE)]),
+    isis_logger:warning("Deleting TLV for ~p PN ~B: ~p",
+		  [Level, Node, isis_logger:pr(TLV, ?MODULE)]),
     try do_delete_tlv(TLV, Node, Level, Frags) of
 	F -> F
     catch
-	Class:Error -> lager:info("delete_tlv: ~p:~p", [Class, Error]),
+	Class:Error -> isis_logger:info("delete_tlv: ~p:~p", [Class, Error]),
 		       Frags
     end.	     
 
@@ -1355,7 +1355,7 @@ decode_pdu(Type, _Header, PDU_Len, Rest) when
     end;
 decode_pdu(Type, _Header, PDU_Len, Rest) when
       Type == level1_psnp; Type == level2_psnp ->
-    lager:error("Handling PSNP packet..."),
+    isis_logger:error("Handling PSNP packet..."),
     case decode_common_psnp(Rest, PDU_Len) of
 	error -> throw(decode_error);
 	{ok, PSNP} ->
@@ -1449,6 +1449,8 @@ binary_list_size([H | T], Acc) when is_list(H) ->
     binary_list_size(T, binary_list_size(H, Acc));
 binary_list_size([H | T], Acc) when is_binary(H) ->
     binary_list_size(T, Acc + byte_size(H));
+binary_list_size([_ | T], Acc) ->
+    binary_list_size(T, Acc);
 %binary_list_size(B, Acc) when is_binary(B)->
 %    Acc + byte_size(B);
 binary_list_size([], Acc) ->

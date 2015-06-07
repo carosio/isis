@@ -84,13 +84,13 @@ unsubscribe(Pid) ->
 add(#isis_route{} = Route) ->
     gen_server:call(?MODULE, {send_route, Route});
 add(Unknown) ->
-    lager:error("zclient:add called with unknown argument ~p", [Unknown]),
+    isis_logger:error("zclient:add called with unknown argument ~p", [Unknown]),
     unknown.
 
 delete(#isis_route_key{} = RouteKey) ->
     gen_server:call(?MODULE, {delete_route, RouteKey});
 delete(Unknown) ->
-    lager:error("zclient:delete called with unknown argument ~p", [Unknown]),
+    isis_logger:error("zclient:delete called with unknown argument ~p", [Unknown]),
     unknown.
 
 request_redist(Type) ->
@@ -354,7 +354,7 @@ handle_zclient_cmd(interface_address_add,
     I = dict:fetch(Ifindex, State#state.interfaces),
     A = #isis_prefix{afi = ipv4,
 		     address = Address, mask_length = Mask},
-    lager:debug("Adding address ~s/~p to interface ~p~n",
+    isis_logger:debug("Adding address ~s/~p to interface ~p~n",
 		[isis_system:address_to_string(ipv4, Address), Mask, I#isis_interface.name]),
     update_interface_address(add, A, I, State);
 handle_zclient_cmd(interface_address_add,
@@ -365,7 +365,7 @@ handle_zclient_cmd(interface_address_add,
     I = dict:fetch(Ifindex, State#state.interfaces),
     A = #isis_prefix{afi = ipv6,
 			address = Address, mask_length = Mask},
-    lager:debug("Adding address ~s/~p to interface ~p~n",
+    isis_logger:debug("Adding address ~s/~p to interface ~p~n",
 		[isis_system:address_to_string(ipv6, Address), Mask, I#isis_interface.name]),
     update_interface_address(add, A, I, State);
 handle_zclient_cmd(interface_address_delete,

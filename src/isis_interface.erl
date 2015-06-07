@@ -34,6 +34,8 @@
 -define(SIOCADDMULTI, 16#8931).
 -define(SIOCGIFINDEX, 16#8933).
 
+-define(BINARY_LIMIT, 5 * 1024 * 1024).    %% GC after 5MB of binarys have accumulated..
+
 %% API
 -export([start_link/1, send_pdu/5, stop/1,
 	 get_state/3, get_state/1, set/2,
@@ -136,7 +138,7 @@ dump_config(Pid) ->
 init(Args) ->
     process_flag(trap_exit, true),
     State = extract_args(Args, #state{}),
-    lager:debug("Creating socket for interface ~p (~p)", [State#state.name, State]),
+    isis_logger:debug("Creating socket for interface ~p (~p)", [State#state.name, State]),
     case create_port(State#state.name) of
 	{Socket, Mac, Ifindex, MTU, Port} ->
 	    StartState = State#state{socket = Socket, port = Port,
@@ -145,6 +147,7 @@ init(Args) ->
 				     level1 = undef,
 				     level2 = undef
 				    },
+	    erlang:send_after(60 * 1000, self(), {gc}),
 	    {ok, StartState};
 	error ->
 	    {stop, no_socket}
@@ -325,19 +328,30 @@ handle_info({_port, {data,
 			handle_pdu(From, DecodedPDU, State),
 			State;
 		    {'EXIT', Reason} ->
-			lager:error("Len: ~p B: ~p", [Len, B]),
-			lager:error("Failed to decode: ~p for ~p", [PDU, Reason]),
+			isis_logger:error("Len: ~p B: ~p", [Len, B]),
+			isis_logger:error("Failed to decode: ~p for ~p", [PDU, Reason]),
 			State;
 		    CatchAll ->
-			lager:error("Failed to decode: ~p", [CatchAll]),
+			isis_logger:error("Failed to decode: ~p", [CatchAll]),
 			State
 		end;
-	    _ -> lager:error("PDU received is shorter than size: ~p ~p", [Len, PDU]),
+	    _ -> isis_logger:error("PDU received is shorter than size: ~p ~p", [Len, PDU]),
 		 State
 	end,
     {noreply, NewState};
 
 handle_info({_port, {data, _}}, State) ->
+    {noreply, State};
+
+handle_info({gc}, State) ->
+    case erlang:memory(binary) of
+	Binary when Binary > ?BINARY_LIMIT ->
+	    isis_logger:debug("Forcing garbage collection..."),
+	    erlang:garbage_collect(self());
+	_ ->
+	    ok
+    end,
+    erlang:send_after(60 * 1000, self(), {gc}),
     {noreply, State};
 
 handle_info({'EXIT', Pid, normal}, State)
@@ -513,7 +527,7 @@ create_port(Name) ->
 	    Port = erlang:open_port({fd, S, S}, [binary, stream]),
 	    {S, Mac, Ifindex, MTU, Port};
 	{error, einval} ->
-	    lager:error("Failed to create socket for ~s", [Name]),
+	    isis_logger:error("Failed to create socket for ~s", [Name]),
 	    error
     end.
 

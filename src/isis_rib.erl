@@ -223,9 +223,9 @@ process_spf(SPF, #state{rib_api = RibApi} = State) ->
     Installed = lists:foldl(UpdateRib, sets:new(), SPF),
     Present = sets:from_list(extract_prefixes(State)),
     Delete = sets:subtract(Present, Installed),
-    %% lager:debug("Installing: ~p", [sets:to_list(Installed)]),
-    %% lager:debug("Present: ~p", [sets:to_list(Present)]),
-    %% lager:debug("Withdraw set: ~p", [sets:to_list(Delete)]),
+    %% isis_logger:debug("Installing: ~p", [sets:to_list(Installed)]),
+    %% isis_logger:debug("Present: ~p", [sets:to_list(Present)]),
+    %% isis_logger:debug("Withdraw set: ~p", [sets:to_list(Delete)]),
     lists:map(fun(R) ->
 		      RibApi:delete(R),
 		      ets:delete(State#state.rib, R)
