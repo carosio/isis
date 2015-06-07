@@ -68,6 +68,10 @@ start_link() ->
 %%--------------------------------------------------------------------
 init([]) ->
 
+    %% Force GC to consider binaries touched by a process that hasn't
+    %% died yet..
+    erlang:system_flag(fullsweep_after, 100),
+
     %% <<A:32,B:32,C:32>> = crypto:rand_bytes(12),
     %% random:seed({A, B, C}),
     random:seed(now()),
