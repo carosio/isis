@@ -153,7 +153,7 @@
 -enum({authentication_type,
        [{unknown, 0},
 	{text, 1},
-	{md5, 17}]}).
+	{md5, 54}]}).
 
 -enum({boolean,
        [{false, 0},
