@@ -66,8 +66,8 @@ error(String, Items) ->
 %%%===================================================================
 log(Level, Pid, String, Items) ->
     case code:is_loaded(lager) of
-	true ->
-	    lager:log(Level, Pid, String, Items);
+	false ->
+	    io:fwrite("ISIS: ~p ~p ~s ~p~n", [Pid, Level, String, Items]);
 	_ ->
-	    io:fwrite("ISIS: ~p ~p ~s ~p~n", [Pid, Level, String, Items])
+	    lager:log(Level, Pid, String, Items)
     end.
