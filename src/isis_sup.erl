@@ -72,9 +72,9 @@ init([]) ->
     %% died yet..
     erlang:system_flag(fullsweep_after, 100),
 
-    %% <<A:32,B:32,C:32>> = crypto:rand_bytes(12),
-    %% random:seed({A, B, C}),
-    random:seed(now()),
+    %% We need crypto for MD5 anyway, so use it here...
+    <<A:32,B:32,C:32>> = crypto:rand_bytes(12),
+    random:seed({A, B, C}),
 
     RestartStrategy = one_for_one,
     MaxRestarts = 1000,
