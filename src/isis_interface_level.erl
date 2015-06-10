@@ -56,8 +56,8 @@
 	  csnp_timer = ?ISIS_CSNP_TIMER,
 	  metric = ?DEFAULT_METRIC,
 	  metric_type = wide :: wide | narrow,
-	  authentication_type = none :: none | text | md5,
-	  authentication_key = <<>>,
+	  authentication = none :: isis_crypto(),
+	  level_authentication = none :: isis_crypto(),
 	  padding = true :: true | false,  %% To pad or not...
 	  iih_timer = undef :: reference() | undef, %% iih timer for this level
 	  ssn_timer = undef :: reference() | undef, %% SSN timer
@@ -149,9 +149,13 @@ init(Args) ->
 %% @end
 %%--------------------------------------------------------------------
 handle_call({send_iih}, _From, State) ->
-    send_iih(State),
-    {reply,ok, State};
-
+    try send_iih(State) of 
+	_ -> {reply, ok, State}
+    catch
+	bad_enum -> 
+	    isis_logger:error("Failed in send_iih"),
+	    {reply, ok, State}
+    end;
 handle_call({get_state}, _From, State) ->
     {reply, State, State};
 
@@ -170,8 +174,9 @@ handle_call({get_state, priority}, _From, State) ->
 handle_call({get_state, csnp_interval}, _From, State) ->
     {reply, State#state.csnp_timer, State};
 handle_call({get_state, authentication}, _From, State) ->
-    {reply, {State#state.authentication_type,
-	     State#state.authentication_key}, State};
+    {reply, State#state.authentication, State};
+handle_call({get_state, level_authentication}, _From, State) ->
+    {reply, State#state.level_authentication, State};
 handle_call({get_state, pseudonode}, _From, State) ->
     {reply, State#state.pseudonode, State};
 
@@ -233,7 +238,10 @@ handle_cast({received, From, PDU}, State) ->
     NewState = 
 	case verify_authentication(PDU, State) of
 	    valid -> process_pdu(From, PDU, State);
-	    _ -> State
+	    Error ->
+		isis_logger:info("Ignoring PDU, authentication ~p", [Error]),
+		isis_logger:info("PDU failed checksum: ~p ~x", [Error, PDU]),
+		State
 	end,
     {noreply, NewState};
 
@@ -532,7 +540,7 @@ send_iih(#state{system_id = SID} = State) ->
 	      end,
     BaseTLVs = ISNeighborsTLV 	++ AreasTLV ++ IPv4TLV ++ IPv6TLV ++
 	[#isis_tlv_protocols_supported{protocols = [ipv4, ipv6]}],
-    TLVs = authentication_tlv(State) ++ BaseTLVs,
+    TLVs = isis_protocol:authentication_tlv(State#state.authentication) ++ BaseTLVs,
     IIH = #isis_iih{
 	     pdu_type = PDUType,
 	     circuit_type = Circuit,
@@ -542,11 +550,11 @@ send_iih(#state{system_id = SID} = State) ->
 	     dis = DIS,
 	     tlv = TLVs
 	},
-    {ok, _, PDU_Size} = isis_protocol:encode(IIH),
+    {ok, _, PDU_Size} = isis_protocol:encode(IIH, State#state.authentication),
     PadTLVs = generate_padding(State#state.mtu - PDU_Size -3,
 			       State),
     ActualIIH = IIH#isis_iih{tlv = TLVs ++ PadTLVs},
-    {ok, SendPDU, SendPDU_Size} = isis_protocol:encode(ActualIIH),
+    {ok, SendPDU, SendPDU_Size} = isis_protocol:encode(ActualIIH, State#state.authentication),
     send_pdu(iih, SendPDU, SendPDU_Size, State).
 
 
@@ -676,7 +684,7 @@ generate_csnp({Status, _}, Chunk_Size, Summary,
 							   lifetime = LF}
 			end, Summary),
     DetailPackageFun = fun(F) -> [#isis_tlv_lsp_entry{lsps = F}] end,
-    TLVs = authentication_tlv(State)
+    TLVs = isis_protocol:authentication_tlv(State#state.level_authentication)
 	++ isis_protocol:package_tlvs(Details, DetailPackageFun,
 				      ?LSP_ENTRY_DETAIL_PER_TLV),
     CSNP = #isis_csnp{pdu_type = PDU_Type,
@@ -684,7 +692,7 @@ generate_csnp({Status, _}, Chunk_Size, Summary,
 		      start_lsp_id = Start,
 		      end_lsp_id = End,
 		      tlv = TLVs},
-    {ok, PDU, PDU_Size} = isis_protocol:encode(CSNP),
+    {ok, PDU, PDU_Size} = isis_protocol:encode(CSNP, State#state.level_authentication),
     send_pdu(csnp, PDU, PDU_Size, State),
     ok.
 
@@ -809,7 +817,7 @@ send_lsps(LSPs, State) ->
     %% AuthTLV = authentication_tlv(State),
     lists:map(fun(#isis_lsp{} = L) ->
 		      %% NewTLVs = AuthTLV ++ TLVs,
-		      try isis_protocol:encode(L) of
+		      try isis_protocol:encode(L, none) of
 			  {ok, Bin, Len} -> send_pdu(lsp, Bin, Len, State);
 			  _ -> isis_logger:error("Failed to encode LSP ~p~n",
 					   [L#isis_lsp.lsp_id])
@@ -857,7 +865,7 @@ send_psnp(#state{ssn = SSN} = State) ->
 	    level_1 -> level1_psnp;
 	    level_2 -> level2_psnp
 	end,
-    AuthTLV = authentication_tlv(State),
+    AuthTLV = isis_protocol:authentication_tlv(State#state.level_authentication),
     TLVs = 
 	lists:map(fun(LSP) -> #isis_tlv_lsp_entry_detail{lsp_id = LSP} end,
 		  SSN),
@@ -876,7 +884,7 @@ send_psnp(#state{ssn = SSN} = State) ->
     List_of_PDUs = isis_protocol:package_tlvs(List_of_TLVs, TLVPackageFun,
 					      ?LSP_ENTRY_PER_PDU),
     lists:map(fun(F) ->
-		      case isis_protocol:encode(F) of
+		      case isis_protocol:encode(F, State#state.level_authentication) of
 			  {ok, Bin, Len} -> send_pdu(psnp, Bin, Len, State);
 			  _ -> io:format("Bad encoding for ~p~n", [F])
 		      end
@@ -984,14 +992,15 @@ handle_old_lsp(#isis_lsp{lsp_id = ID, tlv = TLVs,
 		_ ->
 		    isis_logger:error("Purging an old LSP that claims to be from us: ~p",
 				[ID]),
-		    PLSP = LSP#isis_lsp{tlv = [],
-					remaining_lifetime = 0,
-					sequence_number = SeqNo + 1, checksum = 0,
-					last_update = isis_protocol:current_timestamp()},
+		    PLSP =
+			LSP#isis_lsp{tlv = isis_protocol:authentication_tlv(State#state.level_authentication),
+				     remaining_lifetime = 0,
+				     sequence_number = SeqNo + 1, checksum = 0,
+				     last_update = isis_protocol:current_timestamp()},
 		    isis_lspdb:store_lsp(State#state.level, PLSP),
 		    isis_lspdb:flood_lsp(State#state.level,
 					 isis_system:list_interfaces(),
-					 PLSP),
+					 PLSP, State#state.level_authentication),
 		    purged
 	    end;
 	_ -> ok
@@ -1037,8 +1046,8 @@ handle_csnp(#isis_csnp{start_lsp_id = Start,
     %% Compare the 2 lists, to get our announce/request sets
     {Request, Announce} = compare_lsp_entries(DB_LSPs, CSNP_LSPs, {[], []}),
     announce_lsps(Announce, State),
-    isis_logger:debug("CSNP on ~s: ~p", [State#state.interface_name, isis_logger:pr(CSNP, isis_protocol)]),
-    isis_logger:debug("DB: ~p", [isis_logger:pr(DB_LSPs, isis_protocol)]),
+    %% isis_logger:debug("CSNP on ~s: ~p", [State#state.interface_name, isis_logger:pr(CSNP, isis_protocol)]),
+    %% isis_logger:debug("DB: ~p", [isis_logger:pr(DB_LSPs, isis_protocol)]),
     isis_logger:debug("Announce: ~p, Request: ~p", [Announce, Request]),
     NewState = update_ssn(Request, State),
     NewState.
@@ -1047,43 +1056,73 @@ handle_csnp(#isis_csnp{start_lsp_id = Start,
 %% @private
 %% @doc
 %%
-%% For now, we're just authenticating the IIH messages. Its trivial to
-%% change the following to authenticate all messages.
+%% Authenticating for 'text' is simple - that only works on the iih.
+%% For MD5 we need to check all PDU types, resetting the sig to zero
+%% and for LSP we reset the remaining lifetime & checksum to zero too
 %%
 %% @end
 %%--------------------------------------------------------------------
 verify_authentication(#isis_iih{tlv = TLVs} = PDU, State) ->
-    verify_authentication(TLVs, PDU, State);
-verify_authentication(#isis_lsp{}, _State) ->
-    valid;
-verify_authentication(#isis_csnp{}, _State) ->
-    valid;
-verify_authentication(#isis_psnp{}, _State) ->
-    valid.
+    verify_authentication(TLVs, PDU, State#state.authentication);
+verify_authentication(#isis_lsp{tlv = TLVs} = PDU, State) ->
+    verify_authentication(TLVs, PDU, State#state.level_authentication);
+verify_authentication(#isis_csnp{tlv = TLVs} = PDU, State) ->
+    verify_authentication(TLVs, PDU, State#state.level_authentication);
+verify_authentication(#isis_psnp{tlv = TLVs} = PDU, State) ->
+    verify_authentication(TLVs, PDU, State#state.level_authentication).
 
-verify_authentication(_, _, #state{authentication_type = none}) ->
+verify_authentication(_, _, none) ->
     valid;
-verify_authentication(TLVs, _PDU, #state{authentication_type = text,
-					authentication_key = Key}) ->
+verify_authentication(TLVs, #isis_iih{}, {text, Key}) ->
    case isis_protocol:filter_tlvs(isis_tlv_authentication, TLVs) of
        [#isis_tlv_authentication{
 	  type = text, signature = Key}] -> valid;
        [] -> missing_auth;
        _ -> invalid
    end;
+verify_authentication(TLVs, #isis_iih{} = PDU, {md5, Key}) ->
+    {ResetTLVs, Sig} = get_reset_md5_tlv(TLVs),
+    MD5IIH = PDU#isis_iih{tlv = ResetTLVs},
+    verify_authentication_md5(MD5IIH, Key, Sig);
+verify_authentication(_, #isis_lsp{}, {text, _}) ->
+    valid;
+verify_authentication(_TLVs, #isis_csnp{}, {text, _}) ->
+    valid;
+verify_authentication(TLVs, #isis_csnp{} = PDU, {md5, Key}) ->
+    {ResetTLVs, Sig} = get_reset_md5_tlv(TLVs),
+    MD5CSNP = PDU#isis_csnp{tlv = ResetTLVs},
+    verify_authentication_md5(MD5CSNP, Key, Sig);
+verify_authentication(_TLVs, #isis_psnp{}, {text, _}) ->
+    valid;
+verify_authentication(TLVs, #isis_psnp{} = PDU, {md5, Key}) ->
+    {ResetTLVs, Sig} = get_reset_md5_tlv(TLVs),
+    MD5PSNP = PDU#isis_psnp{tlv = ResetTLVs},
+    verify_authentication_md5(MD5PSNP, Key, Sig);
+verify_authentication(_, _PDU, {md5, _}) ->
+    valid;
 verify_authentication(_, _, _) ->
     error.
 
-authentication_tlv(State) ->    
-    case State#state.authentication_type of
-	none -> [];
-	text -> [#isis_tlv_authentication{
-		    type = text,
-		    signature = State#state.authentication_key}];
-	md5 -> [#isis_tlv_authentication{
-		   type = md5,
-		   %% Signature needs to be calculated later
-		   signature = <<0:(16*8)>>}]
+%% Take a set of TLVs, extract the MD5 signature, and
+%% reset it to zeros, ready for computing the hash...
+get_reset_md5_tlv(TLVs) ->
+    lists:mapfoldl(
+      fun(#isis_tlv_authentication{type = md5,
+				   signature = K}, _Sig) ->
+	      {#isis_tlv_authentication{type = md5,
+					signature = <<0:(16*8)>>},
+	       K};
+	 (T, Sig) -> {T, Sig}
+      end, missing_auth, TLVs).
+
+verify_authentication_md5(_, _, missing_auth) ->
+    missing_auth;
+verify_authentication_md5(PDU, Key, Sig) ->
+    case isis_protocol:md5sum(PDU, {md5, Key}) =:= Sig of
+	true ->
+	    valid;
+	_ ->
+	    invalid
     end.
 
 %%--------------------------------------------------------------------
@@ -1111,10 +1150,14 @@ parse_args([{interface, N, I, M} | T], State) ->
 parse_args([], State) ->
     State.
 
-set_values([{encryption, Type, Key} | Vs], State) ->
-    set_values(Vs, State#state{
-		     authentication_type = Type,
-		     authentication_key = Key});
+set_values([{encryption, none, _Key} | Vs], State) ->
+    set_values(Vs, State#state{authentication = none});
+set_values([{encryption, text, Key} | Vs], State) ->
+    set_values(Vs, State#state{authentication = {text, Key}});
+set_values([{encryption, md5, Key} | Vs], State) ->
+    set_values(Vs, State#state{authentication = {md5, Key}});
+set_values([{level_authentication, Crypto} | Vs], State) ->
+    set_values(Vs, State#state{level_authentication = Crypto});
 set_values([{metric, M} | Vs], State) ->
     set_values(Vs, State#state{metric = M});
 set_values([{csnp_timer, T} | Vs], State) ->
@@ -1195,7 +1238,7 @@ flood_lsp(LSP, State) ->
 		  false;
 	     (_) -> true
 	  end, Is),
-    isis_lspdb:flood_lsp(State#state.level, OutputIs, LSP).
+    isis_lspdb:flood_lsp(State#state.level, OutputIs, LSP, none).
 
 do_update_reachability_tlv(add, N, PN, Metric,
 			   #state{metric_type = narrow} = State) ->
@@ -1244,10 +1287,16 @@ update_reachability_tlv(Dir, N, PN, Metric, State) ->
     do_update_reachability_tlv(Dir, N, PN, Metric, State).
 
 dump_config_fields(Name, Level,
-		   [{authentication_type, text} | Fs],
-		   #state{authentication_key = K} = State) ->
+		   [{authentication, {text, K}} | Fs],
+		   State) ->
     io:format("isis_system:set_interface(\"~s\", ~s, [{encryption, ~s, ~p}]).~n",
 	      [Name, Level, text, K]),
+    dump_config_fields(Name, Level, Fs, State);
+dump_config_fields(Name, Level,
+		   [{authentication, {md5, K}} | Fs],
+		   State) ->
+    io:format("isis_system:set_interface(\"~s\", ~s, [{encryption, ~s, ~p}]).~n",
+	      [Name, Level, md5, K]),
     dump_config_fields(Name, Level, Fs, State);
 dump_config_fields(Name, Level,
 		   [{metric, M} | Fs], State)

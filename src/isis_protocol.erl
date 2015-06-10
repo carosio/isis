@@ -30,11 +30,13 @@
 -include_lib("eunit/include/eunit.hrl").
 
 %% API
--export([decode/1, encode/1, checksum/1,
+-export([decode/1, encode/2, checksum/1, md5sum/2,
 	 package_tlvs/3,
 	 current_timestamp/0, fixup_lifetime/1, filter_lifetime/1,
 	 filter_tlvs/2,
 	 update_tlv/4, create_new_frag/4,
+	 authentication_tlv/1,
+	 authentication_tlv_with_sig/2,
 	 pp_tlv/1]).
 
 %% For debugging...
@@ -76,15 +78,15 @@ decode(<<16#83:8, Len:8, Version:8, ID_Len:8,
 %% @doc encode a set of IS-IS terms into a PDU
 %% @end
 %%--------------------------------------------------------------------
--spec encode(isis_pdu()) -> {ok, list(), integer()} | error.
-encode(#isis_iih{} = IIH) ->
-    encode_iih(IIH);
-encode(#isis_lsp{} = LSP) ->
-    encode_lsp(LSP);
-encode(#isis_csnp{} = CSNP) ->
-    encode_csnp(CSNP);
-encode(#isis_psnp{} = PSNP) ->
-    encode_psnp(PSNP).
+-spec encode(isis_pdu(), [atom() | tuple()]) -> {ok, list(), integer()} | error.
+encode(#isis_iih{} = IIH, Crypto) ->
+    encode_iih(IIH, Crypto);
+encode(#isis_lsp{} = LSP, Crypto) ->
+    encode_lsp(LSP, Crypto);
+encode(#isis_csnp{} = CSNP, Crypto) ->
+    encode_csnp(CSNP, Crypto);
+encode(#isis_psnp{} = PSNP, Crypto) ->
+    encode_psnp(PSNP, Crypto).
 
 %%--------------------------------------------------------------------
 %% @doc encode a set of IS-IS terms into a PDU
@@ -310,7 +312,8 @@ decode_tlv(lsp_entry, _Type, Value) ->
     #isis_tlv_lsp_entry{lsps = LSPs};
 decode_tlv(authentication, _Type, <<AuthType:8, Rest/binary>> = R) ->
     try isis_enum:to_atom(authentication_type, AuthType) of
-	AT -> #isis_tlv_authentication{type = AT, signature = Rest}
+	AT -> 
+	    #isis_tlv_authentication{type = AT, signature = Rest}
     catch
 	bad_enum -> #isis_tlv_authentication{type = unknown,
 					     signature = R}
@@ -340,30 +343,30 @@ decode_tlv(protocols_supported, _Type, Value) ->
     #isis_tlv_protocols_supported{protocols = Protocols};
 decode_tlv(te_router_id, _Type, <<Router_Id:32>>) ->
     #isis_tlv_te_router_id{router_id = Router_Id};
-decode_tlv(restart, _Type,
-	   <<_Res:5, Supress:1, Ack:1, Restart:1>>) ->
-    #isis_tlv_restart{
-       request = isis_enum:to_atom(boolean, Restart),
-       acknowledge = isis_enum:to_atom(boolean, Ack),
-       supress_adjacency = isis_enum:to_atom(boolean, Supress),
-       remaining = -1,
-       neighbor = <<>>};
-decode_tlv(restart, _Type,
-	   <<_Res:5, Supress:1, Ack:1, Restart:1, Remaining:16>>) ->
-    #isis_tlv_restart{
-       request = isis_enum:to_atom(boolean, Restart),
-       acknowledge = isis_enum:to_atom(boolean, Ack),
-       supress_adjacency = isis_enum:to_atom(boolean, Supress),
-       remaining = Remaining,
-       neighbor = <<>>};
-decode_tlv(restart, _Type,
-	   <<_Res:5, Supress:1, Ack:1, Restart:1, Remaining:16, Neighbor:6/binary>>) ->
-    #isis_tlv_restart{
-       request = isis_enum:to_atom(boolean, Restart),
-       acknowledge = isis_enum:to_atom(boolean, Ack),
-       supress_adjacency = isis_enum:to_atom(boolean, Supress),
-       remaining = Remaining,
-       neighbor = Neighbor};
+%% decode_tlv(restart, _Type,
+%% 	   <<_Res:5, Supress:1, Ack:1, Restart:1>>) ->
+%%     #isis_tlv_restart{
+%%        request = isis_enum:to_atom(boolean, Restart),
+%%        acknowledge = isis_enum:to_atom(boolean, Ack),
+%%        supress_adjacency = isis_enum:to_atom(boolean, Supress),
+%%        remaining = -1,
+%%        neighbor = <<>>};
+%% decode_tlv(restart, _Type,
+%% 	   <<_Res:5, Supress:1, Ack:1, Restart:1, Remaining:16>>) ->
+%%     #isis_tlv_restart{
+%%        request = isis_enum:to_atom(boolean, Restart),
+%%        acknowledge = isis_enum:to_atom(boolean, Ack),
+%%        supress_adjacency = isis_enum:to_atom(boolean, Supress),
+%%        remaining = Remaining,
+%%        neighbor = <<>>};
+%% decode_tlv(restart, _Type,
+%% 	   <<_Res:5, Supress:1, Ack:1, Restart:1, Remaining:16, Neighbor:6/binary>>) ->
+%%     #isis_tlv_restart{
+%%        request = isis_enum:to_atom(boolean, Restart),
+%%        acknowledge = isis_enum:to_atom(boolean, Ack),
+%%        supress_adjacency = isis_enum:to_atom(boolean, Supress),
+%%        remaining = Remaining,
+%%        neighbor = Neighbor};
 decode_tlv(geninfo, _Type,
 	   <<_Reserved:4, 0:1, 1:1, D:1, S:1, AppID:16, Ip:32, AppGunk/binary>>) ->
     #isis_tlv_geninfo{
@@ -577,6 +580,16 @@ encode_tlv(#isis_tlv_lsp_entry{lsps = LSPS}) ->
     encode_tlv_list(lsp_entry, tlv, LSPb);
 encode_tlv(#isis_tlv_authentication{type = unknown}) ->
     [];
+encode_tlv(#isis_tlv_authentication{type = md5, signature = S,
+				    do_not_rewrite = DNR}) ->
+    AuthType = isis_enum:to_int(authentication_type, md5),
+    case DNR of
+	true ->
+	    encode_tlv(authentication, tlv, <<AuthType:8, S/binary>>);
+	_ ->
+	    %% Stuff a place holder in, so we can find where to insert the signature later
+	    {md5_signature, encode_tlv(authentication, tlv, <<AuthType:8, 0:(16*8)>>)}
+    end;
 encode_tlv(#isis_tlv_authentication{type = AT, signature = Sig}) ->
     AuthType = isis_enum:to_int(authentication_type, AT),
     encode_tlv(authentication, tlv, <<AuthType:8, Sig/binary>>);
@@ -585,6 +598,13 @@ encode_tlv(#isis_tlv_ip_internal_reachability{ip_reachability = IP_Reachability}
     encode_tlv_list(ip_internal_reachability, tlv, IP_Rb);
 encode_tlv(#isis_tlv_dynamic_hostname{hostname = Hostname}) ->
     encode_tlv(dynamic_hostname, tlv, binary:list_to_bin(Hostname));
+%% encode_tlv(#isis_tlv_restart{request = Req, acknowledge = Ack,
+%% 			     supress_adjacency = SA, remaining = Remaining,
+%% 			     neighbor = N}) ->
+%%     ReqI = isis_enum:to_int(boolean, Req),
+%%     AckI = isis_enum:to_int(boolean, Ack),
+%%     SAI = isis_enum:to_int(boolean, SA),
+%%     encode_tlv(restart, tlv, <<0:5, SAI:1, AckI:1, ReqI:1>>);
 encode_tlv(#isis_tlv_ip_interface_address{addresses = Addresses}) ->
     As = lists:map(fun(A) -> <<A:32>> end, Addresses),
     encode_tlv_list(ip_interface_address, tlv, As);
@@ -722,8 +742,8 @@ do_delete_tlv(TLV, Node, Level, Frags) ->
     delete_whole_tlv(fun(T) -> element(1, T) =/= element(1, TLV) end,
 		     Node, Level, Frags).
 delete_tlv(TLV, Node, Level, Frags) ->
-    isis_logger:warning("Deleting TLV for ~p PN ~B: ~p",
-		  [Level, Node, isis_logger:pr(TLV, ?MODULE)]),
+    %% isis_logger:warning("Deleting TLV for ~p PN ~B: ~p",
+    %%	  [Level, Node, isis_logger:pr(TLV, ?MODULE)]),
     try do_delete_tlv(TLV, Node, Level, Frags) of
 	F -> F
     catch
@@ -1370,30 +1390,33 @@ isis_header(Type, Len, IDLen, Area) ->
     <<16#83:8, Len:8, 1:8, IDLen:8, 0:3, T:5, 1:8, 0:8,
       Area:8>>.
 
--spec encode_iih(isis_iih()) -> {ok, list(), integer()} | error.
+-spec encode_iih(isis_iih(), isis_crypto()) -> {ok, list(), integer()} | error.
 encode_iih(#isis_iih{pdu_type = Type,
 		     circuit_type = Circuit_Type,
 		     source_id = Source_Id,
 		     holding_time = Holding_Time,
 		     priority = Priority,
 		     dis = DIS,
-		     tlv = TLVs}) ->
+		     tlv = TLVs},
+	   Crypto) ->
     Header = isis_header(Type, 27, 0, 0),
     CT = isis_enum:to_int(istype, Circuit_Type),
     IIH1 = <<0:6, CT:2, Source_Id:6/binary, Holding_Time:16>>,
     IIH2 = <<0:1, Priority:7, DIS:7/binary>>,
     TLV_Bs = encode_tlvs(TLVs, fun encode_tlv/1),
+    %% Add 2 bytes of length
     Len = binary_list_size([Header, IIH1, IIH2, TLV_Bs]) + 2,
-    Pdu = [Header, IIH1, <<Len:16>>, IIH2, TLV_Bs],
+    Pdu = insert_required_sig([Header, IIH1, <<Len:16>>, IIH2, TLV_Bs], Crypto),
     {ok, Pdu, Len}.
 
--spec encode_lsp(isis_lsp()) -> {ok, list(), integer()} | error.
+-spec encode_lsp(isis_lsp(), isis_crypto()) -> {ok, list(), integer()} | error.
 encode_lsp(#isis_lsp{version = _Version, pdu_type = Lsp_Type,
 		     remaining_lifetime = Lifetime,
 		     lsp_id = LSP_Id, id_length = ID_Len,
 		     sequence_number = Sequence,
 		     partition = Partition, overload = Overload,
-		     isis_type = ISType, tlv = TLVs}) ->
+		     isis_type = ISType, tlv = TLVs},
+	   Crypto) ->
     Header = isis_header(Lsp_Type, 27, ID_Len, 0),
     Pb = isis_enum:to_int(boolean, Partition),
     Ob = isis_enum:to_int(boolean, Overload),
@@ -1407,6 +1430,7 @@ encode_lsp(#isis_lsp{version = _Version, pdu_type = Lsp_Type,
     %% Hard code ATT bits to zero, deprecated...
     Lsp_Hdr3 = <<Pb:1, 0:4, Ob:1, Ib:2>>,
     TLV_Bs = encode_tlvs(TLVs, fun encode_tlv/1),
+    %% Add 2 bytes of len and 2 bytes of fletcher checksum, hence 4
     Len = binary_list_size([Header, Lsp_Hdr1, Lsp_Hdr2, Lsp_Hdr3, TLV_Bs]) + 4,
     {CSum1, CSum2} =
 	case Lifetime =< 0 of
@@ -1415,40 +1439,101 @@ encode_lsp(#isis_lsp{version = _Version, pdu_type = Lsp_Type,
 	end,
     PDU = [Header, <<Len:16>>, Lsp_Hdr1, Lsp_Hdr2,
 	  <<CSum1:8, CSum2:8>>, Lsp_Hdr3, TLV_Bs],
-    {ok, PDU, Len}.
+    io:fwrite("Bin: ~p~n", [PDU]),
+    {ok, insert_required_sig(PDU, Crypto), Len}.
 
--spec encode_csnp(isis_csnp()) -> {ok, list(), integer()} | error.
+-spec encode_csnp(isis_csnp(), isis_crypto()) -> {ok, list(), integer()} | error.
 encode_csnp(#isis_csnp{pdu_type = Type, source_id = Source_Id,
 		       start_lsp_id = Start_LSP, end_lsp_id = End_LSP,
-		       tlv = TLVs}) ->
+		       tlv = TLVs},
+	    Crypto) ->
     Header = isis_header(Type, 33, 0, 0),
     CSNP = <<Source_Id:7/binary, Start_LSP:8/binary, End_LSP:8/binary>>,
     TLV_Bs = encode_tlvs(TLVs, fun encode_tlv/1),
+    %% Add 2 bytes of len
     Len = binary_list_size([Header, CSNP, TLV_Bs]) + 2,
-    {ok, [Header, <<Len:16>>, CSNP, TLV_Bs], Len}.
+    {ok, insert_required_sig([Header, <<Len:16>>, CSNP, TLV_Bs], Crypto), Len}.
 
--spec encode_psnp(isis_psnp()) -> {ok, list(), integer()} | error.
+-spec encode_psnp(isis_psnp(), isis_crypto()) -> {ok, list(), integer()} | error.
 encode_psnp(#isis_psnp{pdu_type = Type, source_id = Source_Id,
-		       tlv = TLVs}) ->
+		       tlv = TLVs},
+	   Crypto) ->
     Header = isis_header(Type, 17, 0, 0),
     PSNP = <<Source_Id:7/binary>>,
     TLV_Bs = encode_tlvs(TLVs, fun encode_tlv/1),
+    %% Add 2 bytes of len
     Len = binary_list_size([Header, PSNP, TLV_Bs]) + 2,
-    {ok, [Header, <<Len:16>>, PSNP, TLV_Bs], Len}.
+    {ok, insert_required_sig([Header, <<Len:16>>, PSNP, TLV_Bs], Crypto), Len}.
 
 %%%===================================================================
 %%% Utility functions
 %%%===================================================================
 
 %%--------------------------------------------------------------------
+%% @doc Check to see if we require an crypto sig computing and
+%% inserting...
+%% --------------------------------------------------------------------
+hunt_for_sigmarker(Item, {CompleteList, Crypto}) 
+  when is_list(Item) ->
+    {insert_required_sig(CompleteList, Item, Crypto), {CompleteList, Crypto}};
+hunt_for_sigmarker(Item, {CompleteList, Crypto})
+  when is_binary(Item) ->
+    {Item, {CompleteList, Crypto}};
+hunt_for_sigmarker({md5_signature, [_TLV]}, {CompleteList, {md5, Key} = Crypto}) ->
+    %% MD5 sig required, generate one...
+    MD5sum = calculate_md5sum(CompleteList, Key),
+    AuthType = isis_enum:to_int(authentication_type, md5),
+    {encode_tlv(authentication, tlv, <<AuthType:8, MD5sum:16/binary>>),
+     {CompleteList, Crypto}};
+hunt_for_sigmarker({md5_signature, [TLV]}, {CompleteList, Crypto}) ->
+    %% Found an md5sig marker, but we're not doing MD5???
+    %% Do what we can...
+    {TLV, {CompleteList, Crypto}};
+hunt_for_sigmarker(A, B) ->
+    isis_logger:debug("hunt_for_sigmarker called with ~p ~p", [A, B]),
+    {A, B}.
+
+%% If the crypto is 'none', there's no work to do here...
+insert_required_sig(PduBinList, Crypto) ->
+    insert_required_sig(PduBinList, PduBinList, Crypto).
+
+insert_required_sig(CompleteList, SubList, Crypto) ->
+    {NewPDUList, _} = 
+	lists:mapfoldl(
+	  fun hunt_for_sigmarker/2,
+	  {CompleteList, Crypto}, SubList),
+    NewPDUList.
+
+
+calculate_md5sum(IoList, Key) ->
+    Ctxt = crypto:hmac_init(md5, Key),
+    NCtxt = calculate_md5sum_work(Ctxt, IoList),
+    crypto:hmac_final(NCtxt).
+
+calculate_md5sum_work(Ctxt, IoList) ->
+    lists:foldl(
+      fun(E, C) when is_list(E) ->
+	      calculate_md5sum_work(C, E);
+	 (E, C) when is_binary(E) ->
+	      crypto:hmac_update(C, E);
+	 ({md5_signature, [E]}, C) when is_binary(E) ->
+	      crypto:hmac_update(C, E)
+      end, Ctxt, IoList).
+
+%%--------------------------------------------------------------------
 %% @doc Converts a deeplist into a size, used rather than flattening
 %% the list of lists of binarys that are used to build PDUs
+%% Ignore list heads which are not binary, or {_, Binary}
+%% {_, Binary} could be {md5_signature, Binary}
 %% @end
 %%--------------------------------------------------------------------
 binary_list_size([H | T], Acc) when is_list(H) ->
     binary_list_size(T, binary_list_size(H, Acc));
 binary_list_size([H | T], Acc) when is_binary(H) ->
     binary_list_size(T, Acc + byte_size(H));
+%% Handle the messy case of {md5_signature, [<<tlv>>]}
+binary_list_size([{_, H} | T], Acc) when is_list(H) ->
+    binary_list_size(T, binary_list_size(H, Acc));
 binary_list_size([_ | T], Acc) ->
     binary_list_size(T, Acc);
 %binary_list_size(B, Acc) when is_binary(B)->
@@ -1579,6 +1664,62 @@ tlv_size(TLV) ->
     TLVB = encode_tlv(TLV),
     binary_list_size(TLVB).
 
+%%--------------------------------------------------------------------
+%% @doc Calculate the md5 checksum for a given PDU. USed when
+%% verifying a PDU and when generating one.  @end
+%% --------------------------------------------------------------------
+md5sum(_PDU, none) ->
+    error;
+md5sum(PDU, {md5, Key}) ->
+    {ok, PduBin, _Len} = encode(PDU, none),
+    calculate_md5sum(PduBin, Key).
+
+%%--------------------------------------------------------------------
+%% @doc Return the authentication TLV for the given crypto type @end
+%% --------------------------------------------------------------------
+authentication_tlv(Crypto) ->
+    case Crypto of
+	none -> [];
+	{text, Key} ->
+	    [#isis_tlv_authentication{
+		type = text,
+		signature = Key}];
+	{md5, _Key} ->
+	    [#isis_tlv_authentication{
+		type = md5,
+		%% Signature needs to be calculated later, so must be rewritten
+		signature = <<0:(16*8)>>,
+		do_not_rewrite = false}]
+    end.
+
+%% Used for self-generated LSPS. We want to generate the auth_tlv and
+%% calculate the signature
+authentication_tlv_with_sig(
+  #isis_lsp{version = _Version, pdu_type = Lsp_Type,
+	    lsp_id = LSP_Id, id_length = ID_Len,
+	    sequence_number = Sequence,
+	    partition = Partition, overload = Overload,
+	    isis_type = ISType, tlv = TLVs},
+  {md5, Key} = Crypto) ->
+    AuthTLV = authentication_tlv(Crypto),
+    Header = isis_header(Lsp_Type, 27, ID_Len, 0),
+    Pb = isis_enum:to_int(boolean, Partition),
+    Ob = isis_enum:to_int(boolean, Overload),
+    Ib = isis_enum:to_int(istype, ISType),
+    Lsp_Hdr1 = <<0:16>>,
+    Lsp_Hdr2 = <<LSP_Id:8/binary, Sequence:32>>,
+    %% Hard code ATT bits to zero, deprecated...
+    Lsp_Hdr3 = <<Pb:1, 0:4, Ob:1, Ib:2>>,
+    TLV_Bs = encode_tlvs(AuthTLV ++ TLVs, fun encode_tlv/1),
+    Len = binary_list_size([Header, Lsp_Hdr1, Lsp_Hdr2, Lsp_Hdr3, TLV_Bs]) + 4,
+    Sig = calculate_md5sum([Header, <<Len:16>>, Lsp_Hdr1, Lsp_Hdr2, <<0:16>>, Lsp_Hdr3, TLV_Bs], Key),
+    [#isis_tlv_authentication{
+     	type = md5,
+     	signature = Sig}];
+authentication_tlv_with_sig(_PDU, none) ->
+    [].
+
+
 %%%===================================================================
 %%% Pretty Print a TLV
 %%%===================================================================
@@ -1674,6 +1815,6 @@ isis_protocol_test() ->
     ?assertMatch({ok, _CSNP}, DecodedCSNPResult),
     {ok, LSP} = DecodeDLSPResult,
     %% Expected to fail from here for now...
-    {ok, EncodedLSP, _Len} = isis_protocol:encode(LSP),
+    {ok, EncodedLSP, _Len} = isis_protocol:encode(LSP, none),
     ELSP = list_to_binary(EncodedLSP),
     ?assertMatch(ELSP, isis_debug:valid_lsp()).

@@ -91,6 +91,8 @@
 		l2_system_ids :: dict(),
 		l1_overload = false :: boolean(),
 		l2_overload = false :: boolean(),
+		l1_authentication = none :: isis_crypto(),
+		l2_authentication = none :: isis_crypto(),
 		refresh_timer = undef,
 		periodic_refresh,
 		names,
@@ -854,7 +856,7 @@ lsp_ageout_check(#state{frags = Frags} = State) ->
 		      CSum = isis_protocol:checksum(NewLSP),
 		      CompleteLSP = NewLSP#isis_lsp{checksum = CSum},
 		      isis_lspdb:flood_lsp(Level, ets:tab2list(State#state.interfaces),
-					   CompleteLSP),
+					   CompleteLSP, none),
 		      {isis_lspdb:store_lsp(Level, CompleteLSP), Level};
 		 (_, Level) -> 
 		      {false, Level}
@@ -883,16 +885,35 @@ create_lsp_from_frag(#lsp_frag{level = Level, sequence = SN} = Frag,
 			    end;
 		_ -> 1
 	    end,
+    AuthLSP =
+	#isis_lsp{lsp_id = LSP_Id, remaining_lifetime = 0,
+		  last_update = isis_protocol:current_timestamp(),
+		  sequence_number = SeqNo, partition = false,
+		  overload = system_overload(Level, State),
+		  isis_type = level_1_2,
+		  pdu_type = PDUType,
+		  tlv = Frag#lsp_frag.tlvs},
+    %% Generate the authentication TLV signed to match this LSP
+    AuthTLV =
+	case Level of
+	    level_1 ->
+		isis_protocol:authentication_tlv_with_sig(AuthLSP,
+							  State#state.l1_authentication);
+	    level_2 ->
+		isis_protocol:authentication_tlv_with_sig(AuthLSP,
+							  State#state.l2_authentication)
+	end,
+    %% Now the fletcher checksum...
     LSP = #isis_lsp{lsp_id = LSP_Id, remaining_lifetime = State#state.max_lsp_lifetime,
 		    last_update = isis_protocol:current_timestamp(),
 		    sequence_number = SeqNo, partition = false,
 		    overload = system_overload(Level, State),
 		    isis_type = level_1_2,
 		    pdu_type = PDUType,
-		    tlv = Frag#lsp_frag.tlvs},
+		    tlv = AuthTLV ++ Frag#lsp_frag.tlvs},
     CSum = isis_protocol:checksum(LSP),
     isis_lspdb:store_lsp(Level, LSP#isis_lsp{checksum = CSum}),
-    isis_lspdb:flood_lsp(Level, ets:tab2list(State#state.interfaces), LSP).
+    isis_lspdb:flood_lsp(Level, ets:tab2list(State#state.interfaces), LSP, none).
 
 generate_lspid_from_frag(#lsp_frag{pseudonode = PN, fragment = FragNo},
 			 #state{system_id = SID}) ->
@@ -1059,7 +1080,7 @@ purge_lsps(MatchFun, State) ->
     F = fun(#lsp_frag{pseudonode = PN, level = L} = Frag) ->
 		case MatchFun(PN, L) of
 		    true -> LSP_Id = generate_lspid_from_frag(Frag, State),
-			    purge_lsp(L, LSP_Id, State),
+			    purge_lsp(L, LSP_Id, get_level_crypto(L, State), State),
 			    false;
 		    _ -> true
 		end
@@ -1085,9 +1106,9 @@ purge_all_lsps(State) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
-purge_lsp(Level, LSP, _State) ->
+purge_lsp(Level, LSP, Crypto, _State) ->
     isis_logger:error("Purging LSP: ~p", [LSP]),
-    isis_lspdb:purge_lsp(Level, LSP).
+    isis_lspdb:purge_lsp(Level, LSP, Crypto).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -1485,6 +1506,7 @@ should_withdraw_route(#isis_prefix{
 should_withdraw_route(_, _) ->
     true.
 
+%% Change of System ID - propogate to all interested parties
 change_system_id(Id, State) ->
     isis_logger:info("System ID set to ~p", [Id]),
     isis_lspdb:set_system_id(level_1, Id),
@@ -1498,6 +1520,26 @@ change_system_id(Id, State) ->
 	  end,
     lists:map(fun(I) -> PropogateFun(I, level_1) end, ets:tab2list(State#state.interfaces)),
     lists:map(fun(I) -> PropogateFun(I, level_2) end, ets:tab2list(State#state.interfaces)).
+
+%% Change of level authentication - we need to update our LSPs and
+%% inform all interface_level code about their new requirements..
+change_level_authentication(Auth, Level, State) ->
+    PropogateFun =
+	fun(I) ->
+		case isis_interface:get_level_pid(I#isis_interface.pid, Level) of
+		    not_enabled ->
+			ok;
+		    P -> isis_interface_level:set(P, [{level_authentication, Auth}])
+		end
+	end,
+    lists:map(PropogateFun, ets:tab2list(State#state.interfaces)),
+    force_refresh_lsp(State).
+
+get_level_crypto(Level, State) ->
+    case Level of
+	level_1 -> State#state.l1_authentication;
+	level_2 -> State#state.l2_authentication
+    end.
 
 %%%===================================================================
 %% create_lowest_nexthop_map
@@ -1535,6 +1577,22 @@ set_overload(level_2, Ol, #state{l2_overload = OriginalOl} = State) ->
 
 set_state([{lsp_lifetime, Value} | Vs], State) ->
     set_state(Vs, State#state{max_lsp_lifetime = Value});
+set_state([{l1_authentication, none} | Vs], State) ->
+    NewState = State#state{l1_authentication = none},
+    change_level_authentication(none, level_1, NewState),
+    set_state(Vs, NewState);
+set_state([{l1_authentication, md5, K} | Vs], State) ->
+    NewState = State#state{l1_authentication = {md5, K}},
+    change_level_authentication({md5, K}, level_1, NewState),
+    set_state(Vs, NewState);
+set_state([{l2_authentication, none} | Vs], State) ->
+    NewState = State#state{l2_authentication = none},
+    change_level_authentication(none, level_2, NewState),
+    set_state(Vs, NewState);
+set_state([{l2_authentication, md5, K} | Vs], State) ->
+    NewState = State#state{l2_authentication = {md5, K}},
+    change_level_authentication({md5, K}, level_2, NewState),
+    set_state(Vs, NewState);
 set_state([_ | Vs], State) ->
     set_state(Vs, State);
 set_state([], State) ->
@@ -1573,6 +1631,12 @@ dump_config_fields([{areas, A} | Fs], State) ->
 dump_config_fields([{max_lsp_lifetime, V} | Fs], State)
   when V =/= ?ISIS_MAX_LSP_LIFETIME ->
     io:format("isis_system:set_state([{lsp_lifetime, ~p}]).~n", [V]),
+    dump_config_fields(Fs, State);
+dump_config_fields([{l1_crypto_type, {md5, Key}} | Fs], State) ->
+    io:format("isis_system:set_state([{l1_authentication, {md5, ~p}}]).~n", [Key]),
+    dump_config_fields(Fs, State);
+dump_config_fields([{l2_crypto_type, {md5, Key}} | Fs], State) ->
+    io:format("isis_system:set_state([{l2_authentication, {md5, ~p}}]).~n", [Key]),
     dump_config_fields(Fs, State);
 dump_config_fields([{interfaces, I} | Fs], State) ->
     lists:map(fun(#isis_interface{enabled = true, pid = Pid, name = Name}) ->

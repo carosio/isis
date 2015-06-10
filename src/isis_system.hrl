@@ -73,3 +73,5 @@
 	   name :: string()
 	  }).
 -type isis_name() :: #isis_name{}.
+
+-type isis_crypto() :: none | {md5, binary()} | {text, string()}.
