@@ -364,7 +364,7 @@ handle_info({'EXIT', _Pid, normal}, State) ->
     {noreply, State};
 
 handle_info(Info, State) ->
-    io:format("Unknown message: ~p", [Info]),
+    isis_logger:debug("Unknown message: ~p", [Info]),
     {noreply, State}.
 
 %%--------------------------------------------------------------------
