@@ -86,13 +86,13 @@ get_state() ->
 add(#isis_route{} = Route) ->
     gen_server:call(?MODULE, {send_route, Route});
 add(Unknown) ->
-    lager:error("netlink:add called with unknown argument ~p", [Unknown]),
+    isis_logger:error("netlink:add called with unknown argument ~p", [Unknown]),
     unknown.
 
 delete(#isis_route_key{} = RouteKey) ->
     gen_server:call(?MODULE, {delete_route, RouteKey});
 delete(Unknown) ->
-    lager:error("netlink:delete called with unknown argument ~p", [Unknown]),
+    isis_logger:error("netlink:delete called with unknown argument ~p", [Unknown]),
     unknown.
 
 request_redist(Type) ->
