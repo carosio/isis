@@ -116,7 +116,8 @@
 
 -record (isis_tlv_authentication, {
 	   type :: atom(),
-	   signature :: binary()}).
+	   signature :: binary(),
+	   do_not_rewrite  = true :: boolean()}).
 -type isis_tlv_authentication() :: #isis_tlv_authentication{}.
 
 -record (isis_tlv_dynamic_hostname, {
