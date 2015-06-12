@@ -84,6 +84,7 @@
 		pseudonodes :: dict(),  %% PID -> Pseudonode mapping
 		reachability :: dict(),
 		interfaces,             %% Our 'state' per interface
+		default_interface_module = ?DEFAULT_INTERFACE_MODULE,
 		redistributed_routes,
 		ignore_list = [],       %% Interfaces to ignore
 		allowed_list = undef,
@@ -126,7 +127,10 @@ start_link(Args) ->
 %%--------------------------------------------------------------------
 -spec add_interface(string()) -> ok | error.
 add_interface(Name) ->
-    gen_server:call(?MODULE, {add_interface, Name}).
+    gen_server:call(?MODULE, {add_interface, Name, undefined}).
+
+add_interface(Name, Module) ->
+    gen_server:call(?MODULE, {add_interface, Name, Module}).
 
 -spec del_interface(string()) -> ok | error.
 del_interface(Name) ->
@@ -389,15 +393,24 @@ init(Args) ->
 %%                                   {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_call({add_interface, _}, _From,
+handle_call({add_interface, _, _}, _From,
 	    #state{system_id = ID, autoconf = false} = State) when is_binary(ID) == false ->
     {reply, {error, "invalid system id"}, State};
-handle_call({add_interface, Name}, _From,
+handle_call({add_interface, Name, Module}, _From,
 	    #state{interfaces = Interfaces} = State) ->
+    IM =
+	case Module of
+	    undefined ->
+		State#state.default_interface_module;
+	    _ -> Module
+	end,
     Interface = 
 	case ets:lookup(Interfaces, Name) of
-	    [I] -> I;
-	    _ -> #isis_interface{name = Name}
+	    [I] -> 
+		I#isis_interface{interface_module = IM};
+	    _ ->
+		#isis_interface{name = Name,
+				 interface_module = IM}
 	end,
     BringUp = case State#state.autoconf of
 	true -> fun do_autoconf_interface/2;
@@ -671,7 +684,7 @@ handle_cast(_Msg, State) ->
 %% @end
 %%--------------------------------------------------------------------
 handle_info({add_interface, Interface}, State) ->
-    {noreply, add_interface(Interface, State)};
+    {noreply, add_interface_internal(Interface, State)};
 handle_info({add_address, Interface, A}, State) ->
     {noreply, add_address(A, Interface, State)};
 handle_info({del_address, Interface, A}, State) ->
@@ -747,8 +760,10 @@ extract_args([], State) ->
 %%% ===================================================================
 do_enable_interface(#isis_interface{pid = Pid}, State)  when is_pid(Pid) ->
     State;
-do_enable_interface(#isis_interface{name = Name} = Interface, State) ->
-    case isis_interface:start_link([{name, Name}]) of
+do_enable_interface(#isis_interface{name = Name,
+				    interface_module = Module} = Interface, State) ->
+    case isis_interface:start_link([{name, Name},
+				    {interface_module, Module}]) of
 	{ok, InterfacePid} ->
 	    erlang:monitor(process, InterfacePid),
 	    ets:insert(State#state.interfaces,
@@ -1148,13 +1163,14 @@ refresh_nonpn_lsps(Level, State) ->
 %%%===================================================================
 %%% Add interface
 %%%===================================================================
-add_interface(#isis_interface{
-		 name = Name, ifindex = Ifindex, flags = Flags,
-		 mtu = MTU, mtu6 = MTU6, mac = Mac}, State) ->
+add_interface_internal(#isis_interface{
+			  name = Name, ifindex = Ifindex, flags = Flags,
+			  mtu = MTU, mtu6 = MTU6, mac = Mac}, State) ->
     {I, Autoconf} = 
 	case ets:lookup(State#state.interfaces, Name) of
 	    [Intf] -> {Intf, fun(_, S) -> S end};
-	    _ -> {#isis_interface{name = Name},
+	    _ -> {#isis_interface{name = Name,
+				 interface_module = State#state.default_interface_module},
 		  fun autoconf_interface/2}
 	end,
     Interface = I#isis_interface{ifindex = Ifindex,

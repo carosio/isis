@@ -46,6 +46,9 @@
 -define(DEFAULT_AUTOCONF_METRIC, 1000000).
 -define(DEFAULT_PRIORITY, 64).
 
+%% We default to 'normal' L2 IS-IS
+-define(DEFAULT_INTERFACE_MODULE, isis_interface_l2).
+
 -define(LSP_ENTRY_DETAIL_PER_TLV, 15).   %% 15 LSP_ENTY_DETAIL records per LSP_ENTRY TLV
 -define(LSP_ENTRY_PER_PDU, 6).           %% 6 LSP_ENTRY objects per PDU
 

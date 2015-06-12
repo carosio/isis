@@ -55,6 +55,7 @@
 -record (isis_interface, {
 	   name :: string(),
 	   mac :: binary(),
+	   interface_module :: atom(),
 	   metric = 10 :: integer(),
 	   flags :: integer(),
 	   enabled = false :: atom(),

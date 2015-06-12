@@ -29,19 +29,16 @@
 -include("isis_system.hrl").
 -include("isis_protocol.hrl").
 
--define(SIOCGIFMTU, 16#8921).
--define(SIOCGIFHWADDR, 16#8927).
--define(SIOCADDMULTI, 16#8931).
--define(SIOCGIFINDEX, 16#8933).
-
 -define(BINARY_LIMIT, 5 * 1024 * 1024).    %% GC after 5MB of binarys have accumulated..
 
 %% API
--export([start_link/1, send_pdu/5, stop/1,
+-export([start_link/1, stop/1,
 	 get_state/3, get_state/1, set/2,
 	 enable_level/2, disable_level/2, levels/1, get_level_pid/2,
 	 clear_neighbors/1, clear_neighbors/2,
-	 dump_config/1]).
+	 dump_config/1,
+	 send_pdu/5, received_pdu/3
+	]).
 
 %% Debug export
 -export([]).
@@ -56,12 +53,8 @@
 
 -record(state, {
 	  name,            %% Interface name
-	  ifindex,         %% Interface ifindex
-	  socket,          %% Procket socket...
-	  port,            %% Erlang port handling socket
-	  mac,             %% This interface's MAC address
-	  mtu,             %% Interface MTU
-	  circuit_type,    %% Level-1 or level-1-2 (just level-2 is invalid)
+	  interface_mod,   %% Module handling I/F I/O
+	  interface_pid,   %% Interface I/O Pid
 	  level1,          %% Pid handling the levels
 	  level2
 	 }).
@@ -85,6 +78,9 @@ start_link(Args) ->
 %%%===================================================================
 send_pdu(Pid, Type, Packet, Packet_Size, Level) ->
     gen_server:cast(Pid, {send_pdu, Type, Packet, Packet_Size, Level}).
+
+received_pdu(Pid, From, PDU) ->
+    gen_server:cast(Pid, {received_pdu, From, PDU}).
 
 stop(Pid) ->
     gen_server:cast(Pid, stop).
@@ -137,18 +133,14 @@ dump_config(Pid) ->
 %%--------------------------------------------------------------------
 init(Args) ->
     process_flag(trap_exit, true),
-    State = extract_args(Args, #state{}),
-    isis_logger:debug("Creating socket for interface ~p (~p)", [State#state.name, State]),
-    case create_port(State#state.name) of
-	{Socket, Mac, Ifindex, MTU, Port} ->
-	    StartState = State#state{socket = Socket, port = Port,
-				     mac = Mac, mtu = MTU,
-				     ifindex = Ifindex,
-				     level1 = undef,
-				     level2 = undef
-				    },
+    State = extract_args(Args, #state{level1 = undef,
+				      level2 = undef}),
+    IFModule = State#state.interface_mod,
+    case IFModule:start_link([{name, State#state.name},
+			      {interface_pid, self()}]) of
+	{ok, Pid} ->
 	    erlang:send_after(60 * 1000, self(), {gc}),
-	    {ok, StartState};
+	    {ok, State#state{interface_pid = Pid}};
 	error ->
 	    {stop, no_socket}
     end.
@@ -167,12 +159,6 @@ init(Args) ->
 %%                                   {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_call({get_state, _, mac}, _From, State) ->
-    {reply, State#state.mac, State};
-handle_call({get_state, _, mtu}, _From, State) ->
-    {reply, State#state.mtu, State};
-handle_call({get_state, _, ifindex}, _From, State) ->
-    {reply, State#state.ifindex, State};
 handle_call({get_state, level_1, Item}, _From,
 	    #state{level1 = L1Pid} = State) when is_pid(L1Pid) ->
     {reply, isis_interface_level:get_state(L1Pid, Item), State};
@@ -184,10 +170,6 @@ handle_call({get_state, _, _}, _From, State) ->
 
 handle_call({get_state}, _From, State) ->
     {reply, State, State};
-
-handle_call({set, Values}, _From, State) ->
-    NewState = set_values(Values, State),
-    {reply, ok, NewState};
 
 handle_call({enable, Level}, _From, State) ->
     io:format("Enabling level ~p~n", [Level]),
@@ -261,11 +243,13 @@ handle_cast({send_pdu, _Type, PDU, PDU_Size, level_2},
 handle_cast({send_pdu, _PDU, _PDU_Size, _}, State) ->
     {noreply, State};
 
-handle_cast(stop, #state{port = Port,
+handle_cast(stop, #state{interface_mod = Mod,
+			 interface_pid = Pid,
 			 level1 = Level1,
 			 level2 = Level2} = State) ->
     %% Close down the port (does this close the socket?)
-    erlang:port_close(Port),
+    Mod:stop(Pid),
+
     %% Notify our adjacencies
     case is_pid(Level1) of
 	true -> gen_server:cast(Level1, stop);
@@ -300,6 +284,10 @@ handle_cast({clear_neighbors, Which}, #state{
 	_ -> no_level
     end,
     {noreply, State};
+handle_cast({received_pdu, From, PDU}, State) ->
+    isis_logger:debug("Handling PDU: ~p", [PDU]),
+    handle_pdu(From, PDU, State),
+    {noreply, State};
 
 handle_cast(_Msg, State) ->
     {noreply, State}.
@@ -314,32 +302,6 @@ handle_cast(_Msg, State) ->
 %%                                   {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_info({_port, {data,
-		     <<_To:6/binary, From:6/binary, Len:16,
-		       16#FE:8, 16#FE:8, 3:8, PDU/binary>> = B}},
-	    State) ->
-    NewState = 
-	case (Len - 3) =< byte_size(PDU) of
-	true ->
-		Bytes = Len - 3,
-		<<FinalPDU:Bytes/binary, _Tail/binary>> = PDU,
-		case catch isis_protocol:decode(FinalPDU) of
-		    {ok, DecodedPDU} ->
-			handle_pdu(From, DecodedPDU, State),
-			State;
-		    {'EXIT', Reason} ->
-			isis_logger:error("Len: ~p B: ~p", [Len, B]),
-			isis_logger:error("Failed to decode: ~p for ~p", [PDU, Reason]),
-			State;
-		    CatchAll ->
-			isis_logger:error("Failed to decode: ~p", [CatchAll]),
-			State
-		end;
-	    _ -> isis_logger:error("PDU received is shorter than size: ~p ~p", [Len, PDU]),
-		 State
-	end,
-    {noreply, NewState};
-
 handle_info({_port, {data, _}}, State) ->
     {noreply, State};
 
@@ -440,24 +402,29 @@ handle_pdu(_From, _Pdu, State) ->
 %%--------------------------------------------------------------------
 handle_enable_level(level_1, #state{level1 = Level_1} = State) ->
     Level = 
-	case Level_1 of
-	    undef ->
+	case is_pid(Level_1) of
+	    false ->
+		Mtu = get_mtu(State),
+		Mac = get_mac(State),
 		{ok, Pid} = isis_interface_level:start_link([{level, level_1},
-							     {snpa, State#state.mac},
+							     {snpa, Mac},
 							     {interface, State#state.name, self(),
-							      State#state.mtu}]),
+							      Mtu}]),
+		isis_logger:debug("Interface level: ~p ~p ~p ~p", [State#state.name, Mtu, Mac, Pid]),
 		Pid;
 	    _ -> Level_1
 	end,
     {reply, ok, State#state{level1 = Level}};
 handle_enable_level(level_2, #state{level2 = Level_2} = State) ->
     Level = 
-	case Level_2 of
-	    undef ->
+	case is_pid(Level_2) of
+	    false ->
+		Mtu = get_mtu(State),
+		Mac = get_mac(State),
 		{ok, Pid} = isis_interface_level:start_link([{level, level_2},
-							     {snpa, State#state.mac},
+							     {snpa, Mac},
 							     {interface, State#state.name, self(),
-							      State#state.mtu}]),
+							      Mtu}]),
 		Pid;
 	    _ -> Level_2
 	end,
@@ -474,22 +441,6 @@ handle_disable_level(level_2, #state{level2 = Level_2} = State) when is_pid(Leve
 handle_disable_level(_, State) ->
     {reply, invalid_level, State}.
 
-
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% 
-%%
-%%
-%% @end
-%%--------------------------------------------------------------------
--spec set_values(list(), tuple()) -> tuple().
-set_values([{mtu, Value} | T], State) when is_integer(Value) ->
-    set_values(T, State#state{mtu = Value});
-set_values([{mac, Binary} | T], State) ->
-    set_values(T, State#state{mac = Binary});
-set_values([], State) ->
-    State.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -512,94 +463,20 @@ htons(I) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec create_port(string()) -> {integer(), binary(), integer(), integer(), port()} | error.
-create_port(Name) ->
-    case procket:open(0,
-		      [{family, packet},
-		       {type, raw},
-		       {protocol, htons(?ETH_P_802_2)},
-		       {interface, Name},
-		       {isis}]) of
-	{ok, S} ->
-	    {Ifindex, Mac, MTU} = interface_details(S, Name),
-	    LL = create_sockaddr_ll(Ifindex),
-	    ok = procket:bind(S, LL),
-	    Port = erlang:open_port({fd, S, S}, [binary, stream]),
-	    {S, Mac, Ifindex, MTU, Port};
-	{error, einval} ->
-	    isis_logger:error("Failed to create socket for ~s", [Name]),
-	    error
-    end.
-
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% 
-%%
-%%
-%% @end
-%%--------------------------------------------------------------------
 send_packet(Pdu, Pdu_Size, Level, State) ->
-    Destination =
-	case Level of 
-	    level_1 -> <<1, 16#80, 16#C2, 0, 0, 16#14>>;
-	    level_2 -> <<1, 16#80, 16#C2, 0, 0, 16#15>>
-	end,
-    Source = State#state.mac,
-    Header = <<Destination/binary, Source/binary>>, 
-    Len = Pdu_Size + 3,
-    Packet = list_to_binary([Header, <<Len:16, 16#FE, 16#FE, 16#03>> | Pdu]),
-    LL = create_sockaddr_ll(State#state.ifindex),
-    Result = procket:sendto(State#state.socket, Packet, 0, LL),
-    Result.
+    (State#state.interface_mod):send_pdu(State#state.interface_pid, Pdu, Pdu_Size, Level).
 
 
+get_mac(#state{interface_mod = Mod, interface_pid = Pid}) ->
+    Mod:get_mac(Pid).
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% 
-%%
-%%
-%% @end
-%%--------------------------------------------------------------------
--spec create_sockaddr_ll(integer()) -> binary().
-create_sockaddr_ll(Ifindex) ->
-    Family = procket:family(packet),
-    <<Family:16/native, ?ETH_P_802_2:16, Ifindex:32/native,
-      0:16, 0:8, 0:8, 0:8/unit:8>>.
-
-%%
-%% Linux specific, be nice to get this in the
-%% procket module...
-%%
-interface_details(Socket, Name) ->
-    N = list_to_binary(Name),
-    Req = <<N/binary, 0:(8*(40 - byte_size(N)))>>,
-    case procket:ioctl(Socket, ?SIOCGIFHWADDR, Req) of
-	{error, _} -> error;
-	{ok, Mac_Response} -> 
-	    {ok, Ifindex_Response} = procket:ioctl(Socket,
-						   ?SIOCGIFINDEX, Req),
-	    {ok, MTU_Response} = procket:ioctl(Socket,
-					       ?SIOCGIFMTU, Req),
-	    <<_:16/binary, I:32/native, _/binary>> = Ifindex_Response,
-	    <<_:18/binary, Mac:6/binary, _/binary>> = Mac_Response,
-	    <<_:16/binary, MTU:32/native, _/binary>> = MTU_Response,
-	    %% Req2 = <<N/binary, 0:(8*(16 - byte_size(N))), I:16/native,
-	    %%   	     16#01, 16#80, 16#c2, 0, 0, 16#14, 0:128>>,
-	    %% Req3 = <<N/binary, 0:(8*(16 - byte_size(N))), I:16/native,
-	    %% 	     16#01, 16#80, 16#c2, 0, 0, 16#15, 0:128>>,
-	    %% {ok, _} = procket:ioctl(Socket, ?SIOCADDMULTI, Req2),
-	    %% {ok, _} = procket:ioctl(Socket, ?SIOCADDMULTI, Req3),
-	    {I, Mac, MTU}
-    end.
-
+get_mtu(#state{interface_mod = Mod, interface_pid = Pid}) ->
+    Mod:get_mtu(Pid).
 
 extract_args([{name, Name} | T], State) ->
     extract_args(T, State#state{name = Name});
-extract_args([{circuit_type, Type} | T] , State) ->
-    extract_args(T, State#state{circuit_type = Type});
+extract_args([{interface_module, ModName} | T], State) ->
+    extract_args(T, State#state{interface_mod = ModName});
 extract_args([], State) ->
     State.
 
