@@ -47,6 +47,9 @@
 -define(IPV6_ALL_L1_IS, "ff02::db8:1515:1").
 -define(IPV6_ALL_L2_IS, "ff02::db8:1515:2").
 
+%% Christian's document suggests 1280...
+-define(ISIS_MAX_L3_MESSAGE_SIZE, 1500).
+
 -define(BINARY_LIMIT, 5 * 1024 * 1024).    %% GC after 5MB of binarys have accumulated..
 
 %% API
@@ -73,7 +76,8 @@
 	  port,            %% Erlang port handling socket
 	  mac,             %% This interface's MAC address
 	  mtu,             %% Interface MTU
-	  interface_pid    %% Owning interface Pid - where we send rx-ed pdus
+	  interface_pid,   %% Owning interface Pid - where we send rx-ed pdus
+	  receive_pid      %% Pid of our 'receive' process...
 	 }).
 
 %%%===================================================================
@@ -122,10 +126,12 @@ init(Args) ->
     State = extract_args(Args, #state{}),
     isis_logger:debug("Creating socket for interface ~p (~p)", [State#state.name, State]),
     case create_port(State#state.name) of
-	{Socket, Mac, Ifindex, MTU, Port} ->
-	    StartState = State#state{socket = Socket, port = Port,
+	{Socket, Mac, Ifindex, MTU, _} ->
+	    {ok, ReceivePid} = start_receiver(Socket, self()),
+	    StartState = State#state{socket = Socket,
 				     mac = Mac, mtu = MTU,
-				     ifindex = Ifindex
+				     ifindex = Ifindex,
+				     receive_pid = ReceivePid
 				    },
 	    erlang:send_after(60 * 1000, self(), {gc}),
 	    {ok, StartState};
@@ -149,8 +155,9 @@ init(Args) ->
 %%--------------------------------------------------------------------
 handle_call({get_mac}, _From, #state{mac = Mac} = State) ->
     {reply, Mac, State};
-handle_call({get_mtu}, _From, #state{mtu = Mtu} = State) ->
-    {reply, Mtu, State};
+handle_call({get_mtu}, _From, State) ->
+    %% Hardcode our MTU for now, to match the Quagga sizing..
+    {reply, 1243, State};
 
 handle_call({get_state}, _From, State) ->
     {reply, State, State};
@@ -178,9 +185,9 @@ handle_cast({send_pdu, Pdu, _Pdu_Size, Level}, State) ->
     send_packet(Packet, Level, State),
     {noreply, State};
 
-handle_cast(stop, #state{port = Port} = State) ->
+handle_cast(stop, State) ->
     %% Close down the port (does this close the socket?)
-    erlang:port_close(Port),
+    %% erlang:port_close(Port),
     {stop, normal, State};
 
 handle_cast(_Msg, State) ->
@@ -196,10 +203,8 @@ handle_cast(_Msg, State) ->
 %%                                   {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_info({_port, {data, <<PDU/binary>> = B}},
-	    State) ->
+handle_info({message, PDU, From}, State) ->
     %% We need the packet details from PKTINFO... ugh..
-    From = <<>>,
     NewState = 
 	case catch isis_protocol:decode(PDU) of
 	    {ok, DecodedPDU} ->
@@ -213,9 +218,6 @@ handle_info({_port, {data, <<PDU/binary>> = B}},
 		State
 	end,
     {noreply, NewState};
-
-handle_info({_port, {data, _}}, State) ->
-    {noreply, State};
 
 handle_info({gc}, State) ->
     case erlang:memory(binary) of
@@ -235,7 +237,7 @@ handle_info({'EXIT', _Pid, normal}, State) ->
     {noreply, State};
 
 handle_info(Info, State) ->
-    isis_logger:debug("Unknown message: ~p", [Info]),
+    isis_logger:error("Unknown message: ~p", [Info]),
     {noreply, State}.
 
 %%--------------------------------------------------------------------
@@ -319,7 +321,8 @@ htons(I) ->
 %% @private
 %% @doc
 %% 
-%%
+%% This is the sender socket. It looks like we need a receive socket
+%% run from somewhere that can do recvmsg and get the packet header info...
 %%
 %% @end
 %%--------------------------------------------------------------------
@@ -345,8 +348,11 @@ create_port(Name) ->
 	    
 	    %% LL = create_sockaddr_ll(Ifindex),
 	    %% ok = procket:bind(S, LL),
-	    Port = erlang:open_port({fd, S, S}, [binary]),
-	    {S, Mac, Ifindex, MTU, Port};
+	    %% Port = erlang:open_port({fd, S, S}, [binary]),
+
+	    isis_logger:error("Opened L3 socket: ~p", [S]),
+
+	    {S, Mac, Ifindex, MTU, undefined};
 	{error, einval} ->
 	    isis_logger:error("Failed to create socket for ~s", [Name]),
 	    error
@@ -361,11 +367,8 @@ create_port(Name) ->
 %% @end
 %%--------------------------------------------------------------------
 send_packet(Packet, Level, State) ->
-    isis_logger:error("Sending ~p ~p", [Packet, Level]),
     LL = create_sockaddr_ll(Level, State#state.ifindex),
-    isis_logger:error("LL: ~p", [LL]),
     Result = procket:sendto(State#state.socket, Packet, 0, LL),
-    isis_logger:error("Sending l3 packet got: ~p", [Result]),
     Result.
 
 
@@ -425,3 +428,39 @@ join_group(Socket, IfIndex, Address) ->
     procket:setsockopt(Socket, ?IPPROTO_IPV6,
 		       ?IPV6_JOIN_GROUP,
 		       <<BinAddr/binary, IfIndex:32/native>>).
+
+do_receive(Socket, Parent) ->
+    case gen_udp:recv(Socket, ?ISIS_MAX_L3_MESSAGE_SIZE) of
+	{ok, {From, _, Packet}} ->
+	    SNPA = snpa_from_ipv6(From),
+	    Parent ! {message, Packet, SNPA},
+	    do_receive(Socket, Parent);
+	Other ->
+	    isis_logger:error("Received: ~p", [Other]),
+	    exit(self(), normal)
+    end.
+
+start_receiver(Socket, Pid) ->
+    case gen_udp:open(0, [binary, {fd, Socket}, {active, false}, inet6]) of
+	{ok, S} ->
+	    F = fun() -> do_receive(S, Pid) end,
+	    {ok, erlang:spawn(F)};
+	{error, Reason} ->
+	    isis_logger:error("Failed to start receiver: ~p", [Reason]),
+	    error
+    end.
+
+%% Based on the code from Christian...
+snpa_from_ipv6(Address) ->
+    BinAddr =
+	<< <<X:16>> || X <- erlang:tuple_to_list(Address) >>,
+    <<_:(8*8), A:8, B:16, T:16, D:24>> = BinAddr,
+    %% If bytes 11 & 12 are not 0xFFFE then we may have an issue...
+    case T =:= 65534 of
+	false ->
+	    isis_logger:warn("IPv5 address is not EUI-48 derived, conflicts may occur");
+	_ ->
+	    ok
+    end,
+    %% Xor locally administered bit...
+    <<(A bxor 2):8, B:16, D:24>>.
