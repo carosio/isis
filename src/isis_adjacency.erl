@@ -332,11 +332,15 @@ cancel_timer(State) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
-seen_ourselves(#isis_iih{tlv = TLVs}, State) ->
+seen_ourselves(#isis_iih{tlv = TLVs} = IIH, State) ->
     R = lists:filter(fun(A) -> seen_ourselves_tlv(A, State) end,
 		  TLVs),
     isis_logger:debug("Seen ourselves in IIH from ~p: ~p",
-		[State#state.neighbor_id, length(R) > 0]),
+		[case State#state.neighbor_id of
+		     undefined ->
+			 IIH#isis_iih.source_id;
+		     N -> N
+		 end, length(R) > 0]),
     length(R) > 0.
 
 seen_ourselves_tlv(#isis_tlv_is_neighbors{neighbors = N}, State) ->
