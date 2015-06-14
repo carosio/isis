@@ -1609,6 +1609,8 @@ set_state([{l2_authentication, md5, K} | Vs], State) ->
     NewState = State#state{l2_authentication = {md5, K}},
     change_level_authentication({md5, K}, level_2, NewState),
     set_state(Vs, NewState);
+set_state([{default_interface_module, M} | Vs], State) ->
+    set_state(Vs, State#state{default_interface_module = M});
 set_state([_ | Vs], State) ->
     set_state(Vs, State);
 set_state([], State) ->
