@@ -172,8 +172,6 @@ handle_cast({send_pdu, Pdu, Pdu_Size, Level}, State) ->
     Packet = list_to_binary([Header, <<Len:16, 16#FE, 16#FE, 16#03>> | Pdu]),
     send_packet(Packet, State),
     {noreply, State};
-handle_cast({send_pdu, _PDU, _PDU_Size, _}, State) ->
-    {noreply, State};
 
 handle_cast(stop, #state{port = Port} = State) ->
     %% Close down the port (does this close the socket?)
