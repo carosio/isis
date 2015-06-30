@@ -716,8 +716,7 @@ do_spf(SID, State) ->
     dict:fold(Build_Graph, Graph, Edges),
     DResult = dijkstra:run(Graph, SysID),
     RoutingTableF = 
-	fun({_, {_, []}}) -> false;
-	   ({Node, {Metric, Paths}}) ->
+	fun({Node, {Metric, Paths}}) ->
 		Prefixes = lookup_prefixes(Node, State),
 		Nexthops = lists:filtermap(fun(P) -> get_nexthop(P) end, Paths),
 		{true, {Node, Nexthops, Metric, Prefixes, Paths}};
