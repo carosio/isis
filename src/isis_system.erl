@@ -632,25 +632,21 @@ handle_cast({process_spf, {Level, Time, SPF, Reason, ExtInfo}}, State) ->
 	lists:filtermap(
 	  fun({<<Node:7/binary>>, NHIDs, Metric, As, Paths})
 	     when is_list(As) ->
-		  case length(As) of
+		  NHs =
+		      lists:flatten(
+			lists:map(
+			  fun(NH) ->
+				  case dict:find(NH, IDs) of
+				      {ok, FNH} -> FNH;
+				      _ -> []
+				  end
+			  end, NHIDs)),
+		  case length(NHs) of
 		      0 -> false;
-		      _ ->
-			  NHs =
-			      lists:flatten(
-				lists:map(
-				  fun(NH) ->
-					  case dict:find(NH, IDs) of
-					      {ok, FNH} -> FNH;
-					      _ -> []
-					  end
-				  end, NHIDs)),
-			  case length(NHs) of
-			      0 -> false;
-			      _ -> {true, {
-				      lookup_name(Node),
-				      lists:map(fun(TNHID) -> lookup_name(TNHID) end, NHIDs),
-				      NHs, Metric, As, Paths}}
-			  end
+		      _ -> {true, {
+			      Node,
+			      lists:map(fun(TNHID) -> lookup_name(TNHID) end, NHIDs),
+			      NHs, Metric, As, Paths}}
 		  end;
 	     (_) -> false
 	  end, SPF),
