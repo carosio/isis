@@ -207,7 +207,6 @@ inject_some_lsps(Level, Count, Seq, Overload, Partition)
 inject_some_lsps(_, _, _, _, _) ->
     error.
 
-
 purge_injected_lsps(Level, Count) ->
     IDCreator = fun(N) -> <<N:16, 0, 0, 0, 0, 0, 0>> end,
     LSPIDs = lists:map(IDCreator, lists:seq(1, Count)),
@@ -220,6 +219,127 @@ purge_injected_lsps(Level, Count) ->
     isis_system:delete_tlv(ChainTLV, 0, Level, "eth1"),
     isis_system:delete_sid_addresses(Level, <<1:16, 0, 0, 0, 0>>, [{ipv4, {3232298895, 1, self()}}]),
     ok.
+
+%% Expand a row and column count into a list of co-ords
+expand_row_column(RowCount, ColumnCount) ->
+    expand_row_column(lists:seq(1, RowCount), lists:seq(1, ColumnCount),
+		      lists:seq(1, ColumnCount), []).
+
+expand_row_column([], _, _Cols, Acc) ->
+    %% Append our 'final' one as cheat...
+    [{0, 0}] ++ lists:reverse([{16#FFFF, 16#FFFF} | Acc]);
+expand_row_column([_H|T], [], Cols, Acc) ->
+    expand_row_column(T, Cols, Cols, Acc);
+expand_row_column([H|_T] = R, [A|B], Cols, Acc) ->
+    expand_row_column(R, B, Cols, [{H, A} | Acc]).
+
+pdu_type(level_1) -> level1_lsp;
+pdu_type(level_2) -> level2_lsp.
+
+%% For a given R, C which of the CoOrds list is our neighbor?
+generate_neighbors(R, C, RMax, CMax, CoOrds) ->
+    lists:filter(
+      fun({_,1}) when R =:= 0, C =:= 0 -> true;
+	 ({0, 0}) when C =:= 1 -> true;
+	 ({A, B}) when A =:= R, B =:= C -> false;
+	 ({A, B}) when A =:= R, B =:= (C-1) -> true;
+	 ({A, B}) when A =:= R, B =:= (C+1) -> true;
+	 %% ({A, B}) when C rem 2 =:= 1, A =:= (R-1), B =:= (C-1) -> true;
+	 %% ({A, B}) when C rem 2 =:= 1, A =:= (R+1), B =:= (C-1) -> true;
+	 %% ({A, B}) when C rem 2 =:= 0, A =:= (R-1), B =:= (C+1) -> true;
+	 %% ({A, B}) when C rem 2 =:= 0, A =:= (R+1), B =:= (C+1) -> true;
+	 ({A, B}) when C =:= CMax, A =:= 16#FFFF, B =:= 16#FFFF -> true;
+	 ({_, B}) when R =:= 16#FFFF, C =:= 16#FFFF, B =:= CMax -> true;
+	 ({_, _}) -> false
+      end, CoOrds).
+
+generate_node_id(0, 0) -> <<(isis_system:system_id()):6/binary, 0:8>>;
+generate_node_id(R, C) -> <<R:16, C:16, 0:24>>.
+
+generate_mesh_lsp(Level, 0, 0, CMax, RMax, CoOrds) ->
+    %% 0,0 is code for 'ourself', so we take don't want to generate an
+    %% LSP, we want to update our lsp.
+    lists:map(fun({A, B}) ->
+		      R = #isis_tlv_extended_reachability_detail{
+			     neighbor = generate_node_id(A, B),
+			     metric = crypto:rand_uniform(10, 100),
+			     sub_tlv = []},
+		      ChainTLV = #isis_tlv_extended_reachability{
+				    reachability = [R]
+				   },
+		      isis_system:update_tlv(ChainTLV, 0, Level, "eth1")
+	      end, generate_neighbors(0, 0, CMax, RMax, CoOrds)),
+    false;
+generate_mesh_lsp(Level, R, C, RMax, CMax, CoOrds) ->
+    case C =:= 1 of
+	true ->
+	    <<N:6/binary, _:8>> = generate_node_id(R, C),
+	    isis_system:add_sid_addresses(Level,
+					  N, crypto:rand_uniform(10, 100),
+					  [{ipv4, {3232298894 + R, 1, self()}}]);
+	_ -> ok
+    end,
+    IPTLV =
+	case {R, C} of
+	    {16#FFFF, 16#FFFF} ->
+		<<P:32>> = <<10:8, 1:8, 0:16>>,
+		[#isis_tlv_extended_ip_reachability{
+		   reachability = [#isis_tlv_extended_ip_reachability_detail{
+				      prefix = P,
+				      mask_len = 24,
+				      metric = 1,
+				      up = true,
+				      sub_tlv = []}]}];
+	    _ -> []
+	end,
+    PDU = pdu_type(Level),
+    Reachability =
+	lists:map(fun({A, B}) ->
+			  #isis_tlv_extended_reachability_detail{
+			     neighbor = generate_node_id(A, B),
+			     metric = crypto:rand_uniform(10, 100),
+			     sub_tlv = []}
+		  end, generate_neighbors(R, C, RMax, CMax, CoOrds)),
+    NeighborsTLV =
+	 #isis_tlv_extended_reachability{
+	    reachability = Reachability
+	   },
+    Hostname = lists:flatten(io_lib:format("injected-~2.10.0B-~2.10.0B", [R, C])),
+    Seq =
+	case isis_lspdb:lookup_lsps([<<(generate_node_id(R, C))/binary, 0:8>>], isis_lspdb:get_db(level_1)) of
+	    [PreviousLSP] -> PreviousLSP#isis_lsp.sequence_number + 1;
+	    _ -> 1
+	end,
+    {true,
+     #isis_lsp{
+	lsp_id = <<(generate_node_id(R, C))/binary, 0:8>>,
+	last_update = isis_protocol:current_timestamp(),
+	pdu_type = PDU,
+	remaining_lifetime = 500,
+	sequence_number = Seq,
+	partition = false,
+	overload = false,
+	isis_type = level_1_2,
+	tlv = [#isis_tlv_area_address{areas = isis_system:areas()},
+	       #isis_tlv_protocols_supported{protocols = [ipv4]},
+	       #isis_tlv_dynamic_hostname{hostname = Hostname},
+	      NeighborsTLV | IPTLV]
+       }
+    }.
+
+inject_mesh(Level, Rows, Columns) ->
+    %% Get the set of valid row/column address, plus 0,0 for ourselves and
+    %% 16#FFFF, 16#FFFF for the final node...
+    CoOrds = expand_row_column(Rows, Columns),
+    LSPs =
+	lists:filtermap(
+	  fun({R, C}) -> generate_mesh_lsp(Level, R, C, Rows, Columns, CoOrds) end,
+	  CoOrds),
+    lists:map(
+      fun(L) ->
+	      isis_lspdb:store_lsp(Level, L),
+	      isis_lspdb:flood_lsp(Level, isis_system:list_interfaces(), L, none)
+      end, LSPs).
 
 %%%===================================================================
 %%% Internal functions
