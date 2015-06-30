@@ -35,6 +35,7 @@ text {
 .routingtable {
   margin-top: 10px;
   height: 200px;
+  overflow: scroll;
 }
 
 </style>
@@ -49,8 +50,12 @@ This graph is the result of the SPF run from ISIS.<br>
 
 var ws;
 var nodes = [];
+var paths = [];
 var links = [];
+var pathLookup = [];
 var oldLinks = {};
+var selectedNode = {};
+var toggle = false;
 
 function connectToSPFFeed() {
     if ("WebSocket" in window) {
@@ -68,28 +73,42 @@ function connectToSPFFeed() {
             }
             Rib = "";
             if (NewState.rib[0] != undefined) {
-		for(var i = 0; i < NewState.rib[0].length; i++) {
-		    if (NewState.rib[0][i].from.length > 0) {
-			 From = " source " + NewState.rib[0][i].from
-		    } else {
-			 From = ""
+		for(var i = 0; i < NewState.rib.length; i++) {
+		    for(var j = 0; j < NewState.rib[i].length; j++) {
+			if (NewState.rib[i][j].from.length > 0) {
+			    From = " source " + NewState.rib[i][j].from
+			} else {
+			    From = ""
+			}
+			NexthopStr = "(";
+			for(var y = 0; y < NewState.rib[i][j].nexthop.length; y++) {
+                            NexthopStr += NewState.rib[i][j].nexthop[y] + " via " +
+				NewState.rib[i][j].interface[y];
+                            if (y+1 < NewState.rib[i][j].length) {
+				NexthopStr += ", ";
+			    }
+			}
+			NexthopStr += ")"
+			Rib += NewState.rib[i][j].address + "/"
+			    + NewState.rib[i][j].mask + From + " -> "
+			    + "Nexthops: " + NexthopStr
+			    + " Paths: (" + NewState.rib[i][j].nodepath + ")<BR>";
 		    }
-                    NexthopStr = "(";
-                    for(var y = 0; y < NewState.rib[0][i].nexthop.length; y++) {
-                         NexthopStr += NewState.rib[0][i].nexthop[y] + " via " +
-			    NewState.rib[0][i].interface[y];
-                         if (y+1 < NewState.rib[0][i].length) {
-                             NexthopStr += ", ";
-			 }
-		    }
-		    NexthopStr += ")"
-                    Rib += NewState.rib[0][i].address + "/"
-			+ NewState.rib[0][i].mask + From + " -> "
-  			+ "Nexthops: " + NexthopStr
-			+ " Paths: (" + NewState.rib[0][i].nodepath + ")<BR>";
 		}
             }
 	    document.getElementById('routingtable').innerHTML = Rib;
+
+	    // Build the node -> array of links to highlight..
+	    paths = {};
+	    for (var i = 0; i < NewState.paths.length; i++) {
+		var P = NewState.paths[i];
+		paths[P.id] = [];
+		for(var x = 0; x < P.paths.length; x++) {
+		    for(var y = 1; y < P.paths[x].length; y++) {
+			paths[P.id].push(P.paths[x][y-1] + ", " + P.paths[x][y])
+		    }
+		}
+	    }
 	    
 	    // Work out the changes to Nodes
 	    nodeLookup = {}
@@ -161,7 +180,7 @@ function connectToSPFFeed() {
 		    i++;
                 }
             }
-	    
+
 	    // Now see if we can diff the link changes...
 	    linkLookup = {}
             for (var i = 0, len = links.length; i < len; i++) {
@@ -264,6 +283,9 @@ svg.append("svg:defs").selectAll("marker")
 var path = svg.append("svg:g").selectAll("path")
     .data(force.links())
     .enter().append("svg:path")
+    .style("opacity", function(o) {
+	return onPathTo(o) ? 1: 0.1
+    })
     .attr("class", "link")
     .attr("marker-end", "url(#end)");
 
@@ -282,38 +304,53 @@ function start() {
 		   } else {
 		       return("2,7");
 		   }});
+    path.style("opacity",
+	       function(o) {
+		   return onPathTo(o) ? 1 : 0.1;
+	       });
     path.exit().remove();
     
     node = node.data(force.nodes(), function(d) { return d.id;});
-    node.enter().append("g").attr("class", "node").call(force.drag)
-	.append("circle").attr("r", function(d){ return (d.colour == 0) ? 8 : 5}).style("fill", function(d){ return color(d.colour)});
+    node.enter()
+	.append("g")
+	.attr("class", "node")
+	.call(force.drag)
+	.on('dblclick', highlightPaths)
+	.append("circle")
+	.attr("r", function(d){ return (d.colour == 0) ? 8 : 5})
+	.style("fill", function(d){ return color(d.colour)});
     node.exit().remove();
     
     label = label.data(force.nodes(), function(d) { return d.id; });
-    label.enter().append("text").attr("x", 12).attr("dy", ".35em").text(function(d) { console.log("Setting name for " + d.name); return d.name; });
+    label.enter()
+	.append("text")
+	.attr("x", 12)
+	.attr("dy", ".35em")
+	.text(function(d) { console.log("Setting name for " + d.name); return d.name; });
     label.exit().remove();
 
     force.start();
 }
 
 function tick() {
-/*
-  path.attr("d", function(d) {
-      var dx = d.target.x - d.source.x,
-          dy = d.target.y - d.source.y,
-          dr = Math.sqrt(dx * dx + dy * dy);
-      return "M" + 
-          d.source.x + "," + 
-          d.source.y + "A" + 
-          dr + "," + dr + " 0 0,1 " + 
-          d.target.x + "," + 
-          d.target.y;
-  });
-*/
+    // Curved Paths - see non bi-dir links easily...
+    // path.attr("d", function(d) {
+    // 	var dx = d.target.x - d.source.x,
+    //     dy = d.target.y - d.source.y,
+    //     dr = Math.sqrt(dx * dx + dy * dy);
+    // 	return "M" +
+    //         d.source.x + "," +
+    //         d.source.y + "A" +
+    //         dr + "," + dr + " 0 0,1 " +
+    //         d.target.x + "," +
+    //         d.target.y;
+    // });
+
+    // Straight paths..
     path.attr("d", function(d) {
         var dx = d.target.x - d.source.x,
-            dy = d.target.y - d.source.y,
-            dr = Math.sqrt(dx * dx + dy * dy);
+        dy = d.target.y - d.source.y,
+        dr = Math.sqrt(dx * dx + dy * dy);
         return "M" + 
             d.source.x + "," + 
             d.source.y + " " + 
@@ -331,6 +368,36 @@ function tick() {
   });
  
 }
+
+function onPathTo(o) {
+    if (selectedNode.hasOwnProperty('id')) {
+	if (paths[selectedNode.id].indexOf(o.source.id + ", " + o.target.id) > -1
+	    || paths[selectedNode.id].indexOf(o.target.id + ", " + o.source.id) > -1) {
+	    return true;
+	} else {
+	    return false;
+	}
+    } else {
+	return true;
+    }
+}
+
+function highlightPaths() {
+    if (toggle === false) {
+	selectedNode = d3.select(this).node().__data__;
+	d = selectedNode;
+	console.log("Highlighting paths via " + d.name);
+	path.style("opacity", function (o) {
+            return onPathTo(o) ? 1 : 0.1;
+	});
+	toggle = true;
+    } else {
+	selectedNode = {}
+        path.style("opacity", 1);
+	toggle = false;
+    }
+}
+
 </script>
 </body>
 </html>
