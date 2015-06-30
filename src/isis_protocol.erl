@@ -1439,7 +1439,6 @@ encode_lsp(#isis_lsp{version = _Version, pdu_type = Lsp_Type,
 	end,
     PDU = [Header, <<Len:16>>, Lsp_Hdr1, Lsp_Hdr2,
 	  <<CSum1:8, CSum2:8>>, Lsp_Hdr3, TLV_Bs],
-    io:fwrite("Bin: ~p~n", [PDU]),
     {ok, insert_required_sig(PDU, Crypto), Len}.
 
 -spec encode_csnp(isis_csnp(), isis_crypto()) -> {ok, list(), integer()} | error.
