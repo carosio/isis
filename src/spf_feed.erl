@@ -130,6 +130,16 @@ generate_update(Time, Level, SPF, Reason) ->
 						 tl(tuple_to_list(L)))}
 		      end, dict:to_list(SPFLinks)),
 
+    PathsByNode =
+	lists:map(
+	  fun({Node, _NexthopNode, _NextHops, Cost,
+	       _Routes, Paths}) ->
+		  NodeName = lists:flatten(io_lib:format("~p", [Node])),
+		  SendPaths = lists:map(fun(Ps) -> lists:map(fun(T) -> lists:flatten(io_lib:format("~p", [T])) end, Ps) end, Paths),
+		  {struct, [{id, NodeName}, {cost, Cost},
+			    {paths, {array, SendPaths}}]}
+	  end, SPF),
+
     SendRoute = 
 	fun({#isis_address{afi = AFI, mask = Mask} = A, Source},
 	    NHs, Metric, Paths) ->
@@ -176,5 +186,9 @@ generate_update(Time, Level, SPF, Reason) ->
 				Routes)
 	end,
     Rs = lists:map(UpdateRib, SPF),
-    json2:encode({struct, [{"Time", Time}, {"links", {array, Links}}, {"rib", {array, Rs}},
-			   {"Reason", Reason}]}).
+    json2:encode({struct,
+		  [{"Time", Time},
+		   {"links", {array, Links}},
+		   {"paths", {array, PathsByNode}},
+		   {"rib", {array, Rs}},
+		   {"Reason", Reason}]}).
