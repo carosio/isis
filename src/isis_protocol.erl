@@ -343,6 +343,13 @@ decode_tlv(protocols_supported, _Type, Value) ->
     #isis_tlv_protocols_supported{protocols = Protocols};
 decode_tlv(te_router_id, _Type, <<Router_Id:32>>) ->
     #isis_tlv_te_router_id{router_id = Router_Id};
+decode_tlv(p2p_adjacency_state, _Type,
+	   <<State:8, LocalCircuit:32, SysID:6/binary, NeighborCircuit:32>>) ->
+    #isis_tlv_p2p_adjacency_state{
+       state = isis_enum:to_atom(p2p_state, State),
+       local_circuit = LocalCircuit,
+       neighbor = SysID,
+       neighbor_circuit = NeighborCircuit};
 %% decode_tlv(restart, _Type,
 %% 	   <<_Res:5, Supress:1, Ack:1, Restart:1>>) ->
 %%     #isis_tlv_restart{
@@ -634,6 +641,12 @@ encode_tlv(#isis_tlv_protocols_supported{protocols = Protocols}) ->
     encode_tlv_list(protocols_supported, tlv, Ps);
 encode_tlv(#isis_tlv_te_router_id{router_id = Router_Id}) ->
     encode_tlv(te_router_id, tlv, <<Router_Id:32>>);
+encode_tlv(#isis_tlv_p2p_adjacency_state{state = S,
+					 local_circuit = LC,
+					 neighbor = N,
+					 neighbor_circuit = NC}) ->
+    State = isis_enum:to_int(p2p_state, S),
+    encode_tlv(p2p_adjacnecy_state, tlv, <<State:8, LC:32, N:6/binary, NC:32>>);
 encode_tlv(#isis_tlv_geninfo{d_bit = D, s_bit = S,
 			     application_id = AppID,
 			     application_ip_address = AppAddress,

@@ -222,6 +222,13 @@
 	   fingerprint :: binary()}).
 -type isis_tlv_hardware_fingerprint() :: #isis_tlv_hardware_fingerprint{}.
 
+-record (isis_tlv_p2p_adjacency_state, {
+	   state :: atom(),
+	   local_circuit :: integer(),
+	   neighbor :: binary(),
+	   neighbor_circuit :: integer()}).
+-type isis_tlv_p2p_adjacency_state() :: #isis_tlv_p2p_adjacency_state{}.
+
 -type isis_tlv() ::
 	isis_tlv_area_address() |
 	isis_tlv_is_reachability() |
@@ -241,6 +248,7 @@
 	isis_tlv_restart() |
 	isis_tlv_geninfo() |
 	isis_tlv_hardware_fingerprint() |
+	isis_tlv_p2p_adjacency_state() |
 	isis_tlv_unknown().
 
 %%%===================================================================

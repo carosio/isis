@@ -155,6 +155,11 @@
 	{text, 1},
 	{md5, 54}]}).
 
+-enum({p2p_state,
+       [{up, 0},
+	{init, 1},
+	{down, 2}]}).
+
 -enum({boolean,
        [{false, 0},
 	{true, 1}
