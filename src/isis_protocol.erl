@@ -81,6 +81,8 @@ decode(<<16#83:8, Len:8, Version:8, ID_Len:8,
 -spec encode(isis_pdu(), [atom() | tuple()]) -> {ok, list(), integer()} | error.
 encode(#isis_iih{} = IIH, Crypto) ->
     encode_iih(IIH, Crypto);
+encode(#isis_p2p_iih{} = IIH, Crypto) ->
+     encode_p2p_iih(IIH, Crypto);
 encode(#isis_lsp{} = LSP, Crypto) ->
     encode_lsp(LSP, Crypto);
 encode(#isis_csnp{} = CSNP, Crypto) ->
@@ -1292,6 +1294,28 @@ decode_lan_iih(<<_Res1:6, Circuit_Type:2, Source_ID:6/binary,
 			   tlv = TLVS}}
     end.
 
+decode_p2p_iih(<<_Res1:6, Circuit_Type:2, SourceID:6/binary,
+		 Holding_Time:16, PDU_Len:16, LocalCircuitID:8,
+		 TLV_Binary/binary>>, PDU_Len_Received) ->
+    TrueTLVBin =
+	case PDU_Len < PDU_Len_Received of
+	    true -> Bytes = byte_size(TLV_Binary) - (PDU_Len_Received - PDU_Len),
+		    <<TB:Bytes/binary, _/binary>> = TLV_Binary,
+		    TB;
+	    _ -> TLV_Binary
+	end,
+    case decode_tlvs(TrueTLVBin, tlv, fun decode_tlv/3, []) of
+	error -> throw(decode_error);
+	{ok, TLVS} ->
+	    CT = isis_enum:to_atom(istype, Circuit_Type),
+	    {ok, #isis_p2p_iih{
+		    circuit_type = CT,
+		    source_id = SourceID,
+		    holding_time = Holding_Time,
+		    local_circuit_id = LocalCircuitID,
+		    tlv = TLVS}}
+    end.
+
 -spec decode_common_lsp(binary(), integer()) -> {ok, isis_lsp()} | error.
 decode_common_lsp(<<PDU_Len:16, Lifetime:16,
 		    Sys_Id:6/binary, Pnode:8, Fragment:8,
@@ -1369,6 +1393,14 @@ decode_pdu(Type, #isis_header{id_length = Len}, PDU_Len, Rest) when
 	{ok, IIH} ->
 	    {ok, IIH#isis_iih{pdu_type = Type}}
     end;
+decode_pdu(Type, #isis_header{id_length = Len}, PDU_Len, Rest) when
+      Len =:= 0, Type =:= p2p_iih;
+      Len =:= 6, Type =:= p2p_iih ->
+    case decode_p2p_iih(Rest, PDU_Len) of
+	error -> throw(decode_error);
+	{ok, IIH} ->
+	    {ok, IIH#isis_p2p_iih{pdu_type = Type}}
+    end;
 decode_pdu(Type, _Header, _PDU_Len, _Rest) when
       Type == level1_iih; Type == level2_iih ->
     invalid_id_len;
@@ -1416,6 +1448,24 @@ encode_iih(#isis_iih{pdu_type = Type,
     CT = isis_enum:to_int(istype, Circuit_Type),
     IIH1 = <<0:6, CT:2, Source_Id:6/binary, Holding_Time:16>>,
     IIH2 = <<0:1, Priority:7, DIS:7/binary>>,
+    TLV_Bs = encode_tlvs(TLVs, fun encode_tlv/1),
+    %% Add 2 bytes of length
+    Len = binary_list_size([Header, IIH1, IIH2, TLV_Bs]) + 2,
+    Pdu = insert_required_sig([Header, IIH1, <<Len:16>>, IIH2, TLV_Bs], Crypto),
+    {ok, Pdu, Len}.
+
+-spec encode_p2p_iih(isis_p2p_iih(), isis_crypto()) -> {ok, list(), integer()} | error.
+encode_p2p_iih(#isis_p2p_iih{pdu_type = Type,
+			     circuit_type = Circuit_Type,
+			     source_id = Source_Id,
+			     holding_time = Holding_Time,
+			     local_circuit_id = LCID,
+			     tlv = TLVs},
+	       Crypto) ->
+    Header = isis_header(Type, 20, 0, 0),
+    CT = isis_enum:to_int(istype, Circuit_Type),
+    IIH1 = <<0:6, CT:2, Source_Id:6/binary, Holding_Time:16>>,
+    IIH2 = <<LCID:8>>,
     TLV_Bs = encode_tlvs(TLVs, fun encode_tlv/1),
     %% Add 2 bytes of length
     Len = binary_list_size([Header, IIH1, IIH2, TLV_Bs]) + 2,

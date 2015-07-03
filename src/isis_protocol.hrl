@@ -322,6 +322,16 @@
 	  }).
 -type isis_iih() :: #isis_iih{}.
 
+-record (isis_p2p_iih, {
+	   circuit_type :: atom(),
+	   pdu_type :: atom(),                  %% L1 or L2
+	   source_id :: binary(),
+	   holding_time :: integer(),
+	   local_circuit_id :: integer(),
+	   tlv :: [isis_tlv()]
+	  }).
+-type isis_p2p_iih() :: #isis_p2p_iih{}.
+
 %%%-------------------------------------------------------------------
 %%% IS-IS LSP
 %%% 
@@ -369,6 +379,7 @@
 
 -type isis_pdu() ::
 	isis_iih() |
+	isis_p2p_iih() |
 	isis_lsp() |
 	isis_csnp() |
 	isis_psnp().
