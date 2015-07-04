@@ -84,15 +84,16 @@
 		areas = [],
 		frags = [] :: [#lsp_frag{}],
 		max_lsp_lifetime = ?ISIS_MAX_LSP_LIFETIME,
-		pseudonodes :: dict(),  %% PID -> Pseudonode mapping
-		reachability :: dict(),
+		pseudonodes :: dict:new(),  %% PID -> Pseudonode mapping
+		reachability :: dict:new(),
 		interfaces,             %% Our 'state' per interface
+		interface_config = [],  %% Startup config...
 		default_interface_module = ?DEFAULT_INTERFACE_MODULE,
 		redistributed_routes,
 		ignore_list = [],       %% Interfaces to ignore
 		allowed_list = undef,
-		l1_system_ids :: dict(),   %% SID -> Neighbor address
-		l2_system_ids :: dict(),
+		l1_system_ids :: dict:new(),   %% SID -> Neighbor address
+		l2_system_ids :: dict:new(),
 		l1_overload = false :: boolean(),
 		l2_overload = false :: boolean(),
 		l1_authentication = none :: isis_crypto(),
@@ -779,6 +780,8 @@ extract_args([{ignore_interfaces, Is} | T], State) ->
     extract_args(T, State#state{ignore_list = Is});
 extract_args([{allowed_interfaces, Is} | T], State) ->
     extract_args(T, State#state{allowed_list = Is});
+extract_args([{interface_config, Config} | T], State) ->
+    extract_args(T, State#state{interface_config = Config});
 extract_args([_ | T], State) ->
     extract_args(T, State);
 extract_args([], State) ->
@@ -1202,11 +1205,20 @@ refresh_nonpn_lsps(Level, State) ->
 add_interface_internal(#isis_interface{
 			  name = Name, ifindex = Ifindex, flags = Flags,
 			  mtu = MTU, mtu6 = MTU6, mac = Mac}, State) ->
+    isis_logger:debug("Autoconfig on interface ~p (config ~p)",
+		      [Name, proplists:get_value(Name, State#state.interface_config)]),
     {I, Autoconf} = 
 	case ets:lookup(State#state.interfaces, Name) of
 	    [Intf] -> {Intf, fun(_, S) -> S end};
-	    _ -> {#isis_interface{name = Name,
-				 interface_module = State#state.default_interface_module},
+	    _ ->
+		{Module, Mode} = 
+		    case proplists:get_value(Name, State#state.interface_config) of
+			undefined -> {State#state.default_interface_module, broadcast};
+			{M1, M2} -> {M1, M2}
+		    end,
+		{#isis_interface{name = Name,
+				 interface_module = Module,
+				 mode = Mode},
 		  fun autoconf_interface/2}
 	end,
     Interface = I#isis_interface{ifindex = Ifindex,

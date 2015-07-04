@@ -299,7 +299,11 @@ handle_p2mp_pdu(#isis_csnp{} = CSNP, #state{pdu_state = PDU} = State) ->
 handle_p2mp_pdu(#isis_psnp{} = PSNP, #state{pdu_state = PDU} = State) ->
     isis_logger:debug("Processing PSNP"),
     isis_interface_lib:handle_psnp(PSNP, PDU),
+    State;
+handle_p2mp_pdu(Pdu, State) ->
+    isis_logger:warning("Ignoring PDU: ~p", [Pdu]),
     State.
+
 
 
 generate_padding(_Size, #state{padding = false}) ->
@@ -402,6 +406,11 @@ do_update_reachability_tlv(del, N, PN, Metric,
     isis_system:delete_tlv(TLV, PN, State#state.level, State#state.interface_name).
 
 %% When stopping, remove the circuit from the system list and remove our neighbor from our reachability list
-stopping(#state{from = From, neighbor = N} = State) ->
+stopping(#state{from = From, neighbor = N} = State)
+  when N =/= undef->
     isis_system:del_circuit(From),
-    do_update_reachability_tlv(del, <<N:6/binary, 0:8>>, 0, State#state.metric, State).
+    do_update_reachability_tlv(del, <<N:6/binary, 0:8>>, 0, State#state.metric, State);
+stopping(_State) ->
+    ok.
+
+

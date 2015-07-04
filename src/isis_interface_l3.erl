@@ -215,7 +215,7 @@ handle_info({message, PDU, From}, State) ->
     %% We need the packet details from PKTINFO... ugh..
     MappedFrom = 
 	case State#state.mode of
-	    brocast -> snpa_from_ipv6(From);
+	    broadcast -> snpa_from_ipv6(From);
 	    point_to_multipoint -> From
 	end,
     NewState = 
@@ -480,7 +480,7 @@ start_receiver(Socket, Pid) ->
     end.
 
 %% Based on the code from Christian...
-snpa_from_ipv6(Address) ->
+snpa_from_ipv6({ipv6, Address}) ->
     BinAddr =
 	<< <<X:16>> || X <- erlang:tuple_to_list(Address) >>,
     <<_:(8*8), A:8, B:16, T:16, D:24>> = BinAddr,
