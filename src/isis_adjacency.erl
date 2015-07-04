@@ -42,7 +42,8 @@
 
 -record(state, {
 	  level,         %% Our 'level'
-	  neighbor,      %% Neighbor's SNPA (ie. whom we're adjacent with)
+	  mode,          %% Are we broadcast, point_to_point or point_to_multipoint?
+	  neighbor,      %% Neighbor's SNPA / IPv6 address (ie. whom we're adjacent with)
 	  neighbor_id,   %% Neighbor ID
 	  lan_id,        %% Who the negihbor believes is DIS
 	  priority,      %% Priority it advertises
@@ -283,6 +284,10 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+parse_args([{mode, broadcast} | T], State) ->
+    parse_args(T, State#state{mode = broadcast});
+parse_args([{mode, point_to_multipoint} | T], State) ->
+    parse_args(T, State#state{mode = point_to_multipoint});
 parse_args([{neighbor, Value} | T], State) ->
     parse_args(T, State#state{neighbor = Value});
 parse_args([{snpa, Value} | T], State) ->

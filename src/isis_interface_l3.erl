@@ -54,7 +54,7 @@
 
 %% API
 -export([start_link/1, stop/1,
-	 send_pdu/4,
+	 send_pdu/4, send_pdu_to/4,
 	 get_mtu/1, get_mac/1
 	]).
 
@@ -71,6 +71,7 @@
 
 -record(state, {
 	  name,            %% Interface Name
+	  mode = broadcast,%% broadcast, point_to_point or point_to_multipoint
 	  ifindex,         %% Ifindex
 	  socket,          %% Procket socket...
 	  port,            %% Erlang port handling socket
@@ -98,7 +99,10 @@ start_link(Args) ->
 %%% gen_server callbacks
 %%%===================================================================
 send_pdu(Pid, Pdu, Pdu_Size, Level) ->
-    gen_server:cast(Pid, {send_pdu, Pdu, Pdu_Size, Level}).
+    gen_server:cast(Pid, {send_pdu, undefined, Pdu, Pdu_Size, Level}).
+
+send_pdu_to(Pid, To, Pdu, Pdu_Size) ->
+    gen_server:cast(Pid, {send_pdu, To, Pdu, Pdu_Size, undefined}).
 
 stop(Pid) ->
     gen_server:cast(Pid, stop).
@@ -180,9 +184,13 @@ handle_call(_Request, _From, State) ->
 %%                                  {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_cast({send_pdu, Pdu, _Pdu_Size, Level}, State) ->
+handle_cast({send_pdu, undefined, Pdu, _Pdu_Size, Level}, State) ->
     Packet = list_to_binary(Pdu),
     send_packet(Packet, Level, State),
+    {noreply, State};
+handle_cast({send_pdu, {ipv6, To}, Pdu, _Pdu_Size, _Level}, State) ->
+    Packet = list_to_binary(Pdu),
+    send_packet_to(To, Packet, State),
     {noreply, State};
 
 handle_cast(stop, State) ->
@@ -205,10 +213,15 @@ handle_cast(_Msg, State) ->
 %%--------------------------------------------------------------------
 handle_info({message, PDU, From}, State) ->
     %% We need the packet details from PKTINFO... ugh..
+    MappedFrom = 
+	case State#state.mode of
+	    brocast -> snpa_from_ipv6(From);
+	    point_to_multipoint -> From
+	end,
     NewState = 
 	case catch isis_protocol:decode(PDU) of
 	    {ok, DecodedPDU} ->
-		isis_interface:received_pdu(State#state.interface_pid, From, DecodedPDU),
+		isis_interface:received_pdu(State#state.interface_pid, MappedFrom, DecodedPDU),
 		State;
 	    {'EXIT', Reason} ->
 		isis_logger:error("Failed to decode: ~p for ~p", [PDU, Reason]),
@@ -350,7 +363,7 @@ create_port(Name) ->
 	    %% ok = procket:bind(S, LL),
 	    %% Port = erlang:open_port({fd, S, S}, [binary]),
 
-	    isis_logger:error("Opened L3 socket: ~p", [S]),
+	    isis_logger:debug("Opened L3 socket: ~p", [S]),
 
 	    {S, Mac, Ifindex, MTU, undefined};
 	{error, einval} ->
@@ -371,6 +384,11 @@ send_packet(Packet, Level, State) ->
     Result = procket:sendto(State#state.socket, Packet, 0, LL),
     Result.
 
+send_packet_to(To, Packet, State) ->
+    DestAddr = create_sockaddr(To, State#state.ifindex),
+    Result = procket:sendto(State#state.socket, Packet, 0, DestAddr),
+    Result.
+
 
 %%--------------------------------------------------------------------
 %% @private
@@ -389,6 +407,14 @@ create_sockaddr_ll(Level, Ifindex) ->
 		inet:parse_address(?IPV6_ALL_L2_IS)
 	end,
     BinAddr = << <<A:16>> || A <- erlang:tuple_to_list(Addr) >>,
+    <<(?AF_INET6):16/native,
+      0:16,  %% sin_port (__be16)
+      0:32,  %% sin_flowinfo (__be32)
+      BinAddr/binary,
+      Ifindex:32/native>>.
+
+create_sockaddr(To, Ifindex) ->
+    BinAddr = << <<A:16>> || A <- erlang:tuple_to_list(To) >>,
     <<(?AF_INET6):16/native,
       0:16,  %% sin_port (__be16)
       0:32,  %% sin_flowinfo (__be32)
@@ -419,6 +445,10 @@ extract_args([{name, Name} | T], State) ->
     extract_args(T, State#state{name = Name});
 extract_args([{interface_pid, Pid} | T], State) ->
     extract_args(T, State#state{interface_pid = Pid});
+extract_args([{mode, broadcast} | T], State) ->
+    extract_args(T, State#state{mode = broadcast});
+extract_args([{mode, point_to_multipoint} | T], State) ->
+    extract_args(T, State#state{mode = point_to_multipoint});
 extract_args([], State) ->
     State.
 
@@ -432,8 +462,7 @@ join_group(Socket, IfIndex, Address) ->
 do_receive(Socket, Parent) ->
     case gen_udp:recv(Socket, ?ISIS_MAX_L3_MESSAGE_SIZE) of
 	{ok, {From, _, Packet}} ->
-	    SNPA = snpa_from_ipv6(From),
-	    Parent ! {message, Packet, SNPA},
+	    Parent ! {message, Packet, {ipv6, From}},
 	    do_receive(Socket, Parent);
 	Other ->
 	    isis_logger:error("Received: ~p", [Other]),

@@ -55,6 +55,8 @@
 	  name,            %% Interface name
 	  interface_mod,   %% Module handling I/F I/O
 	  interface_pid,   %% Interface I/O Pid
+	  mode = broadcast,%% broadcast or point-to-multipoint
+	  pseudo_interfaces, %% Map 'From' to pseudo interface for point-to-(multi)point modes
 	  level1,          %% Pid handling the levels
 	  level2
 	 }).
@@ -134,10 +136,12 @@ dump_config(Pid) ->
 init(Args) ->
     process_flag(trap_exit, true),
     State = extract_args(Args, #state{level1 = undef,
-				      level2 = undef}),
+				      level2 = undef,
+				      pseudo_interfaces = dict:new()}),
     IFModule = State#state.interface_mod,
     case IFModule:start_link([{name, State#state.name},
-			      {interface_pid, self()}]) of
+			      {interface_pid, self()},
+			      {mode, State#state.mode}]) of
 	{ok, Pid} ->
 	    erlang:send_after(60 * 1000, self(), {gc}),
 	    {ok, State#state{interface_pid = Pid}};
@@ -284,10 +288,11 @@ handle_cast({clear_neighbors, Which}, #state{
 	_ -> no_level
     end,
     {noreply, State};
-handle_cast({received_pdu, From, PDU}, State) ->
-    isis_logger:debug("Handling PDU: ~p", [PDU]),
+handle_cast({received_pdu, From, PDU}, #state{mode = broadcast} = State) ->
     handle_pdu(From, PDU, State),
     {noreply, State};
+handle_cast({received_pdu, From, PDU}, #state{mode = point_to_multipoint} = State) ->
+    {noreply, handle_p2mp_pdu(From, PDU, State)};
 
 handle_cast(_Msg, State) ->
     {noreply, State}.
@@ -322,8 +327,13 @@ handle_info({'EXIT', Pid, normal}, State)
 handle_info({'EXIT', Pid, normal}, State)
   when Pid =:= State#state.level2 ->
     {noreply, State#state{level2 = undef}};
-handle_info({'EXIT', _Pid, normal}, State) ->
-    {noreply, State};
+handle_info({'EXIT', Pid, normal}, State) ->
+    %% Check to see if its one of our p2mp processes
+    NewPI =
+	dict:filter(fun(_From, P) when P =:= Pid -> false;
+		       (_, _) -> true
+		    end, State#state.pseudo_interfaces),
+    {noreply, State#state{pseudo_interfaces = NewPI}};
 
 handle_info(Info, State) ->
     isis_logger:debug("Unknown message: ~p", [Info]),
@@ -392,6 +402,24 @@ handle_pdu(From, #isis_psnp{pdu_type = level2_psnp} = PDU, #state{level2 = Pid})
 handle_pdu(_From, _Pdu, State) ->
     State.
 
+%% Handle P2MP message
+handle_p2mp_pdu(From, PDU, #state{pseudo_interfaces = PI} = State) ->
+    %% Map 'From' into a 'virtual circuit'
+    {Pid, NextState} = 
+	case dict:find(From, PI) of
+	    {ok, P} -> {P, State};
+	    error ->
+		{ok, P} = isis_interface_p2mp:start_link([{from, From},
+							  {interface_name, State#state.name, self()},
+							  {interface_module, State#state.interface_mod},
+							  {interface_pid, State#state.interface_pid}]),
+		erlang:monitor(process, P),
+		{P, State#state{pseudo_interfaces = dict:store(From, P, PI)}}
+	end,
+    %% Send PDU to the interface...
+    isis_interface_p2mp:handle_pdu(Pid, PDU),
+    NextState.
+
 %%--------------------------------------------------------------------
 %% @private
 %% @doc
@@ -409,7 +437,8 @@ handle_enable_level(level_1, #state{level1 = Level_1} = State) ->
 		{ok, Pid} = isis_interface_level:start_link([{level, level_1},
 							     {snpa, Mac},
 							     {interface, State#state.name, self(),
-							      Mtu}]),
+							      Mtu},
+							     {mode, State#state.mode}]),
 		isis_logger:debug("Interface level: ~p ~p ~p ~p", [State#state.name, Mtu, Mac, Pid]),
 		Pid;
 	    _ -> Level_1
@@ -477,6 +506,10 @@ extract_args([{name, Name} | T], State) ->
     extract_args(T, State#state{name = Name});
 extract_args([{interface_module, ModName} | T], State) ->
     extract_args(T, State#state{interface_mod = ModName});
+extract_args([{mode, broadcast} | T], State) ->
+    extract_args(T, State#state{mode = broadcast});
+extract_args([{mode, point_to_multipoint} | T], State) ->
+    extract_args(T, State#state{mode = point_to_multipoint});
 extract_args([], State) ->
     State.
 

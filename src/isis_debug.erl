@@ -195,7 +195,7 @@ inject_some_lsps(Level, Count, Seq, Overload, Partition)
     %% Now inject into the database
     Injector = 	fun(L) ->
 			isis_lspdb:store_lsp(Level, L),
-			isis_lspdb:flood_lsp(Level, isis_system:list_interfaces(), L, none)
+			isis_lspdb:flood_lsp(Level, isis_system:list_circuits(), L, none)
 		end,
     lists:map(Injector, LSPs),
     ChainTLV = #isis_tlv_extended_reachability{
@@ -338,7 +338,7 @@ inject_mesh(Level, Rows, Columns) ->
     lists:map(
       fun(L) ->
 	      isis_lspdb:store_lsp(Level, L),
-	      isis_lspdb:flood_lsp(Level, isis_system:list_interfaces(), L, none)
+	      isis_lspdb:flood_lsp(Level, isis_system:list_circuits(), L, none)
       end, LSPs).
 
 %%%===================================================================

@@ -34,8 +34,11 @@
 -export([start_link/1,
 	 set_state/1, get_state/1,
 	 %% Interface configuration (add/del/set/list)
-	 add_interface/1, del_interface/1, list_interfaces/0,
+	 add_interface/1, add_interface/2, add_interface/3,
+	 del_interface/1, list_interfaces/0,
 	 set_interface/2, set_interface/3, get_interface/1,
+	 %% Circuits
+	 add_circuit/1, del_circuit/1, list_circuits/0,
 	 %% Enable / disable level on an interface
 	 enable_level/2, disable_level/2,
 	 %% Clear
@@ -127,10 +130,15 @@ start_link(Args) ->
 %%--------------------------------------------------------------------
 -spec add_interface(string()) -> ok | error.
 add_interface(Name) ->
-    gen_server:call(?MODULE, {add_interface, Name, undefined}).
+    gen_server:call(?MODULE, {add_interface, Name, undefined, broadcast}).
 
 add_interface(Name, Module) ->
-    gen_server:call(?MODULE, {add_interface, Name, Module}).
+    gen_server:call(?MODULE, {add_interface, Name, Module, broadcast}).
+
+add_interface(Name, Module, broadcast) ->
+    gen_server:call(?MODULE, {add_interface, Name, Module, broadcast});
+add_interface(Name, Module, point_to_multipoint) ->
+    gen_server:call(?MODULE, {add_interface, Name, Module, point_to_multipoint}).
 
 -spec del_interface(string()) -> ok | error.
 del_interface(Name) ->
@@ -178,6 +186,19 @@ get_interface(IfIndex) when is_integer(IfIndex) ->
 	0 -> unknown;
 	_ -> lists:nth(1, Ifs)
     end.
+
+%%% Circuits...
+add_circuit(#isis_circuit{} = Circuit) ->
+    gen_server:call(?MODULE, {add_circuit, Circuit}).
+
+del_circuit({interface, _Name} = Circuit) ->
+    gen_server:call(?MODULE, {del_circuit, Circuit});
+del_circuit({ipv6, _Addr} = Circuit) ->
+    gen_server:call(?MODULE, {del_circuit, Circuit}).
+
+list_circuits() ->
+    ets:tab2list(isis_circuits).
+
 
 enable_level(Interface, level_1) ->
     case ets:lookup(isis_interfaces, Interface) of
@@ -355,6 +376,8 @@ init(Args) ->
     process_flag(trap_exit, true),
     Interfaces = ets:new(isis_interfaces, [named_table, ordered_set,
 					   {keypos, #isis_interface.name}]),
+    Circuits = ets:new(isis_circuits, [named_table, ordered_set,
+				       {keypos, #isis_circuit.name}]),
     Redist = ets:new(redistributed_routes, [named_table, bag,
 					    {keypos, #isis_route.route}]),
     State = #state{startup_time = get_time(),
@@ -396,7 +419,7 @@ init(Args) ->
 handle_call({add_interface, _, _}, _From,
 	    #state{system_id = ID, autoconf = false} = State) when is_binary(ID) == false ->
     {reply, {error, "invalid system id"}, State};
-handle_call({add_interface, Name, Module}, _From,
+handle_call({add_interface, Name, Module, Mode}, _From,
 	    #state{interfaces = Interfaces} = State) ->
     IM =
 	case Module of
@@ -407,10 +430,12 @@ handle_call({add_interface, Name, Module}, _From,
     Interface = 
 	case ets:lookup(Interfaces, Name) of
 	    [I] -> 
-		I#isis_interface{interface_module = IM};
+		I#isis_interface{interface_module = IM,
+				 mode = Mode};
 	    _ ->
 		#isis_interface{name = Name,
-				 interface_module = IM}
+				interface_module = IM,
+				mode = Mode}
 	end,
     BringUp = case State#state.autoconf of
 	true -> fun do_autoconf_interface/2;
@@ -429,6 +454,14 @@ handle_call({del_interface, Name}, _From,
 	    ok
     end,
     {reply, ok, State};
+
+handle_call({add_circuit, Circuit}, _From, State) ->
+    ets:insert(isis_circuits, Circuit),
+    {reply, ok, State};
+
+handle_call({del_circuit, Name}, _From, State) ->
+    {reply, ets:delete(isis_circuits, Name), State};
+
 
 handle_call({clear_neighbors}, _From,
 	    #state{interfaces = Interfaces} = State) ->
@@ -757,14 +790,21 @@ extract_args([], State) ->
 do_enable_interface(#isis_interface{pid = Pid}, State)  when is_pid(Pid) ->
     State;
 do_enable_interface(#isis_interface{name = Name,
-				    interface_module = Module} = Interface, State) ->
+				    interface_module = Module,
+				    mode = Mode} = Interface, State) ->
     case isis_interface:start_link([{name, Name},
-				    {interface_module, Module}]) of
+				    {interface_module, Module},
+				    {mode, Mode}]) of
 	{ok, InterfacePid} ->
 	    erlang:monitor(process, InterfacePid),
 	    ets:insert(State#state.interfaces,
 		       Interface#isis_interface{pid = InterfacePid,
-						enabled = true});
+						enabled = true}),
+	    %% Now add as a circuit
+	    ets:insert(isis_circuits,
+		       #isis_circuit{name = {interface, Name},
+				     module = isis_interface,
+				     id = InterfacePid});
 	_ -> no_process
     end,
     State.
@@ -866,7 +906,7 @@ lsp_ageout_check(#state{frags = Frags} = State) ->
 				     last_update = isis_protocol:current_timestamp()},
 		      CSum = isis_protocol:checksum(NewLSP),
 		      CompleteLSP = NewLSP#isis_lsp{checksum = CSum},
-		      isis_lspdb:flood_lsp(Level, ets:tab2list(State#state.interfaces),
+		      isis_lspdb:flood_lsp(Level, ets:tab2list(isis_circuits),
 					   CompleteLSP, none),
 		      {isis_lspdb:store_lsp(Level, CompleteLSP), Level};
 		 (_, Level) -> 
@@ -924,7 +964,7 @@ create_lsp_from_frag(#lsp_frag{level = Level, sequence = SN} = Frag,
 		    tlv = AuthTLV ++ Frag#lsp_frag.tlvs},
     CSum = isis_protocol:checksum(LSP),
     isis_lspdb:store_lsp(Level, LSP#isis_lsp{checksum = CSum}),
-    isis_lspdb:flood_lsp(Level, ets:tab2list(State#state.interfaces), LSP, none).
+    isis_lspdb:flood_lsp(Level, ets:tab2list(isis_circuits), LSP, none).
 
 generate_lspid_from_frag(#lsp_frag{pseudonode = PN, fragment = FragNo},
 			 #state{system_id = SID}) ->

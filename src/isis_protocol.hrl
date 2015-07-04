@@ -32,6 +32,7 @@
 -define(DEFAULT_HOLD_TIME, 10 * 1000).
 -define(ISIS_PSNP_TIMER, 10 * 1000).
 -define(ISIS_CSNP_TIMER, 10 * 1000).
+-define(ISIS_P2P_CSNP_TIMER, 60 * 1000).
 -define(ISIS_CSNP_PACE_TIMER, 0.25 * 1000).
 -define(ISIS_SPF_DELAY, 4). %% 4ms
 -define(ISIS_IIH_IPV6COUNT, 15).

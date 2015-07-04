@@ -38,6 +38,7 @@
 	 show_database_detail/0, show_database_detail/1,
 	 %% Interface stuff
 	 show_interfaces/0,
+	 show_circuits/0,
 	 %% Neighbors
 	 show_routes/1,     % Output of SPF
 	 show_rib/0,        % What we think we've already sent
@@ -232,6 +233,24 @@ show_interfaces_fun(#isis_interface{name = Name,
 show_interfaces() ->
     I = isis_system:list_interfaces(),
     lists:map(fun show_interfaces_fun/1, I),
+    ok.
+
+show_circuits_fun(#isis_circuit{name = {interface, Name}}) ->
+    I = isis_system:get_interface(Name),
+    io:format("  ~30s ~5B ~5p ~20s~n",
+	      [Name,
+	       I#isis_interface.ifindex,
+	       I#isis_interface.enabled,
+	       I#isis_interface.mode]);
+show_circuits_fun(#isis_circuit{name = {ipv6, Addr}}) ->
+    io:format("  ~30s ~5B ~5p ~20s~n",
+	      [inet_parse:ntoa(Addr),
+	       1, true, p2mp]).
+
+show_circuits() ->
+    C = isis_system:list_circuits(),
+    io:format("  ~30s ~5s ~5s ~20s~n", ["Name", "CtId", "Enbld", "Mode"]),
+    lists:map(fun show_circuits_fun/1, C),
     ok.
 
 show_nexthops() ->

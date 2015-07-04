@@ -55,6 +55,7 @@
 
 -record(state, {
 	  name,            %% Interface Name
+	  mode = broadcast,%% Broadcast, point_to_point, point_to_multipoint
 	  ifindex,         %% Ifindex
 	  socket,          %% Procket socket...
 	  port,            %% Erlang port handling socket
@@ -404,6 +405,10 @@ extract_args([{name, Name} | T], State) ->
     extract_args(T, State#state{name = Name});
 extract_args([{interface_pid, Pid} | T], State) ->
     extract_args(T, State#state{interface_pid = Pid});
+extract_args([{mode, broadcast} | T], State) ->
+    extract_args(T, State#state{mode = broadcast});
+extract_args([{mode, point_to_multipoint} | T], State) ->
+    extract_args(T, State#state{mode = point_to_multipoint});
 extract_args([], State) ->
     State.
 

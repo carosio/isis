@@ -1420,7 +1420,6 @@ decode_pdu(Type, _Header, PDU_Len, Rest) when
     end;
 decode_pdu(Type, _Header, PDU_Len, Rest) when
       Type == level1_psnp; Type == level2_psnp ->
-    isis_logger:error("Handling PSNP packet..."),
     case decode_common_psnp(Rest, PDU_Len) of
 	error -> throw(decode_error);
 	{ok, PSNP} ->

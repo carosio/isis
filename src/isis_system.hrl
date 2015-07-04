@@ -56,6 +56,7 @@
 	   name :: string(),
 	   mac :: binary(),
 	   interface_module :: atom(),
+	   mode = broadcast :: broadcast | point_to_multipoint,
 	   metric = 10 :: integer(),
 	   flags :: integer(),
 	   enabled = false :: atom(),
@@ -68,6 +69,14 @@
 	   mtu6 :: integer()
 	  }).
 -type isis_interface() :: #isis_interface{}.
+
+%% An isis_circuit is either an interface, of a p2p or p2mp
+-record(isis_circuit, {
+	  name :: tuple(), %% {interface, Name} | {ipv6, address},
+	  module :: atom(),
+	  id :: pid()
+	 }).
+-type isis_circuit() :: #isis_circuit{}.
 
 -record (isis_name, {
 	   system_id :: binary(),

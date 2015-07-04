@@ -93,7 +93,7 @@ store_lsp(Ref, LSP) ->
 purge_lsp(Ref, LSP, Crypto) ->
     case gen_server:call(Ref, {purge, LSP, Crypto}) of
 	{ok, PurgedLSP} ->
-	    I = isis_system:list_interfaces(),
+	    I = isis_system:list_circuits(),
 	    isis_lspdb:flood_lsp(Ref, I, PurgedLSP, Crypto),
 	    ok;
 	_ ->
@@ -248,16 +248,16 @@ purge(LSP, Crypto, State) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
-flood_lsp(Level, Interfaces, LSP, Crypto) ->
+flood_lsp(Level, Circuits, LSP, Crypto) ->
     case isis_protocol:encode(LSP, Crypto) of
 	{ok, Packet, Size} ->
-	    Sender = fun(#isis_interface{pid = P}) ->
-			     case is_pid(P) of
-				 true -> isis_interface:send_pdu(P, lsp, Packet, Size, Level);
+	    Sender = fun(#isis_circuit{module = M, id = Id}) ->
+			     case is_pid(Id) of
+				 true -> M:send_pdu(Id, lsp, Packet, Size, Level);
 				 _ -> ok
 			     end
 		     end,
-	    lists:map(Sender, Interfaces),
+	    lists:map(Sender, Circuits),
 	    ok;
 	_ -> error
     end.
