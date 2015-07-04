@@ -59,6 +59,8 @@
 	  metric_type = wide :: wide | narrow,
 	  padding = true :: true | false,  %% To pad or not...
 	  iih_timer = undef :: reference() | undef, %% iih timer for this level
+	  ip_addresses = [],
+	  ipv6_addresses = [],
 	  pdu_state = #isis_pdu_state{}
 	 }).
 
@@ -286,8 +288,9 @@ handle_p2mp_pdu(#isis_p2p_iih{} = IIH, State) ->
 		do_update_reachability_tlv(add, <<N:6/binary, 0:8>>, 0, State#state.metric, State),
 		State#state{neighbor = N}
 	end,
+    NewState2 = verify_interface_addresses(IIH, NewState),
     HoldTimer = start_timer(hold, NewState),
-    NewState#state{hold_timer = HoldTimer};
+    NewState2#state{hold_timer = HoldTimer};
 handle_p2mp_pdu(#isis_lsp{} = LSP, #state{pdu_state = PDU} = State) ->
     isis_logger:debug("Processing LSP ~p", [LSP#isis_lsp.lsp_id]),
     isis_interface_lib:handle_lsp(LSP, PDU),
@@ -413,4 +416,38 @@ stopping(#state{from = From, neighbor = N} = State)
 stopping(_State) ->
     ok.
 
+%%%===================================================================
+%%% verify_interface_addresses
+%%%
+%%%===================================================================
+verify_interface_addresses(IIH, #state{ip_addresses = IPAddresses,
+				       ipv6_addresses = IPv6Addresses} = State) ->
+    IfIndex = get_ifindex(State),
+    Metric = State#state.metric,
+    V4 = isis_protocol:filter_tlvs(isis_tlv_ip_interface_address, IIH#isis_p2p_iih.tlv),
+    V4Addresses =
+	lists:flatten(
+	  lists:map(fun(#isis_tlv_ip_interface_address{addresses = A}) -> A end, V4)),
+    V41 = sets:from_list(IPAddresses),
+    V42 = sets:from_list(V4Addresses),
+    V4Remove = lists:map(fun(F) -> {ipv4, {F, IfIndex, self()}} end, sets:to_list(sets:subtract(V41, V42))),
+    V4Add = lists:map(fun(F) -> {ipv4, {F, IfIndex, self()}} end, sets:to_list(sets:subtract(V42, V41))),
+    isis_system:add_sid_addresses(State#state.level, IIH#isis_p2p_iih.source_id, Metric, V4Add),
+    isis_system:delete_sid_addresses(State#state.level, IIH#isis_p2p_iih.source_id, V4Remove),
 
+    V6 = isis_protocol:filter_tlvs(isis_tlv_ipv6_interface_address, IIH#isis_p2p_iih.tlv),
+    V6Addresses =
+	lists:flatten(
+	  lists:map(fun(#isis_tlv_ipv6_interface_address{addresses = A}) -> A end, V6)),
+    V61 = sets:from_list(IPv6Addresses),
+    V62 = sets:from_list(V6Addresses),
+    V6Remove = lists:map(fun(F) -> {ipv6, {F, IfIndex, self()}} end, sets:to_list(sets:subtract(V61, V62))),
+    V6Add = lists:map(fun(F) -> {ipv6, {F, IfIndex, self()}} end, sets:to_list(sets:subtract(V62, V61))),
+    isis_system:add_sid_addresses(State#state.level, IIH#isis_p2p_iih.source_id, Metric, V6Add),
+    isis_system:delete_sid_addresses(State#state.level, IIH#isis_p2p_iih.source_id, V6Remove),
+    State#state{ip_addresses = V4Addresses,
+		ipv6_addresses = V6Addresses}.
+
+get_ifindex(#state{interface_name = Name}) ->
+    I = isis_system:get_interface(Name),
+    I#isis_interface.ifindex.
