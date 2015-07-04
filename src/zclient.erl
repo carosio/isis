@@ -51,11 +51,11 @@
 	  zhead :: zclient_header(),
 	  buffer,
 	  %% State for zclient
-	  interfaces :: dict(),          %% Map ifindex->record
-	  routes :: dict(),              %% Map prefix -> record
+	  interfaces :: dict:new(),          %% Map ifindex->record
+	  routes :: dict:new(),              %% Map prefix -> record
 	  router_id :: [isis_prefix()],
 	  %% State for listeners
-	  listeners :: dict()
+	  listeners :: dict:new()
 	 }).
 
 %%%===================================================================
