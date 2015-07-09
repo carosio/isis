@@ -1740,6 +1740,7 @@ md5sum(PDU, {md5, Key}) ->
 %% --------------------------------------------------------------------
 authentication_tlv(Crypto) ->
     case Crypto of
+	undefined -> [];
 	none -> [];
 	{text, Key} ->
 	    [#isis_tlv_authentication{

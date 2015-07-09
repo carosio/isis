@@ -157,19 +157,29 @@ set_interface(Name, Values) ->
     end.
 
 set_interface(Name, Level, Values) ->
-    Pid = 
-	case ets:lookup(isis_interfaces, Name) of
-	    [I] -> I#isis_interface.pid;
-	    _ -> unknown
-	end,
-    case is_pid(Pid) of
-	true -> LevelPid = isis_interface:get_level_pid(Pid, Level),
-		case is_pid(LevelPid) of
-		    true -> isis_interface_level:set(LevelPid, Values);
-		    _ -> not_enabled
-		end;
-	_ -> not_enabled
+    case ets:lookup(isis_interfaces, Name) of
+	[I] -> interface_circuit_set(I, Level, Values);
+	_ -> unknown
     end.
+
+-spec interface_circuit_set(#isis_interface{}, atom(), list()) -> ok.
+interface_circuit_set(Interface, Level, Values) ->
+    isis_config:set([{interface, Interface#isis_interface.name}, {level, Level}],
+		    Values),
+    %% case isis_interface:get_level_pid(Interface#isis_interface.pid, Level) of
+    %% 	not_enabled -> ok;
+    %% 	LevelPid ->  isis_interface_level:set(LevelPid, Values)
+    %% end,
+    %% %% Now all p2p/p2pmp on that interface...
+    %% lists:map(
+    %%   fun(#isis_circuit{name = {ipv6, _},
+    %% 			parent_interface = PI,
+    %% 			module = M, id = ID})
+    %% 	    when PI =:= Interface#isis_interface.name ->
+    %% 	      M:set(ID, Level, Values);
+    %% 	 (_) -> ok
+    %%   end, ets:tab2list(isis_circuits)).
+    ok.
 
 list_interfaces() ->
     ets:tab2list(isis_interfaces).
@@ -815,10 +825,10 @@ do_enable_interface(#isis_interface{name = Name,
 %%%===================================================================
 %%% Enable a level on an interface
 %%% ===================================================================
-do_enable_level(#isis_interface{pid = Pid}, Level, SID) when is_pid(Pid) ->
+do_enable_level(#isis_interface{pid = Pid, name = Name} = Interface,
+		Level, SID) when is_pid(Pid) ->
     isis_interface:enable_level(Pid, Level),
-    LP = isis_interface:get_level_pid(Pid, Level),
-    isis_interface_level:set(LP, [{system_id, SID}]),
+    interface_circuit_set(Interface, Level, [{system_id, SID}]),
     ok;
 do_enable_level(_I, _Level, _State) ->
     not_enabled.
@@ -1281,11 +1291,10 @@ do_autoconf_interface(#isis_interface{mac = Mac, name = Name} = I,
     State2 = do_enable_interface(I, State1),
     [Interface] = ets:lookup(State2#state.interfaces, Name),
     do_enable_level(Interface, level_1, State2#state.system_id),
-    LevelPid = isis_interface:get_level_pid(Interface#isis_interface.pid, level_1),
-    isis_interface_level:set(LevelPid,
-			     [{encryption, text, <<"isis-autoconf">>},
-			      {metric, ?DEFAULT_AUTOCONF_METRIC},
-			      {priority, ?DEFAULT_PRIORITY}]),
+    interface_circuit_set(I, level_1, 
+			  [{authentication, {text, <<"isis-autoconf">>}},
+			   {metric, ?DEFAULT_AUTOCONF_METRIC},
+			   {priority, ?DEFAULT_PRIORITY}]),
     State2;
 do_autoconf_interface(_I, State) ->
     State.
@@ -1575,13 +1584,7 @@ change_system_id(Id, State) ->
     isis_logger:info("System ID set to ~p", [Id]),
     isis_lspdb:set_system_id(level_1, Id),
     isis_lspdb:set_system_id(level_2, Id),
-    PropogateFun
-	= fun(I, L) ->
-		  case isis_interface:get_level_pid(I#isis_interface.pid, L) of
-		      not_enabled -> ok;
-		      P -> isis_interface_level:set(P, [{system_id, Id}])
-		  end
-	  end,
+    PropogateFun = fun(I, L) -> interface_circuit_set(I, L, [{system_id, Id}]) end,
     lists:map(fun(I) -> PropogateFun(I, level_1) end, ets:tab2list(State#state.interfaces)),
     lists:map(fun(I) -> PropogateFun(I, level_2) end, ets:tab2list(State#state.interfaces)).
 
@@ -1589,13 +1592,7 @@ change_system_id(Id, State) ->
 %% inform all interface_level code about their new requirements..
 change_level_authentication(Auth, Level, State) ->
     PropogateFun =
-	fun(I) ->
-		case isis_interface:get_level_pid(I#isis_interface.pid, Level) of
-		    not_enabled ->
-			ok;
-		    P -> isis_interface_level:set(P, [{level_authentication, Auth}])
-		end
-	end,
+	fun(I) -> interface_circuit_set(I, Level, [{level_authentication, Auth}]) end,
     lists:map(PropogateFun, ets:tab2list(State#state.interfaces)),
     force_refresh_lsp(State).
 
@@ -1604,6 +1601,7 @@ get_level_crypto(Level, State) ->
 	level_1 -> State#state.l1_authentication;
 	level_2 -> State#state.l2_authentication
     end.
+
 
 %%%===================================================================
 %% create_lowest_nexthop_map

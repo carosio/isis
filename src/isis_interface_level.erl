@@ -56,7 +56,7 @@
 	  database = undef, %% The LSPDB reference
 	  hello_interval = (?DEFAULT_HOLD_TIME / 3),
 	  hold_time = ?DEFAULT_HOLD_TIME,
-	  csnp_timer = undef,
+	  csnp_time = ?ISIS_CSNP_TIMER,
 	  metric = ?DEFAULT_METRIC,
 	  metric_type = wide :: wide | narrow,
 	  padding = true :: true | false,  %% To pad or not...
@@ -151,12 +151,16 @@ init(Args) ->
 %% @end
 %%--------------------------------------------------------------------
 handle_call({send_iih}, _From, State) ->
-    try send_iih(State) of 
-	_ -> {reply, ok, State}
+    RefreshState =
+	set_values(isis_config:get([{interface, State#state.interface_name},
+				    {level, State#state.level}]),
+		   State),
+    try send_iih(RefreshState) of 
+	_ -> {reply, ok, RefreshState}
     catch
 	bad_enum -> 
 	    isis_logger:error("Failed in send_iih"),
-	    {reply, ok, State}
+	    {reply, ok, RefreshState}
     end;
 handle_call({get_state}, _From, State) ->
     {reply, State, State};
@@ -174,7 +178,7 @@ handle_call({get_state, up_adjacencies}, _From, State) ->
 handle_call({get_state, priority}, _From, State) ->
     {reply, State#state.priority, State};
 handle_call({get_state, csnp_interval}, _From, State) ->
-    {reply, State#state.csnp_timer, State};
+    {reply, State#state.csnp_time, State};
 handle_call({get_state, authentication}, _From,
 	    #state{pdu_state = Pdu} = State) ->
     {reply, Pdu#isis_pdu_state.authentication, State};
@@ -653,7 +657,7 @@ cancel_timers([]) ->
     ok.
 
 -spec start_timer(atom(), tuple()) -> reference().
-start_timer(dis, #state{pdu_state = PDU, csnp_timer = CT}) ->
+start_timer(dis, #state{pdu_state = PDU, csnp_time = CT}) ->
     case PDU#isis_pdu_state.dis_continuation of
 	undef ->
 	    erlang:start_timer(isis_protocol:jitter(CT, ?ISIS_CSNP_JITTER),
@@ -694,15 +698,15 @@ parse_args([{interface, N, I, M} | T], State) ->
 parse_args([], State) ->
     State.
 
-set_values([{encryption, none, _Key} | Vs],
+set_values([{authentication, {none, _Key}} | Vs],
 	   #state{pdu_state = PDU} = State) ->
     NewPDU = PDU#isis_pdu_state{authentication = none},
     set_values(Vs, State#state{pdu_state = NewPDU});
-set_values([{encryption, text, Key} | Vs], 
+set_values([{authentication, {text, Key}} | Vs], 
 	   #state{pdu_state = PDU} = State) ->
     NewPDU = PDU#isis_pdu_state{authentication = {text, Key}},
     set_values(Vs, State#state{pdu_state = NewPDU});
-set_values([{encryption, md5, Key} | Vs],
+set_values([{authentication, {md5, Key}} | Vs],
 	   #state{pdu_state = PDU} = State) ->
     NewPDU = PDU#isis_pdu_state{authentication = {md5, Key}},
     set_values(Vs, State#state{pdu_state = NewPDU});
@@ -712,8 +716,8 @@ set_values([{level_authentication, Crypto} | Vs],
     set_values(Vs, State#state{pdu_state = NewPDU});
 set_values([{metric, M} | Vs], State) ->
     set_values(Vs, State#state{metric = M});
-set_values([{csnp_timer, T} | Vs], State) ->
-    set_values(Vs, State#state{csnp_timer = T});
+set_values([{csnp_time, T} | Vs], State) ->
+    set_values(Vs, State#state{csnp_time = T});
 set_values([{priority, P} | Vs], State) ->
     set_values(Vs, State#state{priority = P});
 set_values([{hold_time, P} | Vs], State) ->
@@ -721,7 +725,7 @@ set_values([{hold_time, P} | Vs], State) ->
 set_values([{hello_interval, P} | Vs], State) ->
     set_values(Vs, State#state{hello_interval = P * 1000});
 set_values([{csnp_interval, P} | Vs], State) ->
-    set_values(Vs, State#state{csnp_timer = P * 1000});
+    set_values(Vs, State#state{csnp_time = P * 1000});
 set_values([{system_id, SID} | Vs], State) ->
     PDU = State#state.pdu_state,
     NewPDU = PDU#isis_pdu_state{system_id = SID},
@@ -823,13 +827,13 @@ update_reachability_tlv(Dir, N, PN, Metric, State) ->
 dump_config_fields(Name, Level,
 		   [{authentication, {text, K}} | Fs],
 		   State) ->
-    io:format("isis_system:set_interface(\"~s\", ~s, [{encryption, ~s, ~p}]).~n",
+    io:format("isis_system:set_interface(\"~s\", ~s, [{authentication, {~s, ~p}]).~n",
 	      [Name, Level, text, K]),
     dump_config_fields(Name, Level, Fs, State);
 dump_config_fields(Name, Level,
 		   [{authentication, {md5, K}} | Fs],
 		   State) ->
-    io:format("isis_system:set_interface(\"~s\", ~s, [{encryption, ~s, ~p}]).~n",
+    io:format("isis_system:set_interface(\"~s\", ~s, [{authentication, {~s, ~p}]).~n",
 	      [Name, Level, md5, K]),
     dump_config_fields(Name, Level, Fs, State);
 dump_config_fields(Name, Level,

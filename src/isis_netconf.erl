@@ -1034,7 +1034,7 @@ apply_interfaces(Node, XML, State) ->
 	isis_system:enable_level(IF, level_1),
 	isis_system:enable_level(IF, level_1),
 	isis_system:set_interface(IF, level_1, [{metric, 1000000}]),
-	isis_system:set_interface(IF, level_1, [{encryption, text, <<"isis-autoconf">>}])
+	isis_system:set_interface(IF, level_1, [{authentication, {text, <<"isis-autoconf">>}}])
     end, AddInterfaces),
     State#state{enabled_interfaces = EnabledInterfaces}.
 

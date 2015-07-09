@@ -33,7 +33,8 @@
 %% API
 -export([start_link/1,
 	 handle_pdu/2,
-	 send_pdu/5]).
+	 send_pdu/5,
+	 set/3]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -84,6 +85,12 @@ handle_pdu(Pid, PDU) ->
 send_pdu(Pid, Type, PDU, PDU_Size, Level) ->
     gen_server:cast(Pid, {send_pdu, Type, PDU, PDU_Size, Level}).
 
+set(Pid, level_1, Args) ->
+    gen_server:call(Pid, {set, level_1, Args});
+set(_Pid, _Level, _Args) ->
+    not_supported_yet.
+
+
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
@@ -105,26 +112,15 @@ init(Args) ->
     IIHTimer = start_timer(iih, State),
     CSNPTimer = start_timer(csnp, State),
     HOLDTimer = start_timer(hold, State),
-    SID = isis_system:system_id(),
-    DB = isis_lspdb:get_db(level_1),
-    PDUState = #isis_pdu_state{
-		  parent = isis_interface_p2mp,
-		  parent_pid = self(),
-		  interface_name = State#state.interface_name,
-		  circuit_name = {ipv6, State#state.from},
-		  system_id = SID,
-		  level = level_1,
-		  database = DB
-		 },
     isis_system:add_circuit(#isis_circuit{
 			       name = State#state.from,
 			       module = ?MODULE,
-			       id = self()}),
+			       id = self(),
+			       parent_interface = State#state.interface_name}),
+    gen_server:cast(self(), {setup_pdu}),
     {ok, State#state{iih_timer = IIHTimer,
 		     hold_timer = HOLDTimer,
-		     csnp_timer = CSNPTimer,
-		     system_id = SID,
-		     pdu_state = PDUState}}.
+		     csnp_timer = CSNPTimer}}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -140,6 +136,8 @@ init(Args) ->
 %%                                   {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
+handle_call({set, _Level, Args}, _From, State) ->
+    {reply, ok, set_values(Args, State)};
 handle_call(_Request, _From, State) ->
     Reply = ok,
     {reply, Reply, State}.
@@ -154,6 +152,23 @@ handle_call(_Request, _From, State) ->
 %%                                  {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
+handle_cast({setup_pdu}, State) ->
+    SID = isis_system:system_id(),
+    DB = isis_lspdb:get_db(level_1),
+    PDUState = #isis_pdu_state{
+		  parent = isis_interface_p2mp,
+		  parent_pid = self(),
+		  interface_name = State#state.interface_name,
+		  circuit_name = {ipv6, State#state.from},
+		  system_id = SID,
+		  level = level_1,
+		  authentication = isis_config:get_item([{interface, State#state.interface_name},
+							 {level, level_1}], authentication),
+		  level_authentication = isis_config:get_item([{interface, State#state.interface_name},
+							       {level, level_1}], level_authentication),
+		  database = DB
+		 },
+    {noreply, State#state{pdu_state = PDUState}};
 handle_cast({handle_pdu, PDU}, State) ->
     {noreply, handle_p2mp_pdu(PDU, State)};
 handle_cast({send_pdu, Type, PDU, PDU_Size, _Level}, State) ->
@@ -179,9 +194,14 @@ handle_cast(stop, #state{iih_timer = IIHT,
 %%--------------------------------------------------------------------
 handle_info({timeout, _Ref, iih}, State) ->
     cancel_timers([State#state.iih_timer]),
-    send_iih(State),
-    Timer = start_timer(iih, State),
-    {noreply, State#state{iih_timer = Timer}};
+    %% Refresh our config...
+    RefreshState =
+	set_values(
+	  isis_config:get([{interface, State#state.interface_name}, {level, level_1}]),
+	  State),
+    send_iih(RefreshState),
+    Timer = start_timer(iih, RefreshState),
+    {noreply, RefreshState#state{iih_timer = Timer}};
 handle_info({timeout, _Ref, csnp}, #state{pdu_state = Pdu} = State) ->
     NewPdu = isis_interface_lib:send_csnp(Pdu#isis_pdu_state{ssn_timer = undef}),
     Timer = start_timer(csnp, State),
@@ -332,6 +352,42 @@ extract_args([{interface_pid, Pid} | T], State) ->
 extract_args([{mode, point_to_multipoint} | T], State) ->
     extract_args(T, State#state{mode = point_to_multipoint});
 extract_args([], State) ->
+    State.
+
+set_values([{authentication, {none, _Key}} | Vs],
+	   #state{pdu_state = PDU} = State) ->
+    NewPDU = PDU#isis_pdu_state{authentication = none},
+    set_values(Vs, State#state{pdu_state = NewPDU});
+set_values([{authentication, {text, Key}} | Vs], 
+	   #state{pdu_state = PDU} = State) ->
+    NewPDU = PDU#isis_pdu_state{authentication = {text, Key}},
+    set_values(Vs, State#state{pdu_state = NewPDU});
+set_values([{authentication, {md5, Key}} | Vs],
+	   #state{pdu_state = PDU} = State) ->
+    NewPDU = PDU#isis_pdu_state{authentication = {md5, Key}},
+    set_values(Vs, State#state{pdu_state = NewPDU});
+set_values([{level_authentication, Crypto} | Vs],
+	   #state{pdu_state = PDU} = State) ->
+    NewPDU = PDU#isis_pdu_state{level_authentication = Crypto},
+    set_values(Vs, State#state{pdu_state = NewPDU});
+set_values([{metric, M} | Vs], State) ->
+    set_values(Vs, State#state{metric = M});
+set_values([{csnp_timer, T} | Vs], State) ->
+    set_values(Vs, State#state{csnp_timer = T});
+set_values([{hold_time, P} | Vs], State) ->
+    set_values(Vs, State#state{hold_time = P * 1000});
+set_values([{hello_interval, P} | Vs], State) ->
+    set_values(Vs, State#state{hello_interval = P * 1000});
+set_values([{csnp_interval, P} | Vs], State) ->
+    set_values(Vs, State#state{csnp_timer = P * 1000});
+set_values([{system_id, SID} | Vs], State) ->
+    PDU = State#state.pdu_state,
+    NewPDU = PDU#isis_pdu_state{system_id = SID},
+    set_values(Vs, State#state{system_id = SID,
+			       pdu_state = NewPDU});
+set_values([_ | Vs], State) ->
+    set_values(Vs, State);
+set_values([], State) ->
     State.
 
 get_mtu(#state{interface_mod = Mod, interface_pid = Pid}) ->

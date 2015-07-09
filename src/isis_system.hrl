@@ -74,7 +74,8 @@
 -record(isis_circuit, {
 	  name :: tuple(), %% {interface, Name} | {ipv6, address},
 	  module :: atom(),
-	  id :: pid()
+	  id :: pid(),
+	  parent_interface = undefined %% For p2p/p2mp circuits
 	 }).
 -type isis_circuit() :: #isis_circuit{}.
 
