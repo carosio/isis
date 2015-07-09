@@ -372,6 +372,10 @@ dump_config() ->
 
 get_time() ->
     erlang:now().
+
+load_state(File) ->
+    gen_server:call(?MODULE, {load_state, File}).
+
 %%--------------------------------------------------------------------
 %% @private
 %% @doc
@@ -563,6 +567,9 @@ handle_call({get_state, Item}, _From, State) ->
 handle_call({dump_config}, _From, State) ->
     dump_config(State),
     {reply, ok, State};
+
+handle_call({load_state, File}, _From, State) ->
+    {reply, ok, load_state(File, State)};
 
 handle_call(_Request, _From, State) ->
     Reply = ok,
@@ -1730,8 +1737,8 @@ cull_tree({Key, Value, Iter}, Pid, T) ->
 %%
 %% Debug stuff
 %%
-load_state(File) ->
-    {ok, [State]} = file:consult(File),
+load_state(File, State) ->
+    {ok, [LoadState]} = file:consult(File),
     
     %% Insert the loaded LSPs into our database
     Now = isis_protocol:current_timestamp(),
@@ -1739,8 +1746,11 @@ load_state(File) ->
 		       isis_lspdb:store_lsp(Level, LSP#isis_lsp{last_update = Now})
 	       end,
     lists:map(fun(#isis_lsp{} = L) -> StoreFun(level_1, L) end,
-	      proplists:get_value(lspdb_level_1, State)),
+	      proplists:get_value(lspdb_level_1, LoadState)),
     lists:map(fun(#isis_lsp{} = L) -> StoreFun(level_2, L) end,
-	      proplists:get_value(lspdb_level_2, State)).
+	      proplists:get_value(lspdb_level_2, LoadState)),
     
-		      
+    State#state{
+      l1_system_ids = proplists:get_value(l1_sids, LoadState),
+      l2_system_ids = proplists:get_value(l2_sids, LoadState)
+     }.
