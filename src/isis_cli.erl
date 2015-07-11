@@ -185,7 +185,11 @@ pp_address(#isis_address{afi = ipv6, address = A}) ->
     inet:ntoa(erlang:list_to_tuple([X || <<X:16>> <= <<A:128>>])).
 
 show_interface_level(#isis_interface{pid = Pid}, Level) ->
-    {AuthType, AuthKey} = isis_interface:get_state(Pid, Level, authentication),
+    {AuthType, AuthKey} =
+	case isis_interface:get_state(Pid, Level, authentication) of
+	    none -> {none, <<>>};
+	    {A, B} -> {A, B}
+	end,
     io:format("   Encryption: ~s (key ~p)~n", [AuthType, AuthKey]),
     io:format("   Priority: ~b~n", [isis_interface:get_state(Pid, Level, priority)]),
     Hello = erlang:trunc(isis_interface:get_state(Pid, Level, hello_interval) / 1000),
