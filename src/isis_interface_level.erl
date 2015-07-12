@@ -303,7 +303,6 @@ handle_cast(_Msg, State) ->
 %% @end
 %%--------------------------------------------------------------------
 handle_info({timeout, _Ref, iih}, State) ->
-    isis_logger:error("iih timer fired"),
     cancel_timers([State#state.iih_timer]),
     RefreshState =
 	set_values(isis_config:get([{interface, State#state.interface_name},
@@ -729,7 +728,6 @@ set_values([{hello_interval, P} | Vs], State) ->
 set_values([{csnp_interval, P} | Vs], State) ->
     set_values(Vs, State#state{csnp_time = P * 1000});
 set_values([{system_id, SID} | Vs], State) ->
-    isis_logger:error("Setting SID to: ~p", [SID]),
     PDU = State#state.pdu_state,
     NewPDU = PDU#isis_pdu_state{system_id = SID},
     set_values(Vs, State#state{system_id = SID,
