@@ -172,6 +172,14 @@ code_change(_OldVsn, State, _Extra) ->
 %%% Internal functions
 %%%===================================================================
 insert_items(Key, Value) when is_list(Value) ->
+    Keys = proplists:get_keys(Value),
+    lists:map(fun(#config_item{key = _, value = {A, _}} = I) ->
+		      case lists:member(A, Keys) of
+			  true -> ets:delete_object(?CONFIG_ETS, I);
+			  false -> ok
+		      end
+	      end,
+	      ets:lookup(?CONFIG_ETS, Key)),
     Vs =
 	lists:map(
 	  fun(V) -> #config_item{key = Key, value = V} end,
