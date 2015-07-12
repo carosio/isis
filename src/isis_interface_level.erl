@@ -151,16 +151,12 @@ init(Args) ->
 %% @end
 %%--------------------------------------------------------------------
 handle_call({send_iih}, _From, State) ->
-    RefreshState =
-	set_values(isis_config:get([{interface, State#state.interface_name},
-				    {level, State#state.level}]),
-		   State),
-    try send_iih(RefreshState) of 
-	_ -> {reply, ok, RefreshState}
+    try send_iih(State) of
+	_ -> {reply, ok, State}
     catch
 	bad_enum -> 
 	    isis_logger:error("Failed in send_iih"),
-	    {reply, ok, RefreshState}
+	    {reply, ok, State}
     end;
 handle_call({get_state}, _From, State) ->
     {reply, State, State};
@@ -307,10 +303,15 @@ handle_cast(_Msg, State) ->
 %% @end
 %%--------------------------------------------------------------------
 handle_info({timeout, _Ref, iih}, State) ->
+    isis_logger:error("iih timer fired"),
     cancel_timers([State#state.iih_timer]),
-    send_iih(State),
-    Timer = start_timer(iih, State),
-    {noreply, State#state{iih_timer = Timer}};
+    RefreshState =
+	set_values(isis_config:get([{interface, State#state.interface_name},
+				    {level, State#state.level}]),
+		   State),
+    send_iih(RefreshState),
+    Timer = start_timer(iih, RefreshState),
+    {noreply, RefreshState#state{iih_timer = Timer}};
 
 handle_info({timeout, _Ref, ssn}, #state{pdu_state = Pdu} = State) ->
     NewPDU = isis_interface_lib:send_psnp(Pdu#isis_pdu_state{ssn_timer = undef}),
@@ -523,6 +524,7 @@ remove_adjacency(_) ->
 %% @end
 %%--------------------------------------------------------------------
 send_iih(#state{system_id = SID}) when SID =:= undefined; byte_size(SID) =/= 6 ->
+    isis_logger:debug("Failed to send iih, no system-id!"),
     no_system_id;
 send_iih(#state{system_id = SID,
 		pdu_state = Pdu} = State) ->
@@ -727,6 +729,7 @@ set_values([{hello_interval, P} | Vs], State) ->
 set_values([{csnp_interval, P} | Vs], State) ->
     set_values(Vs, State#state{csnp_time = P * 1000});
 set_values([{system_id, SID} | Vs], State) ->
+    isis_logger:error("Setting SID to: ~p", [SID]),
     PDU = State#state.pdu_state,
     NewPDU = PDU#isis_pdu_state{system_id = SID},
     set_values(Vs, State#state{system_id = SID,
