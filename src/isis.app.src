@@ -12,7 +12,7 @@
 		  crypto,
 		  procket,
 		  %% Uncomment to include lager
-		  %% lager,
+		  lager,
 		  gen_netlink,
 		  xmerl,
 		  compiler
