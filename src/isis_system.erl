@@ -87,7 +87,8 @@
 		pseudonodes :: dict:new(),  %% PID -> Pseudonode mapping
 		reachability :: dict:new(),
 		interfaces,             %% Our 'state' per interface
-		interface_config = [],  %% Startup config...
+		interface_config = [],  %% Startup config for interface modules
+		isis_config = [],       %% Startup config for interface params
 		default_interface_module = ?DEFAULT_INTERFACE_MODULE,
 		redistributed_routes,
 		ignore_list = [],       %% Interfaces to ignore
@@ -799,6 +800,8 @@ extract_args([{allowed_interfaces, Is} | T], State) ->
     extract_args(T, State#state{allowed_list = Is});
 extract_args([{interface_config, Config} | T], State) ->
     extract_args(T, State#state{interface_config = Config});
+extract_args([{isis_config, Config} | T], State) ->
+    extract_args(T, State#state{isis_config = Config});
 extract_args([_ | T], State) ->
     extract_args(T, State);
 extract_args([], State) ->
@@ -1295,6 +1298,7 @@ do_autoconf_interface(#isis_interface{mac = Mac, name = Name} = I,
 		 NextState
 	end,
     %% Enable interface and level1...
+    isis_logger:error("Enableing autoconfig level on ~p", [I#isis_interface.name]),
     State2 = do_enable_interface(I, State1),
     [Interface] = ets:lookup(State2#state.interfaces, Name),
     do_enable_level(Interface, level_1, State2#state.system_id),
@@ -1681,6 +1685,8 @@ extract_state(overload, State) ->
     {State#state.l1_overload, State#state.l2_overload};
 extract_state(hostname, State) ->
     State#state.hostname;
+extract_state(isis_config, State) ->
+    State#state.isis_config;
 extract_state(_, _State) ->
     unknown_item.
 
