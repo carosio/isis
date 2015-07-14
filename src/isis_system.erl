@@ -412,6 +412,7 @@ init(Args) ->
 				 {keypos, #isis_name.system_id}]),
     isis_lspdb:set_system_id(level_1, StartState2#state.system_id),
     isis_lspdb:set_system_id(level_2, StartState2#state.system_id),
+    apply_initial_config(StartState2),
     case application:get_env(isis, rib_client) of
 	{ok, Rib} -> Rib:subscribe(self());
 	_ -> isis_logger:error("No rib client specified, not subscribing..")
@@ -718,6 +719,8 @@ handle_cast({bump, Level, Node, Frag, SeqNo}, State) ->
     {noreply, NewState};
 handle_cast({set_state, Item}, State) ->
     {noreply, set_state(Item, State)};
+handle_cast({initial_config}, State) ->
+    {noreply, apply_initial_config(State)};
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
@@ -1302,10 +1305,14 @@ do_autoconf_interface(#isis_interface{mac = Mac, name = Name} = I,
     State2 = do_enable_interface(I, State1),
     [Interface] = ets:lookup(State2#state.interfaces, Name),
     do_enable_level(Interface, level_1, State2#state.system_id),
+    IK = [{interface, I#isis_interface.name}, {level, level_1}],
     interface_circuit_set(I, level_1, 
-			  [{authentication, {text, <<"isis-autoconf">>}},
-			   {metric, ?DEFAULT_AUTOCONF_METRIC},
-			   {priority, ?DEFAULT_PRIORITY}]),
+			  [{authentication,
+			    isis_config:get_item(IK, authentication, {text, <<"isis-autoconf">>})},
+			   {metric,
+			    isis_config:get_item(IK, metric, ?DEFAULT_AUTOCONF_METRIC)},
+			   {priority,
+			    isis_config:get_item(IK, priority, ?DEFAULT_PRIORITY)}]),
     State2;
 do_autoconf_interface(_I, State) ->
     State.
@@ -1760,3 +1767,14 @@ load_state(File, State) ->
       l1_system_ids = proplists:get_value(l1_sids, LoadState),
       l2_system_ids = proplists:get_value(l2_sids, LoadState)
      }.
+
+apply_initial_config(State) ->
+    case lists:member(isis_config, registered()) of
+	true ->
+	    lists:map(
+	      fun({K, V}) -> isis_config:set(K, V) end,
+	      State#state.isis_config);
+	_ ->
+	    gen_server:cast(?MODULE, {initial_config})
+    end,
+    State.

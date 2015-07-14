@@ -95,7 +95,6 @@ get_all_items(Key, Item) ->
 init([]) ->
     ets:new(?CONFIG_ETS, [named_table, bag,
 			  {keypos, #config_item.key}]),
-    get_initial_config(),
     {ok, #state{}}.
 
 %%--------------------------------------------------------------------
@@ -189,13 +188,3 @@ insert_items(Key, Value) when is_list(Value) ->
     ets:insert(?CONFIG_ETS, Vs);
 insert_items(Key, Value) ->
     insert_items(Key, [Value]).
-				
-
-get_initial_config() ->
-    case lists:member(isis_system, registered()) of
-	true ->
-	    lists:map(
-	      fun({K, V}) -> insert_items(K, V) end,
-	      isis_system:get_state(isis_config));
-	_ -> get_initial_config()
-    end.
