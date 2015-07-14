@@ -175,13 +175,9 @@ handle_call({get_state, _, _}, _From, State) ->
 handle_call({get_state}, _From, State) ->
     {reply, State, State};
 
-handle_call({enable, Level}, _From,
-	    #state{mode = Mode} = State) when Mode =:= broadcast ->
+handle_call({enable, Level}, _From, State)  ->
     io:format("Enabling level ~p~n", [Level]),
     handle_enable_level(Level, State);
-handle_call({enable, _Level}, _From, State) ->
-    %% Ignore level for now on non broadcast interfaces..
-    {reply, ok, State};
 
 handle_call({disable, Level}, _From, State) ->
     handle_disable_level(Level, State);
