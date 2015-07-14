@@ -123,10 +123,10 @@ init([]) ->
 
     timer:apply_after(10000, application, start, [hostinfo]),
 
-    {ok, {SupFlags, [SPFSummary, RibChild, L1DB, L2DB, DBLog, ISIS, ISISRib,
+    {ok, {SupFlags, [ISISConfig, SPFSummary, RibChild, L1DB, L2DB, DBLog, ISIS, ISISRib,
 		     ConfigDB,
 		     ISISGenInfo
-		    , ISISConfig, Webserver %% , Demo
+		    , Webserver %% , Demo
 		    ]}}.
 
 %%%===================================================================
