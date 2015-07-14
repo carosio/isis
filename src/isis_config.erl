@@ -31,8 +31,7 @@
 %% API
 -export([start_link/0,
 	 set/2,
-	 get/1,
-	 get_item/2,
+	 get/1, get_item/2, get_item/3,
 	 get_all_items/2]).
 
 %% gen_server callbacks
@@ -72,6 +71,8 @@ get(Key) ->
 
 get_item(Key, Item) ->
     proplists:get_value(Item, ?MODULE:get(Key)).
+get_item(Key, Item, Default) ->
+    proplists:get_value(Item, ?MODULE:get(Key), Default).
 
 get_all_items(Key, Item) ->
     proplists:get_all_values(Item, ?MODULE:get(Key)).
