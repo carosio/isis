@@ -14,7 +14,8 @@
 		  %% Uncomment to include lager
 		  %% lager,
 		  gen_netlink,
-		  xmerl
+		  xmerl,
+		  compiler
 		  ]},
   {mod, { isis_app, []}},
   {env, []}
