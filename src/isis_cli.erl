@@ -191,6 +191,7 @@ show_interface_level(#isis_interface{pid = Pid}, Level) ->
 	    {A, B} -> {A, B}
 	end,
     io:format("   Encryption: ~s (key ~p)~n", [AuthType, AuthKey]),
+    io:format("   Metric: ~b~n", [isis_interface:get_state(Pid, Level, metric)]),
     io:format("   Priority: ~b~n", [isis_interface:get_state(Pid, Level, priority)]),
     Hello = erlang:trunc(isis_interface:get_state(Pid, Level, hello_interval) / 1000),
     Hold = erlang:trunc(isis_interface:get_state(Pid, Level, hold_time) / 1000),
