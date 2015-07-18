@@ -377,6 +377,16 @@ set_values([{level_authentication, Crypto} | Vs],
     NewPDU = PDU#isis_pdu_state{level_authentication = Crypto},
     set_values(Vs, State#state{pdu_state = NewPDU});
 set_values([{metric, M} | Vs], State) ->
+    case State#state.neighbor of
+	undef -> no_op;
+	N ->
+	    case M =:= State#state.metric of
+		true -> no_op;
+		false ->
+		    do_update_reachability_tlv(add, <<N:6/binary, 0:8>>,
+					       0, M, State)
+	    end
+    end,
     set_values(Vs, State#state{metric = M});
 set_values([{csnp_timer, T} | Vs], State) ->
     set_values(Vs, State#state{csnp_timer = T});
