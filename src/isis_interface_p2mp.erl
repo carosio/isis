@@ -34,7 +34,8 @@
 -export([start_link/1,
 	 handle_pdu/2,
 	 send_pdu/5,
-	 set/3]).
+	 set/3,
+	 get/2]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -90,6 +91,9 @@ set(Pid, level_1, Args) ->
 set(_Pid, _Level, _Args) ->
     not_supported_yet.
 
+get(Pid, neighbor) ->
+    gen_server:call(Pid, {get_state, neighbor}).
+
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -138,6 +142,8 @@ init(Args) ->
 %%--------------------------------------------------------------------
 handle_call({set, _Level, Args}, _From, State) ->
     {reply, ok, set_values(Args, State)};
+handle_call({get_state, neighbor}, _From, State) ->
+    {reply, State#state.neighbor, State};
 handle_call(_Request, _From, State) ->
     Reply = ok,
     {reply, Reply, State}.

@@ -295,7 +295,16 @@ show_adjacencies(Level) ->
 						  [isis_system:lookup_name(Sid), Sid, Mac, Status])
 				end, AH);
 		  _ -> ok
-	      end;
+	      end,
+	      %% Now the pseudo-interfaces
+	      PI = isis_interface:get_state(IP, pseudo_interfaces),
+	      lists:map(
+		fun({Address, Pid}) ->
+			{_Type, Addr} = Address,
+			Sid = isis_interface_p2mp:get(Pid, neighbor),
+			io:format("~s (~s): up~n",
+				  [isis_system:lookup_name(Sid), inet:ntoa(Addr)])
+		end, dict:to_list(PI));
 	 (_) -> ok
       end, Is),
     ok.

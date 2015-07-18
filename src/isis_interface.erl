@@ -90,6 +90,9 @@ stop(Pid) ->
 get_state(Pid, Level, Item) ->
     gen_server:call(Pid, {get_state, Level, Item}).
 
+get_state(Pid, Item) ->
+    gen_server:call(Pid, {get_state, Item}).
+
 get_state(Pid) ->
     gen_server:call(Pid, {get_state}).
 
@@ -171,6 +174,9 @@ handle_call({get_state, level_2, Item}, _From,
     {reply, isis_interface_level:get_state(L2Pid, Item), State};
 handle_call({get_state, _, _}, _From, State) ->
     {reply, level_not_configured, State};
+
+handle_call({get_state, pseudo_interfaces}, _From, State) ->
+    {reply, State#state.pseudo_interfaces, State};
 
 handle_call({get_state}, _From, State) ->
     {reply, State, State};
