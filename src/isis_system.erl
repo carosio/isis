@@ -619,9 +619,8 @@ handle_cast({add_sid, Level, SID, Metric, Addresses}, State) ->
 		      dict:store(SID, NT, IDs);
 	     {ok, Tree} ->
 		 case gb_trees:lookup(Metric, Tree) of
-		     %% 'none' case should not happen, but we handle it just in case...
 		     none -> NT = gb_trees:enter(
-				    Metric, Addresses, gb_trees:empty()),
+				    Metric, Addresses, Tree),
 			     dict:store(SID, NT, IDs);
 		     {value, V} ->
 			 S1 = sets:from_list(Addresses),
