@@ -264,12 +264,12 @@ decode_tlv_ipv6_reachability(<<Metric:32, Up:1, X:1, S:1,
 		{P, [], R}
 	end,
     decode_tlv_ipv6_reachability(Remainder,
-				 Acc ++ [#isis_tlv_ipv6_reachability_detail{metric = Metric,
-									    up = isis_enum:to_atom(boolean, 1 - Up),
-									    external = isis_enum:to_atom(boolean, X),
-									    mask_len = PLen,
-									    prefix = Prefix,
-									    sub_tlv = SubTLVs}]);
+				 [#isis_tlv_ipv6_reachability_detail{metric = Metric,
+								     up = isis_enum:to_atom(boolean, 1 - Up),
+								     external = isis_enum:to_atom(boolean, X),
+								     mask_len = PLen,
+								     prefix = Prefix,
+								     sub_tlv = SubTLVs} | Acc]);
 decode_tlv_ipv6_reachability(<<>>, Acc) ->
     lists:reverse(Acc).
 
