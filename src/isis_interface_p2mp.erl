@@ -237,6 +237,7 @@ handle_info({timeout, _Ref, ssn}, #state{pdu_state = Pdu} = State) ->
     NewPdu = isis_interface_lib:send_psnp(Pdu#isis_pdu_state{ssn_timer = undef}),
     {noreply, State#state{pdu_state = NewPdu}};
 handle_info({timeout, _Ref, hold}, State) ->
+    isis_system:delete_all_sid_addresses(self()),
     {stop, normal, State};
 handle_info(_Info, State) ->
     {noreply, State}.
@@ -254,6 +255,7 @@ handle_info(_Info, State) ->
 %%--------------------------------------------------------------------
 terminate(_Reason, State) ->
     isis_logger:error("Stopping!"),
+    isis_system:delete_all_sid_addresses(self()),
     stopping(State),
     ok.
 
