@@ -95,6 +95,13 @@ init([]) ->
 	    Oops -> isis_logger:error("Got ~p for rib_client!", [Oops]),
 		    missing_rib_client
 	end,
+    WifiMetrics =
+	case application:get_env(isis, wifi_metrics_server) of
+	    {ok, _Server} ->
+		[{isis_wifi, {isis_wifi, start_link, []},
+		  Restart, Shutdown, Type, [isis_wifi]}];
+	    _ -> []
+	end,
     L1DB = {level1_lspdb, {isis_lspdb, start_link, [[{table, level_1}]]},
 	    Restart, Shutdown, Type, [isis_lspdb]},
     L2DB = {level2_lspdb, {isis_lspdb, start_link, [[{table, level_2}]]},
@@ -123,11 +130,13 @@ init([]) ->
 
     timer:apply_after(10000, application, start, [hostinfo]),
 
-    {ok, {SupFlags, [ISISConfig, SPFSummary, RibChild, L1DB, L2DB, DBLog, ISIS, ISISRib,
-		     ConfigDB,
-		     ISISGenInfo
-		    , Webserver %% , Demo
-		    ]}}.
+    {ok, {SupFlags,
+	  WifiMetrics ++ 
+	      [ISISConfig, SPFSummary, RibChild, L1DB, L2DB, DBLog, ISIS, ISISRib,
+	       ConfigDB,
+	       ISISGenInfo
+	      , Webserver %% , Demo
+	      ]}}.
 
 %%%===================================================================
 %%% Internal functions

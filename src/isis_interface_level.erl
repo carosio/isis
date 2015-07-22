@@ -36,7 +36,7 @@
 -export([start_link/1, get_state/1, get_state/2, set/2,
 	 update_adjacency/3, clear_neighbors/2,
 	 dump_config/3,
-	 send_pdu/5]).
+	 send_pdu/5, update_metric/3]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -98,6 +98,11 @@ clear_neighbors(Pid, Which) ->
 
 dump_config(Name, Level, Pid) ->
     gen_server:call(Pid, {dump_config, Name, Level}).
+
+update_metric(Pid, Mac, Metric) when is_pid(Pid) ->
+    gen_server:call(Pid, {update_metric, Mac, Metric});
+update_metric(_, _, _) ->
+    ok.
 
 stop(Pid) ->
     gen_server:cast(Pid, stop).
@@ -204,6 +209,14 @@ handle_call({clear_neighbors, Which}, _From, State) ->
 
 handle_call({dump_config, Name, Level}, _From, State) ->
     dump_config_state(Name, Level, State),
+    {reply, ok, State};
+
+handle_call({update_metric, Mac, Metric}, _From, State) ->
+    case dict:find(Mac, State#state.adj_handlers) of
+	{ok, {_Sid, Pid}} ->
+	    isis_adjacency:update_metric(Pid, Metric);
+	_ -> ok
+    end,
     {reply, ok, State};
 
 handle_call(Request, _From, State) ->

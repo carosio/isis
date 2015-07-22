@@ -30,7 +30,8 @@
 -include("isis_protocol.hrl").
 
 %% API
--export([start_link/1, get_state/1, get_state/2]).
+-export([start_link/1, get_state/1, get_state/2,
+	 update_metric/2]).
 
 %% gen_fsm callbacks
 -export([init/1,
@@ -44,7 +45,7 @@
 	  level,         %% Our 'level'
 	  mode,          %% Are we broadcast, point_to_point or point_to_multipoint?
 	  neighbor,      %% Neighbor's SNPA / IPv6 address (ie. whom we're adjacent with)
-	  neighbor_id,   %% Neighbor ID
+	  neighbor_id = undef, %% Neighbor ID
 	  lan_id,        %% Who the negihbor believes is DIS
 	  priority,      %% Priority it advertises
 	  is_type,       %% Circuit Type as transmitted by the neighbor
@@ -88,6 +89,9 @@ get_state(Pid) ->
 get_state(Pid, Field) ->
     gen_fsm:sync_send_all_state_event(Pid, {get, Field}).
 
+update_metric(Pid, Metric) ->
+    gen_fsm:send_event(Pid, {metric, Metric}).
+
 %%%===================================================================
 %%% gen_fsm callbacks
 %%%===================================================================
@@ -129,6 +133,8 @@ new({timeout}, State) ->
     {next_state, down, State};
 new({interface_down}, State) ->
     {next_state, down, State};
+new({metric, M}, State) ->
+    {next_state, new, State#state{metric = M}};
 new(stop, State) ->
     cancel_timer(State),
     {stop, normal, State}.
@@ -151,6 +157,8 @@ init({iih, IIH}, State) ->
     {next_state, NextState, NewState2};
 init({timeout}, State) ->
     {next_state, init, State};
+init({metric, M}, State) ->
+    {next_state, init, State#state{metric = M}};
 init(stop, State) ->
     cancel_timer(State),
     {stop, normal, State}.
@@ -164,6 +172,23 @@ up({iih, IIH}, State) ->
     {NextState, NewState2} =
 	verify_interface_addresses(IIH, NewState),
     {next_state, NextState, NewState2};
+up({metric, M}, #state{neighbor_id = NID} = State)
+  when NID =/= undef ->
+    %% Changing Metric, remove previous
+    isis_system:delete_all_sid_addresses(self()),
+    IfIndex = get_ifindex(State),
+    V4Add = lists:map(fun(F) -> {ipv4, {F, IfIndex, self()}} end,
+		      State#state.ip_addresses),
+    isis_system:add_sid_addresses(State#state.level, NID,
+				  M, V4Add),
+    V6Add = lists:map(fun(F) -> {ipv6, {F, IfIndex, self()}} end,
+		     State#state.ipv6_addresses),
+    isis_system:add_sid_addresses(State#state.level, NID,
+				  M, V6Add),
+    {next_state, up, State#state{metric = M}};
+up({metric, M}, State) ->
+    %% Not seen ourselves yet
+    {next_state, up, State#state{metric = M}};
 up({timeout}, State) ->
     isis_logger:debug("Timeout on adjacency with ~p", 
 		      [State#state.neighbor_id]),

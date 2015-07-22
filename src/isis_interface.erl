@@ -37,7 +37,8 @@
 	 enable_level/2, disable_level/2, levels/1, get_level_pid/2,
 	 clear_neighbors/1, clear_neighbors/2,
 	 dump_config/1,
-	 send_pdu/5, received_pdu/3
+	 send_pdu/5, received_pdu/3,
+	 update_metric/3
 	]).
 
 %% Debug export
@@ -124,6 +125,9 @@ clear_neighbors(Pid, Adjs) ->
 
 dump_config(Pid) ->
     gen_server:call(Pid, {dump_config}).
+
+update_metric(Pid, Key, Metric) ->
+    gen_server:call(Pid, {update_metric, Key, Metric}).
 
 %%--------------------------------------------------------------------
 %% @private
@@ -217,6 +221,25 @@ handle_call({get, level_1, Value}, _From, State) ->
 handle_call({get, level_2, Value}, _From, State) ->
     R = isis_interface_level:get_state(State#state.level2, Value),
     {reply, R, State};
+
+handle_call({update_metric, Key, Metric}, _from, State)
+  when is_binary(Key) ->
+    %% Adjacency update
+    isis_interface_level:update_metric(State#state.level1, Key, Metric),
+    isis_interface_level:update_metric(State#state.level2, Key, Metric),
+    {reply, ok, State};
+handle_call({update_metric, Key, Metric}, _From, State) ->
+    isis_logger:error("Updating interface metric for p2mp... ~p ~p",
+		     [Key, dict:to_list(State#state.pseudo_interfaces)]),
+    Result = 
+	case dict:find({ipv6, Key}, State#state.pseudo_interfaces) of
+	    {ok, P} ->
+		isis_interface_p2mp:update_metric(P),
+		ok;
+	    error ->
+		not_found
+	end,
+    {reply, Result, State};
 
 handle_call(_Request, _From, State) ->
     Reply = ok,

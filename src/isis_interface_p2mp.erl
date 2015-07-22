@@ -35,7 +35,8 @@
 	 handle_pdu/2,
 	 send_pdu/5,
 	 set/3,
-	 get/2]).
+	 get/2,
+	 update_metric/1]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -93,6 +94,9 @@ set(_Pid, _Level, _Args) ->
 
 get(Pid, neighbor) ->
     gen_server:call(Pid, {get_state, neighbor}).
+
+update_metric(Pid) ->
+    gen_server:cast(Pid, {update_metric}).
 
 
 %%%===================================================================
@@ -180,6 +184,18 @@ handle_cast({handle_pdu, PDU}, State) ->
 handle_cast({send_pdu, Type, PDU, PDU_Size, _Level}, State) ->
     do_send_pdu(Type, PDU, PDU_Size, State),
     {noreply, State};
+handle_cast({update_metric}, State) ->
+    Metric = isis_config:get_item(
+	       [{interface, State#state.interface_name},
+		{level, level_1},
+		{neighbor, State#state.from}],
+	       metric),
+    case State#state.neighbor of
+	undef -> ok;
+	N ->
+	    do_update_reachability_tlv(add, <<N:6/binary, 0:8>>, 0, Metric, State)
+    end,
+    {noreply, State};
 handle_cast(stop, #state{iih_timer = IIHT,
 			 pdu_state = Pdu} = State) ->
     %% Cancel our timer
@@ -205,9 +221,14 @@ handle_info({timeout, _Ref, iih}, State) ->
 	set_values(
 	  isis_config:get([{interface, State#state.interface_name}, {level, level_1}]),
 	  State),
-    send_iih(RefreshState),
-    Timer = start_timer(iih, RefreshState),
-    {noreply, RefreshState#state{iih_timer = Timer}};
+    RefreshState2 = 
+	set_values(
+	  isis_config:get([{interface, State#state.interface_name}, {level, level_1},
+			   {neighbor, State#state.from}]),
+	  RefreshState),
+    send_iih(RefreshState2),
+    Timer = start_timer(iih, RefreshState2),
+    {noreply, RefreshState2#state{iih_timer = Timer}};
 handle_info({timeout, _Ref, csnp}, #state{pdu_state = Pdu} = State) ->
     NewPdu = isis_interface_lib:send_csnp(Pdu#isis_pdu_state{ssn_timer = undef}),
     Timer = start_timer(csnp, State),
