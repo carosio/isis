@@ -1119,7 +1119,7 @@ handle_merge_array_tlv(#isis_tlv_extended_ip_reachability{reachability = Existin
 		 (D, Acc) -> {D, Acc}
 	end,
     Deleter = fun(#isis_tlv_extended_ip_reachability_detail{prefix = P, mask_len = M}) ->
-		      P =/= NewPrefix, M =/= NewMask
+		      (P =/= NewPrefix) and (M =/= NewMask)
 	      end,
     {NewTLV, Updated} = lists:mapfoldl(Updater, false, Existing),
     case Updated of
@@ -1159,7 +1159,7 @@ handle_merge_array_tlv(#isis_tlv_ipv6_reachability{reachability = Existing} = ET
 		 (D, Acc) -> {D, Acc}
 	end,
     Deleter = fun(#isis_tlv_ipv6_reachability_detail{prefix = P, mask_len = M, sub_tlv = ST}) ->
-		      P =/= NewPrefix, M =/= NewMask, ST =/= NewSTLV
+		      (P =/= NewPrefix) and (M =/= NewMask) and (ST =/= NewSTLV)
 	      end,
     {NewTLV, Updated} = lists:mapfoldl(Updater, false, Existing),
     case Updated of
