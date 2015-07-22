@@ -988,6 +988,7 @@ create_lsp_from_frag(#lsp_frag{level = Level, sequence = SN} = Frag,
 		    pdu_type = PDUType,
 		    tlv = AuthTLV ++ Frag#lsp_frag.tlvs},
     CSum = isis_protocol:checksum(LSP),
+    isis_logger:debug("Refreshing LSP ~p (Seq ~p, CSum)~n", [LSP_Id, SeqNo, CSum]),
     isis_lspdb:store_lsp(Level, LSP#isis_lsp{checksum = CSum}),
     isis_lspdb:flood_lsp(Level, ets:tab2list(isis_circuits), LSP, none).
 
@@ -1401,6 +1402,7 @@ add_redistribute(#isis_route{route =
 								       mask_length = Mask},
 						      source = undefined},
 				metric = Metric} = R, State) ->
+    isis_logger:debug("Adding redistributed route ~p ~p ~p", [Address, Mask, Metric]),
     ets:insert(State#state.redistributed_routes, R),
     TLV = #isis_tlv_extended_ip_reachability{
 	     reachability =
@@ -1417,6 +1419,7 @@ add_redistribute(#isis_route{route = #isis_route_key{
 					source = Source},
 			     metric = Metric, nexthops = NH} = R, State)
   when is_list(NH) ->
+    isis_logger:debug("Adding redistributed route ~p ~p ~p (source ~p)", [Address, Mask, Metric, Source]),
     ets:insert(State#state.redistributed_routes, R),
     MaskLenBytes = erlang:trunc((Mask + 7) / 8),
     A = Address bsr (128 - Mask),
@@ -1448,6 +1451,7 @@ delete_redistribute(#isis_route{route = #isis_route_key{
 								 mask_length = Mask},
 					   source = undefined},
 				metric = Metric} = R, State) ->
+    isis_logger:debug("Removing redistributed route ~p ~p ~p", [Address, Mask, Metric]),
     ets:delete_object(State#state.redistributed_routes, R),
     TLV = 
      	#isis_tlv_extended_ip_reachability{
@@ -1466,6 +1470,8 @@ delete_redistribute(#isis_route{route = #isis_route_key{
 								 mask_length = Mask},
 					   source = Source},
 				metric = Metric} = R, State) ->
+    isis_logger:debug("Adding redistributed route ~p ~p ~p (source ~p)",
+		      [Address, Mask, Metric, Source]),
     ets:delete_object(State#state.redistributed_routes, R),
     MaskLenBytes = erlang:trunc((Mask + 7) / 8),
     A = Address bsr (128 - Mask),

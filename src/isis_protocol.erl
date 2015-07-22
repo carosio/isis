@@ -983,7 +983,9 @@ handle_add_array_tlv(#isis_tlv_ipv6_reachability{reachability = Existing} = ET,
     NewSize = tlv_size(ET#isis_tlv_ipv6_reachability{reachability = NewList}),
     case (Size - ExistingSize + NewSize) =< 1492 of
 	false -> {ET, {Size - ExistingSize + NewSize, false}};
-	true -> {ET#isis_tlv_ipv6_reachability{reachability = NewList},
+	true -> 
+	    isis_logger:debug("Adding new TLV ~p to existing set ~p", [New, Existing]),
+	    {ET#isis_tlv_ipv6_reachability{reachability = NewList},
 		 {Size, true}}
     end;
 handle_add_array_tlv(ET, _, Size) ->
@@ -1008,6 +1010,8 @@ add_array_tlv(TLV, Node, Level, Frags) ->
 		    lists:mapfoldl(TestAddTLVs, {Size, false}, TLVs),
 		NewFrag = case Added of
 			      true ->
+				  isis_logger:debug("Scheduling refresh of TLV fragment PN ~p Frag ~p",
+						    [PN, Frag#lsp_frag.fragment]),
 				  isis_system:schedule_lsp_refresh(),
 				  Frag#lsp_frag{tlvs = NewTLVs,
 						size = NewSize,
@@ -1176,6 +1180,8 @@ handle_merge_array_tlv(#isis_tlv_ipv6_reachability{reachability = Existing} = ET
 		    {DeletedTLV,
 		     {DeletedSize, false, length(AfterDelete) =/= length(Existing)}};
 		_ ->
+		    isis_logger:debug("merge_array_tlv: {~p, {~p, ~p, ~p}}",
+				      [FinalTLV, CurrentSize - ExistingSize + NewSize, true, true]),
 		    {FinalTLV,
 		     {CurrentSize - ExistingSize + NewSize, true, true}}
 	    end;
@@ -1202,6 +1208,8 @@ merge_array_tlv(TLV, Node, Level, Frags) ->
 		NewFrag = 
 		    case Updated of
 			true ->
+			    isis_logger:debug("Scheduling refresh of TLV fragment PN ~p Frag ~p",
+					      [PN, Frag#lsp_frag.fragment]),
 			    isis_system:schedule_lsp_refresh(),
 			    Frag#lsp_frag{tlvs = NewTLVs,
 					  size = NewSize,
@@ -1229,7 +1237,10 @@ add_whole_tlv(TLV, Node, Level, Frags) ->
 			tlvs = TLVs, sequence = Seqno} = Frag, Acc)
 		when Acc =:= false, PN =:= Node, L =:= Level ->
 		  case (Size + TLVSize) < 1492 of
-		      true -> isis_system:schedule_lsp_refresh(),
+		      true ->
+			  isis_logger:debug("Scheduling refresh of TLV fragment PN ~p Frag ~p",
+					    [PN, Frag#lsp_frag.fragment]),
+			  isis_system:schedule_lsp_refresh(),
 			      {Frag#lsp_frag{size = Size + TLVSize,
 					     tlvs = TLVs ++ [TLV],
 					     updated = true},
