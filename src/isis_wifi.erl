@@ -165,7 +165,8 @@ code_change(_OldVsn, State, _Extra) ->
 %%% Internal functions
 %%%===================================================================
 connect() ->
-    {ok, Address} = application:get_env(isis, wifi_metrics_server),
+    {ok, AddressStr} = application:get_env(isis, wifi_metrics_server),
+    {ok, Address} = inet:parse_address(AddressStr),
     {ok, Port} = application:get_env(isis, wifi_metrics_port),
     gen_tcp:connect(Address, Port, []).
 
