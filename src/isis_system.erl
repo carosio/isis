@@ -988,7 +988,7 @@ create_lsp_from_frag(#lsp_frag{level = Level, sequence = SN} = Frag,
 		    pdu_type = PDUType,
 		    tlv = AuthTLV ++ Frag#lsp_frag.tlvs},
     CSum = isis_protocol:checksum(LSP),
-    isis_logger:debug("Refreshing LSP ~p (Seq ~p, CSum)~n", [LSP_Id, SeqNo, CSum]),
+    isis_logger:debug("Refreshing LSP ~p (Seq ~p, CSum ~p)~n", [LSP_Id, SeqNo, CSum]),
     isis_lspdb:store_lsp(Level, LSP#isis_lsp{checksum = CSum}),
     isis_lspdb:flood_lsp(Level, ets:tab2list(isis_circuits), LSP, none).
 

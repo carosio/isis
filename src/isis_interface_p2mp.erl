@@ -339,7 +339,9 @@ handle_p2mp_pdu(#isis_p2p_iih{} = IIH, State) ->
     HoldTimer = start_timer(hold, NewState),
     NewState2#state{hold_timer = HoldTimer};
 handle_p2mp_pdu(#isis_lsp{} = LSP, #state{pdu_state = PDU} = State) ->
-    isis_logger:debug("Processing LSP ~p", [LSP#isis_lsp.lsp_id]),
+    <<SID:6/binary, _:16>> = LSP#isis_lsp.lsp_id,
+    isis_logger:debug("Handling LSP from ~p: ~p",
+		      [isis_system:lookup_name(SID), LSP]),
     isis_interface_lib:handle_lsp(LSP, PDU),
     State;
 handle_p2mp_pdu(#isis_csnp{} = CSNP, #state{pdu_state = PDU} = State) ->

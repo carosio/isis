@@ -646,7 +646,9 @@ process_pdu(From, #isis_iih{} = IIH, State) ->
     end;
 process_pdu(_From, #isis_lsp{} = LSP,
 	    #state{pdu_state = Pdu} = State) ->
-    isis_logger:debug("Handling LSP: ~p", [LSP]),
+    <<SID:6/binary, _:16>> = LSP#isis_lsp.lsp_id,
+    isis_logger:debug("Handling LSP from ~p: ~p",
+		      [isis_system:lookup_name(SID), LSP]),
     NewPDU = Pdu#isis_pdu_state{are_we_dis = State#state.are_we_dis},
     isis_interface_lib:handle_lsp(LSP, NewPDU),
     State;
