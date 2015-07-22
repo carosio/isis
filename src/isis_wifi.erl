@@ -74,8 +74,8 @@ start_link() ->
 %% @end
 %%--------------------------------------------------------------------
 init([]) ->
-    S = connect(),
-    {ok, #state{socket = S}}.
+    NewState = reconnect(#state{}),
+    {ok, NewState}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -221,4 +221,3 @@ apply_metrics([Interface, Mac, V6Address, MetricAsc]) ->
 parse_mac(Mac) ->
     {ok, Bytes, []} = io_lib:fread("~16u:~16u:~16u:~16u:~16u:~16u", Mac),
     << <<X:8>> || X <- Bytes >>.
-
