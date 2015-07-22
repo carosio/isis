@@ -344,3 +344,57 @@ inject_mesh(Level, Rows, Columns) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+compare_two_databases([#isis_lsp{lsp_id = ID1} = HD1 | T1] = D1,
+		      [#isis_lsp{lsp_id = ID2} = HD2 | T2] = D2) when ID1 =:= ID2 ->
+    print_comparism(equal, HD1, HD2),
+    compare_two_databases(T1, T2);
+compare_two_databases([#isis_lsp{lsp_id = ID1} = HD1 | T1] = D1,
+		      [#isis_lsp{lsp_id = ID2} = HD2 | T2] = D2) when ID1 < ID2 ->
+    print_comparism(first, HD1, HD2),
+    compare_two_databases(T1, D2);
+compare_two_databases([#isis_lsp{lsp_id = ID1} = HD1 | T1] = D1,
+		      [#isis_lsp{lsp_id = ID2} = HD2 | T2] = D2) when ID1 > ID2 ->
+    print_comparism(second, HD1, HD2),
+    compare_two_databases(D1, T2);
+compare_two_databases([], [HD2 | T2]) ->
+    print_comparism(second, undef, HD2),
+    compare_two_databases([], T2);
+compare_two_databases([HD1 | T1], []) ->
+    print_comparism(first, HD1, undef),
+    compare_two_databases(T1, []);
+compare_two_databases([], []) ->
+    done.
+
+print_comparism(first, LSP1, _) ->
+    N1 = to_string(LSP1),
+    io:format("    ~14s    ~n", [N1]);
+print_comparism(second, _, LSP2) ->
+    N2 = to_string(LSP2),
+    io:format("    ~20s    ~20s~n", [" ", N2]);
+print_comparism(equal, LSP1, LSP2) ->
+    N1 = to_string(LSP1),
+    N2 = to_string(LSP2),
+    CSum =
+	case LSP1#isis_lsp.checksum =:= LSP1#isis_lsp.checksum of
+	    true -> " Csum";
+	    _ -> "!Csum"
+	end,
+    TLVs =
+	case LSP1#isis_lsp.tlv =:= LSP2#isis_lsp.tlv of
+	    true -> " TLVs";
+	    _ -> "!TLVs"
+	end,
+    Seq =
+	case LSP1#isis_lsp.sequence_number =:= LSP2#isis_lsp.sequence_number of
+	    true -> " Seq";
+	    _ -> "!Seq"
+	end,
+    io:format("    ~20s ~s ~s ~s ~20s~n", [N1, CSum, TLVs, Seq, N2]).
+
+
+to_string(#isis_lsp{lsp_id = LSP_ID}) ->
+    <<ID:6/binary, PN:8, Frag:8>> = LSP_ID,
+    lists:flatten(
+      io_lib:format("~4.16.0B.~4.16.0B.~4.16.0B.~2.16.0B-~2.16.0B",
+		    [X || <<X:16>> <= ID] ++
+		    [PN, Frag])).
