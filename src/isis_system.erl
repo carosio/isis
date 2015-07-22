@@ -412,7 +412,7 @@ init(Args) ->
 				 {keypos, #isis_name.system_id}]),
     isis_lspdb:set_system_id(level_1, StartState2#state.system_id),
     isis_lspdb:set_system_id(level_2, StartState2#state.system_id),
-    apply_initial_config(StartState2),
+    erlang:start_timer(5000, self(), initial_config),
     case application:get_env(isis, rib_client) of
 	{ok, Rib} -> Rib:subscribe(self());
 	_ -> isis_logger:error("No rib client specified, not subscribing..")
@@ -718,8 +718,6 @@ handle_cast({bump, Level, Node, Frag, SeqNo}, State) ->
     {noreply, NewState};
 handle_cast({set_state, Item}, State) ->
     {noreply, set_state(Item, State)};
-handle_cast({initial_config}, State) ->
-    {noreply, apply_initial_config(State)};
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
@@ -753,6 +751,8 @@ handle_info({timeout, _Ref, lsp_ageout}, State) ->
 handle_info({timeout, _Ref, lsp_refresh}, State) ->
     NextState = refresh_lsps(State),
     {noreply, NextState#state{refresh_timer = undef}};
+handle_info({timeout, _Ref, initial_config}, State) ->
+    {noreply, apply_initial_config(State)};
 handle_info(_Info, State) ->
     {noreply, State}.
 
@@ -1774,12 +1774,7 @@ load_state(File, State) ->
      }.
 
 apply_initial_config(State) ->
-    case lists:member(isis_config, registered()) of
-	true ->
-	    lists:map(
-	      fun({K, V}) -> isis_config:set(K, V) end,
-	      State#state.isis_config);
-	_ ->
-	    gen_server:cast(?MODULE, {initial_config})
-    end,
+    lists:map(
+      fun({K, V}) -> isis_config:set(K, V) end,
+      State#state.isis_config),
     State.

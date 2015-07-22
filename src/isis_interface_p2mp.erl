@@ -408,6 +408,9 @@ set_values([{metric, M} | Vs], State) ->
 	    case M =:= State#state.metric of
 		true -> no_op;
 		false ->
+		    {ipv6, Addr} = State#state.from,
+		    isis_logger:debug("Setting metric for ~s (~p) to ~p",
+				      [inet_parse:ntoa(Addr), N, M]),
 		    do_update_reachability_tlv(add, <<N:6/binary, 0:8>>,
 					       0, M, State)
 	    end
