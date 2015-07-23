@@ -326,7 +326,8 @@ do_send_pdu(_Type, PDU, PDU_Size, #state{interface_mod = IM,
 		   PDU, PDU_Size).
 
 handle_p2mp_pdu(#isis_p2p_iih{} = IIH, State) ->
-    isis_logger:debug("Handling p2p iih from ~p", [IIH#isis_p2p_iih.source_id]),
+    isis_logger:debug("Handling p2p iih from ~p ~p", [IIH#isis_p2p_iih.source_id,
+						      State#state.metric]),
     cancel_timers([State#state.hold_timer]),
     NewState = 
 	case IIH#isis_p2p_iih.source_id =:= State#state.neighbor of
@@ -412,7 +413,12 @@ set_values([{metric, M} | Vs], State) ->
 		    isis_logger:debug("Setting metric for ~s (~p) to ~p",
 				      [inet_parse:ntoa(Addr), N, M]),
 		    do_update_reachability_tlv(add, <<N:6/binary, 0:8>>,
-					       0, M, State)
+					       0, M, State),
+		    isis_system:delete_all_sid_addresses(self()),
+		    isis_system:add_sid_addresses(State#state.level, N, M,
+						  State#state.ip_addresses),
+		    isis_system:add_sid_addresses(State#state.level, N, M,
+						  State#state.ipv6_addresses)
 	    end
     end,
     set_values(Vs, State#state{metric = M});
