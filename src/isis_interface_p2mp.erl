@@ -415,10 +415,15 @@ set_values([{metric, M} | Vs], State) ->
 		    do_update_reachability_tlv(add, <<N:6/binary, 0:8>>,
 					       0, M, State),
 		    isis_system:delete_all_sid_addresses(self()),
+		    IfIndex = get_ifindex(State),
+		    V4Add = lists:map(fun(F) -> {ipv4, {F, IfIndex, self()}} end,
+				      State#state.ip_addresses),
+		    V6Add = lists:map(fun(F) -> {ipv6, {F, IfIndex, self()}}
+				      end, State#state.ipv6_addresses),
 		    isis_system:add_sid_addresses(State#state.level, N, M,
-						  State#state.ip_addresses),
+						  V4Add),
 		    isis_system:add_sid_addresses(State#state.level, N, M,
-						  State#state.ipv6_addresses)
+						  V6Add)
 	    end
     end,
     set_values(Vs, State#state{metric = M});
