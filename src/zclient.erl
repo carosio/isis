@@ -111,22 +111,13 @@ get_redistributed_routes() ->
 %% @end
 %%--------------------------------------------------------------------
 init([{type, T}]) ->
-    {ok, ZSock} = gen_tcp:connect("localhost", 2600,
-				  [binary, {packet, 0}]),
-    State = #state{zsock = ZSock, route_type = T, buffer = <<>>,
+    State = #state{route_type = T, buffer = <<>>,
 		   zhead = #zclient_header{command = unknown},
 		   interfaces = dict:new(),
 		   routes = dict:new(),
 		   router_id = [],
 		   listeners = dict:new()},
-    %% Request services
-    send_hello(State),
-    request_router_id(State),
-    request_interface(State),
-    erlang:start_timer(1000, self(), request_redist),
-    %%request_redistribution(static, State),
-    %%request_redistribution(kernel, State),
-    {ok, State};
+    {ok, reconnect(State)};
 init(Args) ->
     io:format("Unknown args: ~p~n", [Args]),
     {stop, zclient_failure}.
@@ -203,6 +194,8 @@ handle_info({timeout, _Ref, request_redist}, State) ->
     request_redistribution(static, State),
     request_redistribution(kernel, State),
     {noreply, State};
+handle_info({timeout, _Ref, reconnect}, State) ->
+    {noreply, reconnect(State)};
 handle_info(_Info, State) ->
     {noreply, State}.
 
@@ -733,3 +726,25 @@ delete_route(#isis_route_key{
 	  end,
     Message = create_header(MessageType, RouteMessage),
     send_message(Message, State).
+
+
+reconnect(State) ->
+    isis_logger:debug("Connecting zclient..."),
+    case ets:info(isis_config) of
+	undefined ->
+	    isis_logger:debug("Delaying startup of zclient..."),
+	    erlang:start_timer(1000, self(), reconnect),
+	    State;
+	_ ->
+	    {ok, ZSock} = gen_tcp:connect("localhost", 2600,
+					  [binary, {packet, 0}]),
+	    NewState = State#state{zsock = ZSock},
+	    %% Request services
+	    send_hello(NewState),
+	    request_router_id(NewState),
+	    request_interface(NewState),
+	    erlang:start_timer(1000, self(), request_redist),
+	    %%request_redistribution(static, State),
+	    %%request_redistribution(kernel, State),
+	    NewState
+    end.

@@ -171,11 +171,19 @@ connect() ->
     gen_tcp:connect(Address, Port, []).
 
 reconnect(State) ->
-    case connect() of
-	{ok, S} -> State#state{socket = S};
-	{error, _} ->
-	    Timer = erlang:start_timer(5000, self(), reconnect),
-	    State#state{reconnect_timer = Timer}
+    isis_logger:debug("Connecting for wifi metrics..."),
+    case ets:info(isis_interfaces) of
+	undefined ->
+	    isis_logger:debug("Delaying startup of wifi metrics..."),
+	    Timer = erlang:start_timer(1000, self(), reconnect),
+	    State#state{reconnect_timer = Timer};
+	_ ->
+	    case connect() of
+		{ok, S} -> State#state{socket = S};
+		{error, _} ->
+		    Timer = erlang:start_timer(1000, self(), reconnect),
+		    State#state{reconnect_timer = Timer}
+	    end
     end.
 
 parse_buffer(#state{buffer = B} = State) ->
@@ -198,6 +206,8 @@ apply_metrics([Interface, Mac, V6Address, MetricAsc]) ->
     {Metric, []} = string:to_integer(MetricAsc),
     case isis_system:get_interface(Interface) of
 	unknown ->
+	    isis_logger:debug("Ignoring metric ~p set on interface ~s (~p, ~p), interface not found",
+			      [Metric, Interface, parse_mac(Mac), V6Address]),
 	    ok;
 	#isis_interface{} = I ->
 	    case parse_mac(Mac) of
