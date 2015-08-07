@@ -28,7 +28,7 @@
 -behaviour(supervisor).
 
 %% API
--export([start_link/0]).
+-export([start_link/0, start_rib/0]).
 
 %% Supervisor callbacks
 -export([init/1]).
@@ -48,6 +48,22 @@
 %%--------------------------------------------------------------------
 start_link() ->
     supervisor:start_link({local, ?SERVER}, ?MODULE, []).
+
+start_rib() ->
+    Restart = permanent,
+    Shutdown = 2000,
+    Type = worker,
+
+    case application:get_env(isis, rib_client) of
+	{ok, Client} ->
+	    supervisor:start_child(
+	      ?SERVER,
+	      {Client, {Client, start_link, [[{type, isis}]]},
+	       Restart, Shutdown, Type, [Client]}),
+	    ok;
+	Oops -> isis_logger:error("Got ~p for rib_client!", [Oops]),
+		missing_rib_client
+    end.
 
 %%%===================================================================
 %%% Supervisor callbacks
@@ -88,13 +104,6 @@ init([]) ->
 
     SPFSummary = {spf_summary, {spf_summary, start_link, []},
 		  permanent, 10000, worker, []},
-    RibChild = 
-	case application:get_env(isis, rib_client) of
-	    {ok, Client} -> {Client, {Client, start_link, [[{type, isis}]]},
-			     Restart, Shutdown, Type, [Client]};
-	    Oops -> isis_logger:error("Got ~p for rib_client!", [Oops]),
-		    missing_rib_client
-	end,
     WifiMetrics =
 	case application:get_env(isis, wifi_metrics_server) of
 	    {ok, _Server} ->
@@ -132,7 +141,7 @@ init([]) ->
 
     {ok, {SupFlags,
 	  WifiMetrics ++ 
-	      [ISISConfig, SPFSummary, RibChild, L1DB, L2DB, DBLog, ISIS, ISISRib,
+	      [ISISConfig, SPFSummary, L1DB, L2DB, DBLog, ISIS, ISISRib,
 	       ConfigDB,
 	       ISISGenInfo
 	      , Webserver %% , Demo

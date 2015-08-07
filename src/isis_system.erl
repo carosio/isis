@@ -413,11 +413,14 @@ init(Args) ->
     isis_lspdb:set_system_id(level_1, StartState2#state.system_id),
     isis_lspdb:set_system_id(level_2, StartState2#state.system_id),
     erlang:start_timer(5000, self(), initial_config),
-    case application:get_env(isis, rib_client) of
-	{ok, Rib} -> Rib:subscribe(self());
-	_ -> isis_logger:error("No rib client specified, not subscribing..")
-    end,
-    {ok, StartState2#state{periodic_refresh = Timer, names = Names}}.
+    RibAPI = 
+	case application:get_env(isis, rib_client) of
+	    {ok, Rib} -> Rib;
+	    _ -> isis_logger:error("No rib client specified, not subscribing.."),
+		 undefined
+	end,
+    {ok, StartState2#state{periodic_refresh = Timer, names = Names,
+			   rib_api = RibAPI}}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -1773,8 +1776,15 @@ load_state(File, State) ->
       l2_system_ids = proplists:get_value(l2_sids, LoadState)
      }.
 
-apply_initial_config(State) ->
+%% Once we have a configuration DB, apply the startup config and bring
+%% up the RIB interface
+apply_initial_config(#state{rib_api = RAPI} = State) ->
     lists:map(
       fun({K, V}) -> isis_config:set(K, V) end,
       State#state.isis_config),
+    case isis_sup:start_rib() of
+    	ok ->
+    	    RAPI:subscribe(self());
+    	_ -> no_op
+    end,
     State.
