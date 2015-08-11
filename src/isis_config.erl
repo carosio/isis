@@ -95,6 +95,8 @@ get_all_items(Key, Item) ->
 init([]) ->
     ets:new(?CONFIG_ETS, [named_table, bag,
 			  {keypos, #config_item.key}]),
+    isis_logger:warning("Configuration system started"),
+    isis_system:request_initial_config(),
     {ok, #state{}}.
 
 %%--------------------------------------------------------------------

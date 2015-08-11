@@ -66,6 +66,7 @@
 	 allocate_pseudonode/2, deallocate_pseudonode/2,
 	 %% Misc
 	 address_to_string/1, address_to_string/2, dump_config/0, get_time/0,
+	 request_initial_config/0,
 	 %% Debug
 	 load_state/1]).
 
@@ -374,6 +375,9 @@ dump_config() ->
 get_time() ->
     erlang:now().
 
+request_initial_config() ->
+    gen_server:cast(?MODULE, {request_initial_config}).
+
 load_state(File) ->
     gen_server:call(?MODULE, {load_state, File}).
 
@@ -412,7 +416,6 @@ init(Args) ->
 				 {keypos, #isis_name.system_id}]),
     isis_lspdb:set_system_id(level_1, StartState2#state.system_id),
     isis_lspdb:set_system_id(level_2, StartState2#state.system_id),
-    erlang:start_timer(5000, self(), initial_config),
     RibAPI = 
 	case application:get_env(isis, rib_client) of
 	    {ok, Rib} -> Rib;
@@ -721,6 +724,8 @@ handle_cast({bump, Level, Node, Frag, SeqNo}, State) ->
     {noreply, NewState};
 handle_cast({set_state, Item}, State) ->
     {noreply, set_state(Item, State)};
+handle_cast({request_initial_config}, State) ->
+    {noreply, apply_initial_config(State)};
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
@@ -754,8 +759,6 @@ handle_info({timeout, _Ref, lsp_ageout}, State) ->
 handle_info({timeout, _Ref, lsp_refresh}, State) ->
     NextState = refresh_lsps(State),
     {noreply, NextState#state{refresh_timer = undef}};
-handle_info({timeout, _Ref, initial_config}, State) ->
-    {noreply, apply_initial_config(State)};
 handle_info(_Info, State) ->
     {noreply, State}.
 
@@ -1782,6 +1785,7 @@ apply_initial_config(#state{rib_api = RAPI} = State) ->
     lists:map(
       fun({K, V}) -> isis_config:set(K, V) end,
       State#state.isis_config),
+    isis_logger:warning("Starting RIB API"),
     case isis_sup:start_rib() of
     	ok ->
     	    RAPI:subscribe(self());
