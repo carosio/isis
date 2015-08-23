@@ -195,23 +195,32 @@ process_spf(SPF, #state{rib_api = RibApi} = State) ->
 			K = #isis_route_key{prefix = P, source = SourceP},
 			R = #isis_route{route = K, nexthops = Nexthops, ifindexes = IfIndexes,
 					   metric = Metric},
-			case ets:lookup(State#state.rib, R) of
-			    [] ->
-				%% No prior route, so install into the RIB
-				ets:insert(State#state.rib, R),
-				RibApi:add(R);
-			    [C] ->
-				case C =:= R of
-				    true ->
-					%% Prior route matches this one, no-op...
-					Added;
-				    _ ->
-					%% Prior route is different
+			case sets:is_element(K, Added) of
+			    true ->
+				%% Already done...
+				Added;
+			    _ ->
+				case ets:lookup(State#state.rib, K) of
+				    [] ->
+					%% No prior route, so install into the RIB
+					isis_logger:debug("isis_rib: did not find route, so adding ~p", [R]),
 					ets:insert(State#state.rib, R),
-					RibApi:add(R)
-				end
-			end,
-			sets:add_element(K, Added)
+					RibApi:add(R);
+				    [C] ->
+					case C =:= R of
+					    true ->
+						%% Prior route matches this one, no-op...
+						isis_logger:debug("isis_rib: found route that matches ~p", [R]),
+						Added;
+					    _ ->
+						%% Prior route is different
+						isis_logger:debug("isis_rib: route exists, but previous ~p does not match ~p, so replacing", [C, R]),
+						ets:insert(State#state.rib, R),
+						RibApi:add(R)
+					end
+				end,
+				sets:add_element(K, Added)
+			end
 		end
 	end,
     UpdateRib =
