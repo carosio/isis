@@ -119,6 +119,8 @@ init([]) ->
 	       Restart, Shutdown, Type, [isis_lspdb_log]},
     ConfigDB = {isis_config, {isis_config, start_link, []},
 		Restart, Shutdown, Type, [isis_config]},
+    ConfigPipe = {isis_config_pipe, {isis_config_pipe, start_link, []},
+		  Restart, Shutdown, Type, [isis_config_pipe]},
     StartupParams =
 	case application:get_env(isis, startup) of
 	    undefined -> [];
@@ -142,7 +144,7 @@ init([]) ->
     {ok, {SupFlags,
 	  WifiMetrics ++ 
 	      [ISISConfig, SPFSummary, L1DB, L2DB, DBLog, ISIS, ISISRib,
-	       ConfigDB,
+	       ConfigDB, ConfigPipe,
 	       ISISGenInfo
 	      , Webserver %% , Demo
 	      ]}}.
