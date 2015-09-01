@@ -1791,4 +1791,5 @@ apply_initial_config(#state{rib_api = RAPI} = State) ->
     	    RAPI:subscribe(self());
     	_ -> no_op
     end,
+    isis_config_pipe:start_receiver(),
     State.

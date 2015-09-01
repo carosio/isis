@@ -32,7 +32,7 @@
 -define(CONFIG_PIPE, "/tmp/autoisis_config").
 
 %% API
--export([start_link/0]).
+-export([start_link/0, start_receiver/0]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -58,6 +58,9 @@
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
+start_receiver() ->
+    gen_server:cast(?MODULE, {start_receiver}).
+
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
@@ -74,8 +77,7 @@ start_link() ->
 %% @end
 %%--------------------------------------------------------------------
 init([]) ->
-    Fifo = open_port(?CONFIG_PIPE, [eof]),
-    {ok, #state{fifo = Fifo}}.
+    {ok, #state{}}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -105,6 +107,9 @@ handle_call(_Request, _From, State) ->
 %%                                  {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
+handle_cast({start_receiver}, State) ->
+    Fifo = open_port(?CONFIG_PIPE, [eof]),
+    {noreply, State#state{fifo = Fifo}};
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
