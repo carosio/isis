@@ -263,11 +263,15 @@ request_redistribution(Route, State) ->
 %% @end
 %%--------------------------------------------------------------------
 create_header(Command, Body) ->
+    create_header(Command, ?ZSERV_DEFAULT_VRF, Body).
+
+create_header(Command, VRF, Body) ->
     C = zclient_enum:to_int(zclient_command, Command),
     Len = byte_size(Body) + ?ZEBRA_HEADER_SIZE,
     <<Len:16,
       ?ZEBRA_HEADER_MARKER:8,
       ?ZSERV_VERSION:8,
+      VRF:16,
       C:16,
       Body/binary>>.
 
@@ -286,16 +290,24 @@ send_message(M, State) ->
 %% --------------------------------------------------------------------
 -spec handle_zclient_msg(binary(), #state{}) -> #state{}.
 handle_zclient_msg(<<Len:16, ?ZEBRA_HEADER_MARKER:8,
-		     ?ZSERV_VERSION:8, Command:16, Rest/binary>>,
+		     ?ZSERV_VERSION:8, VRF:16, Command:16, Rest/binary>>,
 		       #state{zhead = #zclient_header{command = unknown}} = State) ->
     C = zclient_enum:to_atom(zclient_command, Command),
     handle_zclient_msg(Rest, State#state{zhead = #zclient_header{length = Len - ?ZEBRA_HEADER_SIZE,
+								 vrf = VRF,
 								 command = C}});
 handle_zclient_msg(Buffer,
-		   #state{zhead = #zclient_header{length = Len, command = C}} = State)
+		   #state{zhead = #zclient_header{length = Len, vrf = VRF, command = C}} = State)
   when byte_size(Buffer) >= Len ->
     <<M:Len/binary, Rest/binary>> = Buffer,
-    NewState = handle_zclient_cmd(C, M, State),
+    NewState =
+	case VRF of
+	    ?ZSERV_DEFAULT_VRF -> handle_zclient_cmd(C, M, State);
+	    _ ->
+		isis_logger:warning("Ignoring ZSERV command ~p due to non-default VRF (~p)",
+				    [C, VRF]),
+		State
+	end,
     handle_zclient_msg(Rest, NewState#state{zhead = #zclient_header{command = unknown}});
 handle_zclient_msg(Buffer, State) ->
     State#state{buffer = Buffer}.
@@ -417,7 +429,7 @@ handle_zclient_cmd(ipv6_route_delete,
     update_listeners({redistribute_delete, R}, State),
     State#state{routes = NewRoutes};
 handle_zclient_cmd(C, M, State) ->
-    io:format("Handling unknown command ~p (~p)~n", [C, M]),
+    isis_logger:error("Handling unknown command ~p (~p)~n", [C, M]),
     State.
 
 %%--------------------------------------------------------------------

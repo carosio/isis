@@ -24,8 +24,9 @@
 %%%-------------------------------------------------------------------
 
 -define (ZEBRA_HEADER_MARKER, 255).
--define (ZEBRA_HEADER_SIZE, 6).
--define (ZSERV_VERSION, 2).
+-define (ZEBRA_HEADER_SIZE, 8).
+-define (ZSERV_VERSION, 3).
+-define (ZSERV_DEFAULT_VRF, 0).
 
 -define (ZEBRA_AFI_IPV4, 2).
 -define (ZEBRA_AFI_IPV6, 10).
@@ -35,6 +36,7 @@
 %%%===================================================================
 -record (zclient_header, {
 	   command :: atom(),
+	   vrf :: integer(),
 	   length :: integer()
 	  }).
 -type zclient_header() :: #zclient_header{}.
