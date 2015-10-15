@@ -157,6 +157,8 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+parse(<<Cmd:8, Len:16, Payload:Len/bytes>>, State) ->
+    parse_cmd(Cmd, Payload, State);
 parse(Line, State) ->
     Interfaces = string:tokens(Line, " \n"), 
     isis_logger:debug("Recevied config via pipe: ~p", [Interfaces]),
@@ -179,18 +181,18 @@ parse(Line, State) ->
 			      "1" ->
 				  point_to_multipoint
 			  end,
-		      case isis_system:get_interface(Interface) of
-			  unknown ->
-			      isis_system:add_interface(Interface, InterfaceModule, InterfaceMode);
-			  I ->
-			      case (I#isis_interface.interface_module =:= InterfaceModule)
-				  and (I#isis_interface.mode =:= InterfaceMode) of
-				  true ->
-				      noop;
-				  _ ->
-				      isis_system:del_interface(Interface),
-				      isis_system:add_interface(Interface, InterfaceModule, InterfaceMode)
-			      end
+                      case isis_system:get_interface(Interface) of
+                          unknown ->
+                              isis_system:add_interface(Interface, InterfaceModule, InterfaceMode);
+                          I ->
+                              case (I#isis_interface.interface_module =:= InterfaceModule)
+                                  and (I#isis_interface.mode =:= InterfaceMode) of
+                                  true ->
+                                      noop;
+                                  _ ->
+                                      isis_system:del_interface(Interface),
+                                      isis_system:add_interface(Interface, InterfaceModule, InterfaceMode)
+                              end
 		      end,
 		      %% Now the metric...
 		      {MetricInt, []} = string:to_integer(Metric),
@@ -200,4 +202,55 @@ parse(Line, State) ->
 		      isis_logger:error("Ignoring configuration line: ~p", [Bogus])
 	      end
       end, Interfaces),
+    State.
+
+%%%===================================================================
+%%% Parse the new binary-style commands
+%%%===================================================================
+parse_cmd(1, Payload, State) ->
+    isis_logger:debug("Received Interface command with payload: ~p", [Payload]),
+    Interfaces = string:tokens(Payload, ","),
+    lists:map(
+      fun(Interface) ->
+              case isis_system:get_interface(Interface) of
+                  unknown ->
+                      isis_system:add_interface(Interface, isis_interface_l3, point_to_multipoint);
+                  I ->
+                      case (I#isis_interface.interface_module =:= isis_interace_l3)
+                          and (I#isis_interface.mode =:= point_to_multipoint) of
+                          true ->
+                              noop;
+                          _ ->
+                              isis_system:del_interface(Interface),
+                              isis_system:add_interface(Interface, isis_interface_l3, point_to_multipoint)
+                      end
+              end
+      end, Interfaces),
+    State;
+parse_cmd(2, Payload, State) ->
+    %% wlan0,02:c0:ff:ee:00:0f:00,fe80::c0ff:eeff:fe00:0f00,412
+    isis_logger:debug("Received metric information ~p", [Payload]),
+    Details = string:tokens(Payload, ","),
+    Interface = hd(Details),
+    Neighbors = lists:sublist(Details, 2, length(Details)-2),
+    [MetricAscii] = lists:sublist(Details, length(Details), 1),
+    {Metric, []} = string:to_intger(MetricAscii),
+    case isis_system:get_interface(Interface) of
+        unknown ->
+            noop;
+        I ->
+            case I#isis_interface.mode of
+                point_to_multipoint ->
+                    lists:map(
+                      fun(N) ->
+                              isis_interface:update_metric(I#isis_interface.pid, N, Metric)
+                      end, Neighbors);
+                _ ->
+                    noop
+            end
+    end,
+    State;
+parse_cmd(Unknown, Payload, State) ->
+    isis_logger:error("Unknown config pipe command: ~p (payload ~p)",
+		      [Unknown, Payload]),
     State.
