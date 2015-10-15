@@ -487,7 +487,7 @@ snpa_from_ipv6({ipv6, Address}) ->
     %% If bytes 11 & 12 are not 0xFFFE then we may have an issue...
     case T =:= 65534 of
 	false ->
-	    isis_logger:warn("IPv5 address is not EUI-48 derived, conflicts may occur");
+	    isis_logger:warn("IPv6 address is not EUI-48 derived, conflicts may occur");
 	_ ->
 	    ok
     end,
