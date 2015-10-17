@@ -460,6 +460,8 @@ handle_call({add_interface, Name, Module, Mode}, _From,
 				interface_module = IM,
 				mode = Mode}
 	end,
+    isis_logger:debug("Adding Interface ~p (~p ~p) ~p", [Name, IM, Mode, Interface]),
+    ets:insert(State#state.interfaces, Interface),
     BringUp = case State#state.autoconf of
 	true -> fun do_autoconf_interface/2;
 	   _ -> fun do_enable_interface/2
@@ -1032,27 +1034,58 @@ create_frag(PN, Level) ->
     io:format("Tried to create PN ~p for ~p~n", [PN, Level]),
     error.
 
+best_metric(List) ->
+    case lists:sort(lists:map(fun({_K, V}) -> V end, List)) of
+	[] ->
+	    unreachable;
+	L when is_list(L) -> hd(L)
+    end.
+
+update_reachability(Node, Level, Neighbor, List,
+		    #state{frags = Frags}) ->
+    case best_metric(List) of
+	unreachable ->
+	    %% Delete reachability for this neighbor
+	    NewFrags = isis_protocol:delete_tlv(
+			 #isis_tlv_extended_reachability{
+			    reachability = [
+					    #isis_tlv_extended_reachability_detail{
+					       neighbor = Neighbor}]},
+			 Node, Level, Frags),
+	    schedule_lsp_refresh(),
+	    isis_lspdb:schedule_spf(Level, "Self-originated TLV change"),
+	    NewFrags;
+	BestMetric ->
+	    NewFrags = isis_protocol:update_tlv(
+			 #isis_tlv_extended_reachability{
+			    reachability = [
+					    #isis_tlv_extended_reachability_detail{
+					       neighbor = Neighbor,
+					       metric = BestMetric}]},
+			 Node, Level, Frags),
+	    schedule_lsp_refresh(),
+	    isis_lspdb:schedule_spf(Level, "Self-originated TLV change"),
+	    NewFrags
+    end.
+
 update_tlv(#isis_tlv_extended_reachability{reachability =
 					       [#isis_tlv_extended_reachability_detail{
-						   neighbor = D}
-						]} = TLV,
+						   neighbor = D,
+						   metric = M}
+						]},
 	   Node, Level, Interface,
-	   #state{frags = Frags, reachability = Reachability} = State) ->
+	   #state{reachability = Reachability} = State) ->
     {NewD, NewIs} = 
 	case dict:find({Node, Level, D}, Reachability) of
 	    {ok, Is} ->
-		case lists:member(Interface, Is) of
-		    true -> {Reachability, Is};
-		    _ -> {dict:store({Node, Level, D}, [Interface | Is], Reachability),
-			  [Interface | Is]}
-		end;
-	    _ -> {dict:store({Node, Level, D}, [Interface], Reachability), [Interface]}
+		isis_logger:debug("Adding ~p reachability to list ~p", [D, Reachability]),
+		I2 = proplists:delete(Interface, Is) ++ [{Interface, M}],
+		{dict:store({Node, Level, D}, I2, Reachability), I2};
+	    _ ->
+		I2 = [{Interface, M}],
+		{dict:store({Node, Level, D}, I2, Reachability), I2}
 	end,
-    isis_logger:debug("Reachability for {~p, ~p, ~p} now via ~p", [Node, Level, D, NewIs]),
-    NewFrags = isis_protocol:update_tlv(TLV, Node, Level, Frags),
-    schedule_lsp_refresh(),
-    isis_lspdb:schedule_spf(level_1, "Self-originated TLV change"),
-    isis_lspdb:schedule_spf(level_2, "Self-originated TLV change"),
+    NewFrags = update_reachability(Node, Level, D, NewIs, State),
     {noreply, State#state{frags = NewFrags, reachability = NewD}};
 update_tlv(TLV, Node, Level, _Interface, #state{frags = Frags} = State) ->
     NewFrags = isis_protocol:update_tlv(TLV, Node, Level, Frags),
@@ -1064,32 +1097,26 @@ update_tlv(TLV, Node, Level, _Interface, #state{frags = Frags} = State) ->
 delete_tlv(#isis_tlv_extended_reachability{reachability =
 					       [#isis_tlv_extended_reachability_detail{
 						   neighbor = D}
-						]} = TLV,
+						]},
 	   Node, Level, Interface,
-	   #state{frags = Frags, reachability = Reachability} = State) ->
+	   #state{reachability = Reachability} = State) ->
     {NewD, NewIs} = 
 	case dict:find({Node, Level, D}, Reachability) of
-	    {ok, Is} -> TIs = lists:filter(fun(TI) -> TI =/= Interface end, Is),
-			case length(TIs) =:= length(Is) of
-			    true -> {Reachability, TIs};
-			    _ -> {dict:store({Node, Level, D}, TIs, Reachability), TIs}
-			end;
+	    {ok, Is} ->
+		NewI2 = proplists:delete(Interface, Is),
+		NewD2 =
+		    case NewI2 of
+			[] -> dict:erase({Node, Level, D}, Reachability);
+			_ -> dict:store({Node, Level, D}, NewI2, Reachability)
+		    end,
+		{NewD2, NewI2};
 	    _ -> %% Removing something we don't know about?
 		isis_logger:error("Removing {~p, ~p, ~p} for ~s but we have no state!",
 			    [Node, Level, D, Interface]),
 		{Reachability, []}
 	end,
-    isis_logger:debug("Reachability for {~p, ~p, ~p} now via ~p", [Node, Level, D, NewIs]),
-    {NewD2, NewFrags} = 
-	case length(NewIs) =:= 0 of
-	    true ->
-		D2 = dict:erase({Node, Level, D}, NewD),
-		TF = isis_protocol:delete_tlv(TLV, Node, Level, Frags),
-		schedule_lsp_refresh(),
-		{D2, TF};
-	_ -> {NewD, Frags}
-    end,
-    {noreply, State#state{frags = NewFrags, reachability = NewD2}};
+    NewFrags = update_reachability(Node, Level, D, NewIs, State),
+    {noreply, State#state{frags = NewFrags, reachability = NewD}};
 delete_tlv(TLV, Node, Level, _Interface, #state{frags = Frags} = State) ->
     NewFrags = isis_protocol:delete_tlv(TLV, Node, Level, Frags),
     schedule_lsp_refresh(),
@@ -1234,21 +1261,23 @@ refresh_nonpn_lsps(Level, State) ->
 add_interface_internal(#isis_interface{
 			  name = Name, ifindex = Ifindex, flags = Flags,
 			  mtu = MTU, mtu6 = MTU6, mac = Mac}, State) ->
-    isis_logger:debug("Autoconfig on interface ~p (config ~p)",
+    isis_logger:debug("add_interface_internal: on interface ~p (config ~p)",
 		      [Name, proplists:get_value(Name, State#state.interface_config)]),
     {I, Autoconf} = 
 	case ets:lookup(State#state.interfaces, Name) of
-	    [Intf] -> {Intf, fun(_, S) -> S end};
+	    [Intf] ->
+		{Intf, fun autoconf_interface/2};
 	    _ ->
 		{Module, Mode} = 
 		    case proplists:get_value(Name, State#state.interface_config) of
 			undefined -> {State#state.default_interface_module, broadcast};
 			{M1, M2} -> {M1, M2}
 		    end,
-		{#isis_interface{name = Name,
-				 interface_module = Module,
-				 mode = Mode},
-		  fun autoconf_interface/2}
+		I2 = #isis_interface{name = Name,
+				    interface_module = Module,
+				    mode = Mode},
+		isis_logger:debug("Going to autoconfigure ~p", [I2]),
+		{I2, fun autoconf_interface/2}
 	end,
     Interface = I#isis_interface{ifindex = Ifindex,
 				 flags = Flags,
@@ -1256,6 +1285,7 @@ add_interface_internal(#isis_interface{
 				 mtu = MTU,
 				 mtu6 = MTU6},
     ets:insert(State#state.interfaces, Interface),
+    isis_logger:debug("Autoconfig on interface ~p", [Interface]),
     Autoconf(Interface, State).
 
 
@@ -1267,8 +1297,16 @@ is_valid_interface(Name, #state{ignore_list = Ignores,
 				allowed_list = Allowed}) when is_list(Name) ->
     % An interface name is expected to consist of a reasonable
     % subset of all characters, use a whitelist and extend it if needed
+    isis_logger:debug("is_valid_interface: ~p ~p ~p", [Name, Ignores, Allowed]),
     case Allowed of
 	undef ->
+	    case lists:member(Name, Ignores) of
+		true -> false;
+		_ ->
+		    Name == [C || C <- Name, (((C bor 32) >= $a) and ((C bor 32) =< $z))
+				      or ((C >= $0) and (C =< $9)) or (C == $.)]
+	    end;
+	[] ->
 	    case lists:member(Name, Ignores) of
 		true -> false;
 		_ ->
@@ -1281,6 +1319,7 @@ is_valid_interface(Name, #state{ignore_list = Ignores,
 
 autoconf_interface(#isis_interface{name = Name} = I,
 		   #state{autoconf = true} = State) ->
+    isis_logger:debug("autoconf_interface: ~p ~p", [Name, is_valid_interface(Name, State)]),
     case is_valid_interface(Name, State) of
 	true ->
 	    do_autoconf_interface(I, State);
@@ -1307,7 +1346,7 @@ do_autoconf_interface(#isis_interface{mac = Mac, name = Name} = I,
 		 NextState
 	end,
     %% Enable interface and level1...
-    isis_logger:error("Enableing autoconfig level on ~p", [I#isis_interface.name]),
+    isis_logger:error("Enabling autoconfig level on ~p", [I#isis_interface.name]),
     State2 = do_enable_interface(I, State1),
     [Interface] = ets:lookup(State2#state.interfaces, Name),
     do_enable_level(Interface, level_1, State2#state.system_id),
@@ -1320,7 +1359,8 @@ do_autoconf_interface(#isis_interface{mac = Mac, name = Name} = I,
 			   {priority,
 			    isis_config:get_item(IK, priority, ?DEFAULT_PRIORITY)}]),
     State2;
-do_autoconf_interface(_I, State) ->
+do_autoconf_interface(I, State) ->
+    isis_logger:debug("Not autoconfiguring interface ~p", [I]),
     State.
 
 %%%===================================================================
