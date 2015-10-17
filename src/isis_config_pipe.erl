@@ -161,7 +161,7 @@ parse(<<Cmd:8, Len:16, Payload:Len/bytes>>, State) ->
     parse_cmd(Cmd, Payload, State);
 parse(Line, State) ->
     Interfaces = string:tokens(Line, " \n"), 
-    isis_logger:debug("Recevied config via pipe: ~p", [Interfaces]),
+    isis_logger:debug("config_pipe: Received ~p", [Interfaces]),
     lists:map(
       fun(L) ->
 	      case string:tokens(L, ":") of
@@ -183,8 +183,10 @@ parse(Line, State) ->
 			  end,
                       case isis_system:get_interface(Interface) of
                           unknown ->
+			      isis_logger:debug("Informed about an unknown interface, adding..."),
                               isis_system:add_interface(Interface, InterfaceModule, InterfaceMode);
                           I ->
+			      isis_logger:debug("Informed about a known interface ~p", [I]),
                               case (I#isis_interface.interface_module =:= InterfaceModule)
                                   and (I#isis_interface.mode =:= InterfaceMode) of
                                   true ->
@@ -208,7 +210,7 @@ parse(Line, State) ->
 %%% Parse the new binary-style commands
 %%%===================================================================
 parse_cmd(1, Payload, State) ->
-    isis_logger:debug("Received Interface command with payload: ~p", [Payload]),
+    isis_logger:debug("config_pipe: Interface command with payload ~p", [Payload]),
     Interfaces = string:tokens(Payload, ","),
     lists:map(
       fun(Interface) ->
@@ -229,7 +231,7 @@ parse_cmd(1, Payload, State) ->
     State;
 parse_cmd(2, Payload, State) ->
     %% wlan0,02:c0:ff:ee:00:0f:00,fe80::c0ff:eeff:fe00:0f00,412
-    isis_logger:debug("Received metric information ~p", [Payload]),
+    isis_logger:debug("config_pipe: Info payload ~p", [Payload]),
     Details = string:tokens(Payload, ","),
     Interface = hd(Details),
     Neighbors = lists:sublist(Details, 2, length(Details)-2),
@@ -251,6 +253,6 @@ parse_cmd(2, Payload, State) ->
     end,
     State;
 parse_cmd(Unknown, Payload, State) ->
-    isis_logger:error("Unknown config pipe command: ~p (payload ~p)",
+    isis_logger:error("config_pipe: unknown command: ~p (payload ~p)",
 		      [Unknown, Payload]),
     State.
