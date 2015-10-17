@@ -193,6 +193,8 @@ handle_cast({update_metric}, State) ->
     case State#state.neighbor of
 	undef -> ok;
 	N ->
+	    isis_logger:debug("Updating our reachability tlv for ~p cost ~p interface ~p",
+			      [isis_system:lookup_name(N), Metric, State#state.interface_name]),
 	    do_update_reachability_tlv(add, <<N:6/binary, 0:8>>, 0, Metric, State)
     end,
     {noreply, State};
@@ -333,9 +335,12 @@ handle_p2mp_pdu(#isis_p2p_iih{} = IIH, State) ->
 	case IIH#isis_p2p_iih.source_id =:= State#state.neighbor of
 	    true -> State;
 	    false ->
-		isis_logger:debug("Updating our reachability tlv"),
 		N = IIH#isis_p2p_iih.source_id,
 		do_update_reachability_tlv(add, <<N:6/binary, 0:8>>, 0, State#state.metric, State),
+		isis_logger:debug("Updating our reachability tlv for ~p cost ~p interface ~p",
+				  [isis_system:lookup_name(N),
+				   State#state.metric,
+				   State#state.interface_name]),
 		State#state{neighbor = N}
 	end,
     NewState2 = verify_interface_addresses(IIH, NewState),
@@ -356,7 +361,7 @@ handle_p2mp_pdu(#isis_psnp{} = PSNP, #state{pdu_state = PDU} = State) ->
     isis_interface_lib:handle_psnp(PSNP, PDU),
     State;
 handle_p2mp_pdu(Pdu, State) ->
-    isis_logger:warning("Ignoring PDU: ~p", [Pdu]),
+    isis_logger:warning("Ignoring PDU on interface ~p: ~p", [State#state.interface_name, Pdu]),
     State.
 
 
