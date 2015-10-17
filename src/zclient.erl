@@ -344,6 +344,25 @@ handle_zclient_cmd(interface_up,
     io:format("Adding ~p (~p)~n", [Name, Ifindex]),
     update_listeners({add_interface, I}, State),
     NewInterfaces = dict:store(Ifindex, I, State#state.interfaces),
+    State#state{interfaces = NewInterfaces};
+handle_zclient_cmd(interface_down,
+		   <<N:20/binary, Ifindex:32, Status:8, Flags:64, Metric:32,
+		     Mtu:32, Mtu6:32, Bandwidth:32, HwLen:32, Mac:HwLen/binary>>,
+		   State) ->
+    N1 = binary_to_list(N),
+    Name = string:left(N1, string:chr(N1, 0)-1),
+    I = #isis_interface{
+	   name = Name, ifindex = Ifindex,
+	   status = Status, flags = Flags,
+	   metric = Metric, mtu = Mtu,
+	   mtu6 = Mtu6, bandwidth = Bandwidth,
+	   mac = Mac
+	  },
+    io:format("Interface down ~p (~p)~n", [Name, Ifindex]),
+    update_listeners({del_interface, I}, State),
+    NewInterfaces = dict:store(Ifindex, #isis_interface{name = Name,
+							ifindex = Ifindex},
+			       State#state.interfaces),
     State#state{interfaces = NewInterfaces};    
 handle_zclient_cmd(router_id_update,
 		   <<?ZEBRA_AFI_IPV4:8, Address:32, Mask:8>>,
