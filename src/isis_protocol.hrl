@@ -277,6 +277,10 @@
 	   address :: integer()}).
 -type isis_subtlv_eis_ipv4_interface() :: #isis_subtlv_eis_ipv4_interface{}.
 
+-record (isis_subtlv_eis_unify_interface, {
+	   name :: list()}).
+-type isis_subtlv_eis_unify_interface() :: #isis_subtlv_eis_unify_interface{}.
+
 -record (isis_subtlv_unknown, {
 	   type :: integer(),
 	   value :: binary()}).
@@ -285,7 +289,7 @@
 -type isis_subtlv_eis() ::
 	isis_subtlv_eis_link_id() |
 	isis_subtlv_eis_ipv4_interface() |
-	isis_subtlv_srcdst() |
+	isis_subtlv_eis_unify_interface() |
 	isis_subtlv_unknown().
 
 %%%-------------------------------------------------------------------

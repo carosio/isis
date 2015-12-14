@@ -128,7 +128,8 @@
 	{unreservable_bandwidth, 11},
 	{te_metric, 18},
 	{link_protection, 20},
-	{interface_switching, 21}
+	{interface_switching, 21},
+	{unify_interface,255} %% Not IANA defined yet!
 	]}).
 
 -enum({subtlv_ipv6r,

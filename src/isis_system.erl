@@ -1034,8 +1034,8 @@ create_frag(PN, Level) ->
     io:format("Tried to create PN ~p for ~p~n", [PN, Level]),
     error.
 
-best_metric(List) ->
-    case lists:sort(lists:map(fun({_K, V}) -> V end, List)) of
+best_link(List) ->
+    case lists:keysort(2, List) of
 	[] ->
 	    unreachable;
 	L when is_list(L) -> hd(L)
@@ -1043,7 +1043,7 @@ best_metric(List) ->
 
 update_reachability(Node, Level, Neighbor, List,
 		    #state{frags = Frags}) ->
-    case best_metric(List) of
+    case best_link(List) of
 	unreachable ->
 	    %% Delete reachability for this neighbor
 	    NewFrags = isis_protocol:delete_tlv(
@@ -1055,13 +1055,19 @@ update_reachability(Node, Level, Neighbor, List,
 	    schedule_lsp_refresh(),
 	    isis_lspdb:schedule_spf(Level, "Self-originated TLV change"),
 	    NewFrags;
-	BestMetric ->
+	{BestInterface, BestMetric} ->
 	    NewFrags = isis_protocol:update_tlv(
 			 #isis_tlv_extended_reachability{
 			    reachability = [
-					    #isis_tlv_extended_reachability_detail{
-					       neighbor = Neighbor,
-					       metric = BestMetric}]},
+				#isis_tlv_extended_reachability_detail{
+				    neighbor = Neighbor,
+				    metric = BestMetric,
+				    sub_tlv = [
+					#isis_subtlv_eis_unify_interface{name=BestInterface}
+				    ]
+				}
+			    ]
+			 },
 			 Node, Level, Frags),
 	    schedule_lsp_refresh(),
 	    isis_lspdb:schedule_spf(Level, "Self-originated TLV change"),

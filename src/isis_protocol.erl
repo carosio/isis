@@ -149,6 +149,8 @@ decode_subtlv_eis(link_id, _Type, <<Local:32, Remote:32>>) ->
     #isis_subtlv_eis_link_id{local = Local, remote = Remote};
 decode_subtlv_eis(ipv4_interface, _Type, <<IP:32>>) ->
     #isis_subtlv_eis_ipv4_interface{address = IP};
+decode_subtlv_eis(unify_interface, _Type, <<NLen:8, Name:NLen/binary>>) ->
+    #isis_subtlv_eis_unify_interface{name = binary_to_list(Name)};
 decode_subtlv_eis(_, Type, Value) ->
     #isis_subtlv_unknown{type = Type, value = Value}.
 
@@ -457,6 +459,10 @@ encode_subtlv_eis_detail(#isis_subtlv_eis_link_id{local = Local,
     encode_tlv(link_id, subtlv_eis, <<Local:32, Remote:32>>);
 encode_subtlv_eis_detail(#isis_subtlv_eis_ipv4_interface{address = Address}) ->
     encode_tlv(ipv4_interface, subtlv_eis, <<Address:32>>);
+encode_subtlv_eis_detail(#isis_subtlv_eis_unify_interface{name = Name}) ->
+    NLen = lists:flatlength(Name),
+    NBin = list_to_binary(Name),
+    encode_tlv(unify_interface, subtlv_eis, <<NLen:8, NBin/binary>>);
 encode_subtlv_eis_detail(#isis_subtlv_unknown{type = Type, value = Value}) ->
     S = byte_size(Value),
     [<<Type:8, S:8, Value/binary>>].
