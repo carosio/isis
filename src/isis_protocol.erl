@@ -290,7 +290,10 @@ decode_tlv_extended_reachability(
 decode_tlv_extended_reachability(<<>>, Values) ->
     lists:reverse(Values).
 
-
+decode_stringlist(<<Len:8, Name:Len/binary, Rest/binary>>) ->
+    [ binary_to_list(Name) ] ++ decode_stringlist(Rest);
+decode_stringlist(<<>>) ->
+    [].
 
 %%--------------------------------------------------------------------
 %% @doc Convert a binary TLV into a record of the appropriate type,
@@ -324,6 +327,8 @@ decode_tlv(authentication, _Type, <<AuthType:8, Rest/binary>> = R) ->
     end;
 decode_tlv(dynamic_hostname, _Type, Value) ->
     #isis_tlv_dynamic_hostname{hostname = binary:bin_to_list(Value)};
+decode_tlv(unify_interfaces, _Type, Value) ->
+    #isis_tlv_unify_interfaces{interfaces = decode_stringlist(Value)};
 decode_tlv(ip_internal_reachability, _Type, Value) ->
     Reachability = decode_tlv_ip_internal_reachability(Value, []),
     #isis_tlv_ip_internal_reachability{ip_reachability = Reachability};
@@ -576,6 +581,14 @@ encode_tlv_lsp_entry(
 			     checksum = Checksum}) -> 
     <<Lifetime:16, LSP_Id:8/binary, Sequence:32, Checksum:16>>.
 
+encode_stringlist([H|Tail]) ->
+  NLen = lists:flatlength(H),
+  NBin = list_to_binary(H),
+  RBin = encode_stringlist(Tail),
+  <<NLen:8, NBin/binary, RBin/binary>>;
+encode_stringlist([]) ->
+  <<>>.
+
 -spec encode_tlv(isis_tlv()) -> [binary()].
 encode_tlv(#isis_tlv_area_address{areas = Areas}) ->
     encode_tlv(area_address, tlv, encode_tlv_area_address(Areas, <<>>));
@@ -620,6 +633,8 @@ encode_tlv(#isis_tlv_dynamic_hostname{hostname = Hostname}) ->
 %%     AckI = isis_enum:to_int(boolean, Ack),
 %%     SAI = isis_enum:to_int(boolean, SA),
 %%     encode_tlv(restart, tlv, <<0:5, SAI:1, AckI:1, ReqI:1>>);
+encode_tlv(#isis_tlv_unify_interfaces{interfaces = Interfaces}) ->
+    encode_tlv(unify_interfaces, tlv, encode_stringlist(Interfaces));
 encode_tlv(#isis_tlv_ip_interface_address{addresses = Addresses}) ->
     As = lists:map(fun(A) -> <<A:32>> end, Addresses),
     encode_tlv_list(ip_interface_address, tlv, As);

@@ -1134,6 +1134,15 @@ set_tlv_hostname(Name, State) ->
     L2Frags = isis_protocol:update_tlv(TLV, 0, level_2, L1Frags),
     State#state{frags = L2Frags, hostname = Name}.
 
+set_tlv_unify_interfaces(State) ->
+    Interfaces = lists:map(fun (#isis_interface{name = N}) -> N end,
+			   lists:filter(fun (#isis_interface{enabled = E}) -> E end,
+			   list_interfaces())),
+    TLV = #isis_tlv_unify_interfaces{interfaces = Interfaces},
+    L1Frags = isis_protocol:update_tlv(TLV, 0, level_1, State#state.frags),
+    L2Frags = isis_protocol:update_tlv(TLV, 0, level_2, L1Frags),
+    State#state{frags = L2Frags}.
+
 allocate_pseudonode(Pid, Level, #state{frags = Frags} = State) ->
     F = fun(#lsp_frag{pseudonode = PN, level = L})
 	      when Level =:= L ->
@@ -1364,7 +1373,7 @@ do_autoconf_interface(#isis_interface{mac = Mac, name = Name} = I,
 			    isis_config:get_item(IK, metric, ?DEFAULT_AUTOCONF_METRIC)},
 			   {priority,
 			    isis_config:get_item(IK, priority, ?DEFAULT_PRIORITY)}]),
-    State2;
+    set_tlv_unify_interfaces(State2);
 do_autoconf_interface(I, State) ->
     isis_logger:debug("Not autoconfiguring interface ~p", [I]),
     State.

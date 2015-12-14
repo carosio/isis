@@ -91,7 +91,8 @@
 	     {geninfo, 251},
 	     %%% when we get the codepoint for this, we should change
 	     %%% it...
-	     {hardware_fingerprint, 254}
+	     {hardware_fingerprint, 254},
+	     {unify_interfaces, 255}
 	    ]}).
 
 %%%

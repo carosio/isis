@@ -128,6 +128,10 @@
 	   hostname :: nonempty_string()}).
 -type isis_tlv_dynamic_hostname() :: #isis_tlv_dynamic_hostname{}.
 
+-record (isis_tlv_unify_interfaces, {
+	   interfaces :: list()}).
+-type isis_tlv_unify_interfaces() :: #isis_tlv_unify_interfaces{}.
+
 -record (isis_tlv_ip_internal_reachability_detail, {
 	   ip_address :: integer(),
 	   subnet_mask :: integer(),
@@ -238,6 +242,7 @@
 	isis_tlv_lsp_entry() |
 	isis_tlv_authentication() |
 	isis_tlv_dynamic_hostname() |
+	isis_tlv_unify_interfaces() |
 	isis_tlv_ip_interface_address() |
 	isis_tlv_ipv6_interface_address() |
 	isis_tlv_ipv6_reachability() |
