@@ -27,7 +27,7 @@
 %%%-------------------------------------------------------------------
 -module(spf_feed).
 
--include ("../deps/yaws/include/yaws_api.hrl").
+-include_lib ("yaws/include/yaws_api.hrl").
 -include ("isis_system.hrl").
 
 -export([out/1, handle_message/1, terminate/2]).

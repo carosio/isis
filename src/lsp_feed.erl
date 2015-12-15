@@ -26,7 +26,7 @@
 %%%-------------------------------------------------------------------
 -module(lsp_feed).
 
--include ("../deps/yaws/include/yaws_api.hrl").
+-include_lib ("yaws/include/yaws_api.hrl").
 -include ("isis_system.hrl").
 -include ("isis_protocol.hrl").
 
