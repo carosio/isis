@@ -3,7 +3,7 @@
   {vsn, "1"},
   {registered, []},
   {included_applications,
-   [yaws]},
+   [yaws, unify_hostinfo]},
   {applications, [
 		  kernel,
 		  stdlib,

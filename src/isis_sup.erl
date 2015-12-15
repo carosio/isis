@@ -137,6 +137,8 @@ init([]) ->
     Webserver = {ybed_sup, {ybed_sup, start_link, []},
       		 permanent, 10000, supervisor, []},
 
+    timer:apply_after(15000, application, start, [unify_hostinfo]),
+
     {ok, {SupFlags,
 	  WifiMetrics ++ 
 	      [ISISConfig, SPFSummary, L1DB, L2DB, DBLog, ISIS, ISISRib,

@@ -18,7 +18,8 @@ run() ->
     Appmods = {appmods, [
 			 {"/spf", spf_feed},
 			 {"/lspdb", lsp_feed},
-			 {"/unify", unify_feed}
+			 {"/unify", unify_feed},
+			 {"/unify_hostinfo", unify_hostinfo_feed}
 			]},
     SconfList = [
 		 [{servername, "isis"},
