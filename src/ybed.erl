@@ -13,7 +13,7 @@ run() ->
 		 {log_wrap_size, 10000},
 		 {logdir, "www_logs"}
 		],
-    Docroot = "html",
+    Docroot = code:lib_dir(isis, html),
     Webport = 8080,
     Appmods = {appmods, [
 			 {"/spf", spf_feed},
