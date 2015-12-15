@@ -236,7 +236,7 @@ parse_cmd(2, Payload, State) ->
     Interface = hd(Details),
     Neighbors = lists:sublist(Details, 2, length(Details)-2),
     [MetricAscii] = lists:sublist(Details, length(Details), 1),
-    {Metric, []} = string:to_intger(MetricAscii),
+    {Metric, []} = string:to_integer(MetricAscii),
     case isis_system:get_interface(Interface) of
         unknown ->
             noop;

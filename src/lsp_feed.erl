@@ -63,7 +63,7 @@ handle_message({text, <<"start level_1">>}, State) ->
     {noreply, State#state{level = level_1}};
 
 handle_message({text, <<"start level_2">>}, State) ->
-    lspdb:subscribe(level_2, self()),
+    isis_lspdb:subscribe(level_2, self()),
     {reply, {text, <<"buh">>}, State#state{level = level_2}};
 
 handle_message({close, Status, _Reason}, State) ->

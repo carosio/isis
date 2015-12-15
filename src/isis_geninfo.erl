@@ -527,7 +527,7 @@ withdraw_individual_frag(Match, T,
     DelSize =
 	lists:foldl(
 	  fun(TT, Acc) -> Acc + byte_size((GI#isis_geninfo_client.encode_func)(TT)) end,
-	  FoundTLVs),
+	  0, FoundTLVs),
     case DelSize > 0 of
 	true ->
 	    Frag#isis_geninfo_frag{
