@@ -29,14 +29,28 @@ div.infobox {
 	left: 0%;
 	width: 25%;
 	height: 100%;
-	background-color: #f00;
+	background-color: #ddd;
 	padding-left: 10px;
 	padding-top: 10px;
 	overflow: scroll;
 }
 
 div.hostinfo-display p {
-	font: bold 12px Verdana, Helvetica, sans-serif;
+	font: bold 11px Verdana, Helvetica, sans-serif;
+}
+
+div.hostinfo-display ul {
+	list-style-type: none;
+	padding: 0px;
+}
+
+div.hostinfo-display li {
+	font: 10px Verdana, Helvetica, sans-serif;
+	padding-left: 10px;
+}
+
+div.hostinfo-display .type {
+	font-weight: bold;
 }
 
 circle.router {
@@ -64,5 +78,5 @@ text.port {
 }
 
 text.router-label {
-	font: bold 12px Verdana, Helvetica, sans-serif;
+	font: bold 11px Verdana, Helvetica, sans-serif;
 }

@@ -481,6 +481,9 @@ InfoBox.prototype.update_display_info = function() {
 		}
 
 		for (var type in tlvs) {
+			if (type == 'Hostname')
+				continue;
+
 			var value = tlvs[type];
 
 			var tlv = info.tlv_dict[type];
@@ -536,10 +539,21 @@ InfoBox.prototype.update_display = function() {
 		.append('div')
 		.attr('class', 'hostinfo-display');
 	host_div.append('p');
+	host_div.append('ul');
 	this.display.exit()
 		.remove();
 	this.display.selectAll('p')
 		.text(function(d) { return d.host; });
+	var tlv = this.display.select('ul').selectAll('li')
+		.data(function(d) { return d.tlvs; },
+	              function(d) { return d.type; });
+	var li = tlv.enter().append('li');
+	li.append('span').attr('class', 'type');
+	li.append('span').attr('class', 'value');
+	tlv.exit().remove();
+
+	tlv.selectAll('span.type').text(function(d) { return d.type + ': ' });
+	tlv.selectAll('span.value').text(function(d) { return d.value; });
 };
 
 /* Main code starts here */
