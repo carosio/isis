@@ -257,6 +257,7 @@ Visual.prototype.connect = function() {
 		try {
 			v.ws.close();
 		} finally {
+			v.lspdb = {};
 			window.setTimeout(function() {
 				v.connect();
 			}, 5000);
@@ -444,6 +445,7 @@ InfoBox.prototype.connect = function() {
 		try {
 			info.ws.close();
 		} finally {
+			info.hostinfo = {};
 			window.setTimeout(function() {
 				info.connect();
 			}, 5000);
