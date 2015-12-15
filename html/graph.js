@@ -417,7 +417,12 @@ function InfoBox(container) {
 	var info = this;
 
 	this.container = container;
+	this.display = this.container.selectAll('.hostinfo-display');
+
 	this.hostinfo = {};
+
+	this.display_dict = {};
+	this.display_info = [];
 
 	window.setTimeout(function() {
 		info.connect();
@@ -463,6 +468,78 @@ InfoBox.prototype.on_message = function(evt) {
 	} else {
 		delete this.hostinfo[obj.hostid];
 	}
+
+	this.update_display_info();
+	this.update_display();
+};
+
+InfoBox.prototype.update_display_info = function() {
+	var update_tlvs = function(info, tlvs) {
+		if (info.tlv_dict === undefined) {
+			info.tlv_dict = {};
+			info.tlvs = [];
+		}
+
+		for (var type in tlvs) {
+			var value = tlvs[type];
+
+			var tlv = info.tlv_dict[type];
+			if (tlv === undefined) {
+				tlv = {};
+				info.tlv_dict[type] = tlv;
+				info.tlvs.push(tlv);
+			}
+			tlv.type = type;
+			tlv.value = value;
+		}
+
+		for (var i = info.tlvs.length - 1; i >= 0; i--) {
+			var type = info.tlvs[i].type;
+
+			if (tlvs[type] === undefined) {
+				info.tlvs.splice(i,1);
+				delete info.tlv_dict[type];
+			}
+		}
+	};
+
+	for (var hostid in this.hostinfo) {
+		var orig_info = this.hostinfo[hostid];
+		var new_info = this.display_dict[hostid];
+
+		if (new_info === undefined) {
+			new_info = {};
+			this.display_dict[hostid] = new_info;
+			this.display_info.push(new_info);
+		}
+
+		new_info.hostid = orig_info.hostid;
+		new_info.host = orig_info.host;
+		update_tlvs(new_info, orig_info.tlvs);
+	}
+
+	for (var i = this.display_info.length - 1; i >= 0; i--) {
+		var hostid = this.display_info[i].hostid;
+
+		if (this.hostinfo[hostid] === undefined) {
+			this.display_info.splice(i,1);
+			delete this.display_dict[hostid];
+		}
+	}
+};
+
+InfoBox.prototype.update_display = function() {
+	this.display = this.display.data(this.display_info, function(info) {
+		return info.hostid;
+	});
+	var host_div = this.display.enter()
+		.append('div')
+		.attr('class', 'hostinfo-display');
+	host_div.append('p');
+	this.display.exit()
+		.remove();
+	this.display.selectAll('p')
+		.text(function(d) { return d.host; });
 };
 
 /* Main code starts here */

@@ -17,7 +17,7 @@ svg.svg-content-responsive {
 	display: inline-block;
 	position: absolute;
 	top: 0;
-	left: 20%;
+	left: 25%;
 	width: 80%;
 	height: 100%;
 }
@@ -27,9 +27,16 @@ div.infobox {
 	position: absolute;
 	top: 0;
 	left: 0%;
-	width: 20%;
+	width: 25%;
 	height: 100%;
 	background-color: #f00;
+	padding-left: 10px;
+	padding-top: 10px;
+	overflow: scroll;
+}
+
+div.hostinfo-display p {
+	font: bold 12px Verdana, Helvetica, sans-serif;
 }
 
 circle.router {
