@@ -266,7 +266,7 @@ Visual.prototype.connect = function() {
 	this.ws.onopen = function() {
 		console.log("Connected.");
 		v.ws.send("start");
-	}
+	};
 };
 
 Visual.prototype.on_message = function(evt) {
@@ -412,14 +412,72 @@ Visual.prototype.update_graph = function() {
 	this.ng.update(node_dict, edge_dict);
 };
 
+/* InfoBox class */
+function InfoBox(container) {
+	var info = this;
+
+	this.container = container;
+	this.hostinfo = {};
+
+	window.setTimeout(function() {
+		info.connect();
+	}, 1000);
+}
+
+InfoBox.prototype.connect = function() {
+	var info = this;
+
+	console.log("Trying to connect to hostinfo backend...");
+	this.ws = new WebSocket("ws://" + document.location.host +
+			'/unify_hostinfo');
+	this.ws.onmessage = function(evt) {
+		info.on_message(evt);
+	};
+	this.ws.onclose = function() {
+		info.ws.onclose = function(){};
+		info.ws.onerror = function(){};
+		try {
+			info.ws.close();
+		} finally {
+			window.setTimeout(function() {
+				info.connect();
+			}, 5000);
+		}
+	}
+	this.ws.onerror = this.ws.onclose;
+	this.ws.onopen = function() {
+		console.log("Connected to hostinfo backend.");
+		info.ws.send("start");
+	};
+};
+
+InfoBox.prototype.on_message = function(evt) {
+	var obj = JSON.parse(evt.data);
+	var command = obj.command;
+
+	delete obj['command'];
+	obj.hostid += '.00';
+
+	if (command == 'add') {
+		this.hostinfo[obj.hostid] = obj;
+	} else {
+		delete this.hostinfo[obj.hostid];
+	}
+};
+
 /* Main code starts here */
 
-var svg = d3.select('body')
+var container = d3.select('body')
 		.style('overflow', 'hidden')
 		.append('div')
-		.attr('class', 'svg-container')
-		.append('svg')
+		.attr('class', 'container');
+
+var infobox = container.append('div')
+		.attr('class', 'infobox');
+
+var svg = container.append('svg')
 		.attr('class', 'svg-content-responsive');
+
 
 var defs = svg.append('defs');
 
@@ -436,3 +494,4 @@ filter_solid.append('feComposite')
 	.attr('in', 'SourceGraphic');
 
 var vis = new Visual(svg);
+var info = new InfoBox(infobox);
