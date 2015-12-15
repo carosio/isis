@@ -62,7 +62,13 @@ handle_message({text, <<"start">>}, State) ->
     isis_logger:error("Subscription received"),
     isis_lspdb:subscribe(level_1, self(), struct),
     isis_lspdb:initial_state(level_1, self(), struct),
-    {noreply, State#state{level = level_1}};
+    OwnId = lists:flatten(io_lib:format("~s.00", [format_id(isis_system:system_id())])),
+    Doc = {struct, [
+		{operation, "own-id"},
+		{id, OwnId}
+    ]},
+    Json = json2:encode(Doc),
+    {reply, {text, list_to_binary(Json)}, State#state{level = level_1}};
 
 handle_message({close, Status, _Reason}, State) ->
     {close, Status, State};

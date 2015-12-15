@@ -1,1 +1,11 @@
-forcetest.yaws
+<!DOCTYPE HTML>
+<html lang="en">
+	<head>
+		<title>IS-IS network</title>
+		<link rel="stylesheet" href="main.css" type="text/css"></link>
+	</head>
+	<body>
+		<script src="d3.js" type="text/javascript"></script>
+		<script src="graph.js" type="text/javascript"></script>
+	</body>
+</html>
