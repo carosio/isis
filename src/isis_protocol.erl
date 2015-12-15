@@ -1841,6 +1841,8 @@ do_pp_tlv(#isis_tlv_is_reachability{is_reachability = R}) ->
 	      end, R);
 do_pp_tlv(#isis_tlv_dynamic_hostname{hostname = H}) ->
     lists:flatten(io_lib:format("~s", [H]));
+do_pp_tlv(#isis_tlv_unify_interfaces{interfaces = Interfaces}) ->
+    string:join(Interfaces, ",");
 do_pp_tlv(#isis_tlv_protocols_supported{protocols = Protocols}) ->
     PStr = lists:foldl(fun(P, Acc) -> Acc ++ erlang:atom_to_list(P) ++ " " end,
 		       "", Protocols),

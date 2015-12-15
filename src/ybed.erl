@@ -17,7 +17,8 @@ run() ->
     Webport = 8080,
     Appmods = {appmods, [
 			 {"/spf", spf_feed},
-			 {"/lspdb", lsp_feed}
+			 {"/lspdb", lsp_feed},
+			 {"/unify", unify_feed}
 			]},
     SconfList = [
 		 [{servername, "isis"},

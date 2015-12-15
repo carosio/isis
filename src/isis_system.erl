@@ -1043,6 +1043,7 @@ best_link(List) ->
 
 update_reachability(Node, Level, Neighbor, List,
 		    #state{frags = Frags}) ->
+    isis_logger:debug("update_reachability best_link == ~p", [best_link(List)]),
     case best_link(List) of
 	unreachable ->
 	    %% Delete reachability for this neighbor
