@@ -358,11 +358,11 @@ Visual.prototype.update_graph = function() {
 				continue; /* Link is not bidi, no edge added to viz */
 
 			var source = node_id;
-			if (link.port !== undefined)
+			if (link.port !== undefined && source.slice(-2) == '00')
 				source += '_' + link.port;
 
 			var target = link.neighbor;
-			if (neighbor_link.port !== undefined)
+			if (neighbor_link.port !== undefined && target.slice(-2) == '00')
 				target += '_' + neighbor_link.port;
 
 			add_edge(source, target);
@@ -385,11 +385,13 @@ Visual.prototype.update_graph = function() {
 			var target_in_keep = nodes_to_keep[edge.target];
 
 			if (source_in_keep !== undefined
-			    && target_in_keep === undefined) {
+			    && target_in_keep === undefined
+                            && node_dict[edge.target] !== undefined) {
 				nodes_to_keep[edge.target] = node_dict[edge.target];
-				changed = true
+				changed = true;
 			} else if (source_in_keep === undefined
-				   && target_in_keep !== undefined) {
+				   && target_in_keep !== undefined
+                                   && node_dict[edge.source] !== undefined) {
 				nodes_to_keep[edge.source] = node_dict[edge.source];
 				changed = true;
 			}
