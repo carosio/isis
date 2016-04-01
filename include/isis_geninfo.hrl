@@ -28,7 +28,7 @@
 
 -record(isis_geninfo_frag, {
 	  remaining_size = 255,
-	  tlvs = [] :: [record()],
+	  tlvs = [] :: list(),
 	  updated = false :: true | false,
 	  previous_encode = <<>> :: binary()
 	 }).

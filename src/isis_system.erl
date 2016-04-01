@@ -373,7 +373,11 @@ dump_config() ->
     gen_server:call(?MODULE, {dump_config}).
 
 get_time() ->
-    erlang:now().
+    MonotonicTime = erlang:system_time(micro_seconds),
+    MegaSecs = MonotonicTime div 1000000000000,
+    Secs = MonotonicTime div 1000000 - MegaSecs*1000000,
+    MicroSecs = MonotonicTime rem 1000000,
+    {MegaSecs, Secs, MicroSecs}.
 
 request_initial_config() ->
     gen_server:cast(?MODULE, {request_initial_config}).
