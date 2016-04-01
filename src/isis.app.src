@@ -3,7 +3,7 @@
   {vsn, "1"},
   {registered, []},
   {included_applications,
-   [yaws, unify_hostinfo]},
+   [unify_hostinfo]},
   {applications, [
 		  kernel,
 		  stdlib,
@@ -12,7 +12,8 @@
 		  %% Uncomment to include lager
 		  lager,
 		  xmerl,
-		  compiler
+		  compiler,
+		  cowboy
 		  ]},
   {mod, { isis_app, []}},
   {env, []}

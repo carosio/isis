@@ -27,12 +27,10 @@
 %%%-------------------------------------------------------------------
 -module(spf_feed).
 
--include_lib ("yaws/include/yaws_api.hrl").
 -include ("isis_system.hrl").
 
--export([out/1, handle_message/1, terminate/2]).
-
--export([handle_call/3, handle_info/2, handle_cast/2, code_change/3]).
+-export([init/3, websocket_handle/3, websocket_info/3,
+	 websocket_init/3, websocket_terminate/3]).
 
 -record(link, {source,
 	       source_name,
@@ -40,77 +38,35 @@
 	       target_name,
 	       value}).
 
-out(A) ->
-  case get_upgrade_header(A#arg.headers) of
-    undefined ->
-	  
-	  {content, "text/plain", "You are not a websocket, Go away!"};
-          "websocket" ->      Opts = [
-				      {keepalive,         true},
-				      {keepalive_timeout, 10000},
-				      {drop_on_timeout,   true}
-         ],
-      {websocket, spf_feed, Opts};
-    Any ->
-      error_logger:error_msg("Got ~p from the upgrade header!", [Any])
-  end.
+-record(state, {}).
 
-handle_message({text, <<"start">>}) ->
+init(_, _Req, _Opts) ->
+    {upgrade, protocol, cowboy_websocket}.
+
+websocket_init(_, Req, _Opts) ->
+    {ok, Req, #state{}, 60000}.
+
+websocket_handle({text, <<"start">>}, Req, State) ->
     spf_summary:subscribe(self()),
     M = generate_update(0, level_1, [], "Startup"),
-    {reply, {text, list_to_binary(M)}};
+    {reply, {text, list_to_binary(M)}, Req, State};
 
-handle_message({close, Status, _Reason}) ->
-    {close, Status};
-
-handle_message(Any) ->
+websocket_handle(Any, Req, State) ->
     error_logger:error_msg("Received at spf_feed ~p ", [Any]),
-    noreply.
+    {ok, Req, State}.
 
-terminate(_Reason, _State) ->
+websocket_terminate(_Reason, _Req, _State) ->
     spf_summary:unsubscribe(self()),
     ok.
 
- handle_info({spf_summary, {Time, level_1, SPF, Reason, _ExtInfo}}, State) ->
+websocket_info({spf_summary, {Time, level_1, SPF, Reason, _ExtInfo}}, Req, State) ->
     Json = generate_update(Time, level_1, SPF, Reason),
-    {reply, {text, list_to_binary(Json)}, State};
- handle_info({spf_summary, {_, level_2, _, _Reason, _ExtInfo}}, State) ->
-    {noreply, State};
-
-
-%% Gen Server functions
-handle_info(Info, State) ->
+    {reply, {text, list_to_binary(Json)}, Req, State};
+websocket_info({spf_summary, {_, level_2, _, _Reason, _ExtInfo}}, Req, State) ->
+    {ok, Req, State};
+websocket_info(Info, Req, State) ->
     error_logger:info_msg("~p unknown info msg ~p", [self(), Info]),
-    {noreply, State}.
-
-handle_cast(Msg, State) ->
-    error_logger:info_msg("~p unknown msg ~p", [self(), Msg]),
-    {noreply, State}.
-
-handle_call(Request, _From, State) ->
-    error_logger:info_msg("~p unknown call ~p", [self(), Request]),
-    {stop, {unknown_call, Request}, State}.
-
-code_change(_OldVsn, Data, _Extra) ->
-    {ok, Data}.
-
-get_upgrade_header(#headers{other=L}) ->
-    lists:foldl(fun({http_header,_,K0,_,V}, undefined) ->
-                        K = case is_atom(K0) of
-                                true ->
-                                    atom_to_list(K0);
-                                false ->
-                                    K0
-                            end,
-                        case string:to_lower(K) of
-                            "upgrade" ->
-                                string:to_lower(V);
-                            _ ->
-                                undefined
-                        end;
-                   (_, Acc) ->
-                        Acc
-                end, undefined, L).
+    {ok, Req, State}.
 
 generate_update(Time, Level, SPF, Reason) ->
     %% Get ourselves an ifindex->name mapping...

@@ -2,16 +2,9 @@
 <html lang="en">
 <head>
     <meta charset="utf-8">
-    <title>
-      <erl>
-	out(_) ->
-	<<A:16, B:16, C:16>> = isis_system:system_id(),
-	  Title = io_lib:format("~s (~4.16.0B.~4.16.0B.~4.16.0B) SPF Results",
-	  [isis_system:get_state(hostname), A, B, C]),
-	  {html, lists:flatten(Title)}.
-      </erl>
-    </title>
+    <title>SPF visualization</title>
     <script type="text/javascript" src="d3/d3.js"></script>
+    <script type="text/javascript" src="set_title.js"></script>
 </head>
 <style>
 

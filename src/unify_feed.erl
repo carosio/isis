@@ -26,39 +26,23 @@
 %%%-------------------------------------------------------------------
 -module(unify_feed).
 
--include_lib ("yaws/include/yaws_api.hrl").
 -include ("isis_system.hrl").
 -include ("isis_protocol.hrl").
 
--export([out/1, init/1, handle_message/2, terminate/2]).
-
--export([handle_call/3, handle_info/2, handle_cast/2, code_change/3]).
-
--compile(export_all).
+-export([init/3, websocket_handle/3, websocket_info/3,
+	 websocket_init/3, websocket_terminate/3]).
 
 -record(state, {
 	  level
 	 }).
 
-out(A) ->
-  case get_upgrade_header(A#arg.headers) of
-    undefined ->
-	  
-	  {content, "text/plain", "You are not a websocket, Go away!"};
-          "websocket" ->      Opts = [
-				      {keepalive,         true},
-				      {keepalive_timeout, 10000},
-				      {drop_on_timeout,   true}
-         ],
-      {websocket, unify_feed, Opts};
-    Any ->
-      error_logger:error_msg("Got ~p from the upgrade header!", [Any])
-  end.
+init(_, _Req, _Opts) ->
+    {upgrade, protocol, cowboy_websocket}.
 
-init(_Args) ->
-    {ok, #state{}}.
+websocket_init(_, Req, _Opts) ->
+    {ok, Req, #state{}, 60000}.
 
-handle_message({text, <<"start">>}, State) ->
+websocket_handle({text, <<"start">>}, Req, State) ->
     isis_logger:error("Subscription received"),
     isis_lspdb:subscribe(level_1, self(), struct),
     isis_lspdb:initial_state(level_1, self(), struct),
@@ -68,19 +52,16 @@ handle_message({text, <<"start">>}, State) ->
 		{id, OwnId}
     ]},
     Json = json2:encode(Doc),
-    {reply, {text, list_to_binary(Json)}, State#state{level = level_1}};
+    {reply, {text, list_to_binary(Json)}, Req, State#state{level = level_1}};
 
-handle_message({close, Status, _Reason}, State) ->
-    {close, Status, State};
-
-handle_message(Any, State) ->
+websocket_handle(Any, Req, State) ->
     error_logger:error_msg("Received ~p (~p) ~p", [Any, State, ?MODULE]),
-    {noreply, State}.
+    {ok, Req, State}.
 
-terminate(_Reason, #state{level = L}) when L =/= undefined ->
+websocket_terminate(_Reason, _Req, #state{level = L}) when L =/= undefined ->
     isis_lspdb:unsubscribe(L, self()),
     ok;
-terminate(_, _) ->
+websocket_terminate(_, _, _) ->
     ok.
 
 format_id(<<A:16,B:16,C:16>>) ->
@@ -109,7 +90,7 @@ handle_tlv(#isis_tlv_extended_reachability{reachability = EIR}, Acc) ->
 handle_tlv(_, Acc) ->
 	Acc.
 
-handle_info({lsp_update, {add, level_1, #isis_lsp{lsp_id = LSP_Id, tlv = TLV}}}, State) ->
+websocket_info({lsp_update, {add, level_1, #isis_lsp{lsp_id = LSP_Id, tlv = TLV}}}, Req, State) ->
     Info = {struct, lists:foldl(fun handle_tlv/2, [], TLV)},
     Doc = {struct, [
 		{operation, "add"},
@@ -117,48 +98,15 @@ handle_info({lsp_update, {add, level_1, #isis_lsp{lsp_id = LSP_Id, tlv = TLV}}},
 		{info, Info}
     ]},
     Json = json2:encode(Doc),
-    {reply, {text, list_to_binary(Json)}, State};
-handle_info({lsp_update, {delete, level_1, LSP_Id}}, State) ->
+    {reply, {text, list_to_binary(Json)}, Req, State};
+websocket_info({lsp_update, {delete, level_1, LSP_Id}}, Req, State) ->
     Doc = {struct, [
 		{operation, "delete"},
 		{id, lists:flatten(format_id(LSP_Id))}
     ]},
     Json = json2:encode(Doc),
-    {reply, {text, list_to_binary(Json)}, State};
+    {reply, {text, list_to_binary(Json)}, Req, State};
 
-%% Gen Server functions
-handle_info(Info, State) ->
+websocket_info(Info, Req, State) ->
     error_logger:info_msg("~p unknown info msg ~p", [self(), Info]),
-    {noreply, State}.
-
-handle_cast(Msg, State) ->
-    isis_logger:error("Got msg ~p, state ~p", [Msg, State]),
-    {noreply, State}.
-
-handle_call(Request, _From, State) ->
-    error_logger:info_msg("~p unknown call ~p", [self(), Request]),
-    {stop, {unknown_call, Request}, State}.
-
-code_change(_OldVsn, Data, _Extra) ->
-    {ok, Data}.
-
-get_upgrade_header(#headers{other=L}) ->
-    lists:foldl(fun({http_header,_,K0,_,V}, undefined) ->
-                        K = case is_atom(K0) of
-                                true ->
-                                    atom_to_list(K0);
-                                false ->
-                                    K0
-                            end,
-                        case string:to_lower(K) of
-                            "upgrade" ->
-                                string:to_lower(V);
-                            _ ->
-                                undefined
-                        end;
-                   (_, Acc) ->
-                        Acc
-                end, undefined, L).
-
-generate_update() ->
-    ok.
+    {noreply, Req, State}.
