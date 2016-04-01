@@ -1,8 +1,0 @@
-{application, hostinfo,
- [{description, "Distribute HostInfo via IS-IS"},
-  {vsn, "1"},
-  {registered, []},
-  {applications, []},
-  {mod, { hostinfo_app, []}},
-  {env, []}
-]}.
